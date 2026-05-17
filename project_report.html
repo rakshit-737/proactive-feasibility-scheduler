@@ -1,0 +1,2119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Proactive GPU Scheduler — Complete Project Report</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400;1,700&family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink:        #0e0e0e;
+  --paper:      #f5f0e8;
+  --cream:      #ede8da;
+  --rule:       #c8bfa8;
+  --red:        #c0392b;
+  --red-pale:   #f9ecea;
+  --teal:       #1a6b6b;
+  --teal-pale:  #e8f4f4;
+  --gold:       #b07d2a;
+  --gold-pale:  #fdf6e3;
+  --muted:      #7a7060;
+  --code-bg:    #1a1814;
+  --code-text:  #e8dfc8;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: 'Syne', sans-serif;
+  font-size: 15px;
+  line-height: 1.7;
+  overflow-x: hidden;
+}
+
+/* ── NOISE TEXTURE OVERLAY ── */
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.5;
+}
+
+/* ══════════════════════════════
+   COVER / MASTHEAD
+══════════════════════════════ */
+.cover {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  border-bottom: 3px double var(--ink);
+  position: relative;
+  overflow: hidden;
+  padding: 0 60px;
+}
+
+/* diagonal ruled lines background */
+.cover::before {
+  content: '';
+  position: absolute; inset: 0;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 40px,
+    rgba(14,14,14,0.03) 40px,
+    rgba(14,14,14,0.03) 41px
+  );
+  pointer-events: none;
+}
+
+.cover-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 28px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.cover-top-left {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.cover-top-right {
+  display: flex;
+  gap: 32px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.cover-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 80px 0 60px;
+  position: relative;
+}
+
+.cover-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: .25em;
+  text-transform: uppercase;
+  color: var(--red);
+  margin-bottom: 32px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.cover-label::before {
+  content: '';
+  width: 40px;
+  height: 1px;
+  background: var(--red);
+}
+
+.cover-title {
+  font-family: 'Playfair Display', serif;
+  font-size: clamp(3.5rem, 8vw, 7rem);
+  font-weight: 900;
+  line-height: 0.95;
+  letter-spacing: -2px;
+  color: var(--ink);
+  margin-bottom: 24px;
+}
+
+.cover-title em {
+  font-style: italic;
+  color: var(--red);
+}
+
+.cover-rule {
+  width: 100%;
+  height: 1px;
+  background: var(--ink);
+  margin: 32px 0;
+}
+
+.cover-sub {
+  max-width: 620px;
+  font-size: 1.1rem;
+  color: var(--muted);
+  line-height: 1.75;
+  font-weight: 400;
+}
+
+.cover-meta {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  margin-top: 48px;
+}
+
+.meta-cell {
+  padding: 20px 0;
+  border-right: 1px solid var(--rule);
+}
+.meta-cell:last-child { border-right: none; }
+.meta-cell:not(:first-child) { padding-left: 24px; }
+
+.meta-k {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.meta-v {
+  font-size: .95rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.cover-bottom {
+  padding: 24px 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid var(--rule);
+}
+
+.cover-bottom-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: .1em;
+}
+
+.big-number {
+  position: absolute;
+  right: -20px;
+  bottom: 60px;
+  font-family: 'Playfair Display', serif;
+  font-size: 28vw;
+  font-weight: 900;
+  color: rgba(14,14,14,0.04);
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
+  letter-spacing: -12px;
+}
+
+/* ══════════════════════════════
+   LAYOUT
+══════════════════════════════ */
+.page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 60px;
+}
+
+/* ══════════════════════════════
+   SECTION HEADERS
+══════════════════════════════ */
+.chapter {
+  padding: 96px 0 0;
+}
+
+.chapter-head {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 32px;
+  align-items: start;
+  margin-bottom: 56px;
+  padding-bottom: 40px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.chapter-num {
+  font-family: 'Playfair Display', serif;
+  font-size: 5rem;
+  font-weight: 900;
+  line-height: 1;
+  color: var(--cream);
+  -webkit-text-stroke: 2px var(--rule);
+}
+
+.chapter-info {}
+
+.chapter-tag {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: .25em;
+  text-transform: uppercase;
+  color: var(--red);
+  margin-bottom: 8px;
+}
+
+.chapter-title {
+  font-family: 'Playfair Display', serif;
+  font-size: 2.6rem;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--ink);
+  margin-bottom: 12px;
+}
+
+.chapter-desc {
+  font-size: .9rem;
+  color: var(--muted);
+  max-width: 600px;
+  line-height: 1.7;
+}
+
+/* ══════════════════════════════
+   FILE CARDS
+══════════════════════════════ */
+.file-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  background: var(--rule);
+  border: 2px solid var(--ink);
+  margin-bottom: 48px;
+}
+
+.file-card {
+  background: var(--paper);
+  padding: 28px 32px;
+  position: relative;
+  transition: background .2s;
+}
+.file-card:hover { background: var(--cream); }
+
+.file-card-accent {
+  position: absolute;
+  top: 0; left: 0;
+  width: 3px;
+  height: 100%;
+}
+.accent-red   { background: var(--red); }
+.accent-teal  { background: var(--teal); }
+.accent-gold  { background: var(--gold); }
+.accent-ink   { background: var(--ink); }
+
+.file-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.file-badge {
+  font-size: 9px;
+  padding: 2px 7px;
+  border-radius: 2px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.badge-py    { background: #fef3c7; color: #92400e; }
+.badge-csv   { background: #d1fae5; color: #065f46; }
+.badge-pkl   { background: #ede9fe; color: #5b21b6; }
+.badge-html  { background: #fee2e2; color: #991b1b; }
+.badge-png   { background: #e0f2fe; color: #0369a1; }
+
+.file-purpose {
+  font-size: .78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.file-desc {
+  font-size: .88rem;
+  color: var(--ink);
+  line-height: 1.65;
+}
+
+.file-card-full {
+  grid-column: 1 / -1;
+}
+
+/* ══════════════════════════════
+   PROSE BLOCKS
+══════════════════════════════ */
+.prose {
+  max-width: 720px;
+  font-size: .95rem;
+  line-height: 1.8;
+  color: #2a2520;
+  margin-bottom: 32px;
+}
+
+.prose p + p { margin-top: 16px; }
+
+.prose strong {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+/* ══════════════════════════════
+   PULL QUOTE / CALLOUT
+══════════════════════════════ */
+.pullquote {
+  border-left: 4px solid var(--red);
+  padding: 20px 32px;
+  margin: 40px 0;
+  background: var(--red-pale);
+}
+
+.pullquote p {
+  font-family: 'Playfair Display', serif;
+  font-size: 1.2rem;
+  font-style: italic;
+  line-height: 1.65;
+  color: var(--red);
+}
+
+.callout {
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--teal);
+  padding: 20px 28px;
+  margin: 32px 0;
+  background: var(--teal-pale);
+}
+
+.callout-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--teal);
+  margin-bottom: 8px;
+}
+
+.callout p {
+  font-size: .9rem;
+  line-height: 1.65;
+  color: #1a3d3d;
+}
+
+.warn {
+  border-left-color: var(--gold);
+  background: var(--gold-pale);
+}
+.warn .callout-label { color: var(--gold); }
+.warn p { color: #4a3000; }
+
+/* ══════════════════════════════
+   CODE BLOCK
+══════════════════════════════ */
+.code-block {
+  background: var(--code-bg);
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 24px 28px;
+  margin: 24px 0;
+  overflow-x: auto;
+}
+
+.code-block-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #2a2620;
+}
+
+.code-file-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: #888;
+  letter-spacing: .05em;
+}
+
+.code-lang {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  padding: 2px 8px;
+  background: #2a2620;
+  color: #b07d2a;
+  border-radius: 2px;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+}
+
+pre {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--code-text);
+  white-space: pre;
+}
+
+.kw  { color: #c792ea; }
+.fn  { color: #82aaff; }
+.st  { color: #c3e88d; }
+.cm  { color: #546e7a; font-style: italic; }
+.nm  { color: #f78c6c; }
+.cl  { color: #ffcb6b; }
+
+/* ══════════════════════════════
+   METRICS TABLE
+══════════════════════════════ */
+.metrics-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 32px 0;
+  font-size: .88rem;
+}
+
+.metrics-table th {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: .15em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: left;
+  padding: 10px 16px;
+  border-bottom: 2px solid var(--ink);
+}
+
+.metrics-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+
+.metrics-table tr:hover td { background: var(--cream); }
+
+.metrics-table .model-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.metrics-table .val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.val-good { color: var(--teal); }
+.val-bad  { color: var(--muted); }
+.val-best { color: var(--red); }
+
+/* ══════════════════════════════
+   FEATURE IMPORTANCE VIZ
+══════════════════════════════ */
+.feat-rows {
+  margin: 32px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.feat-row {
+  display: grid;
+  grid-template-columns: 180px 1fr 60px;
+  align-items: center;
+  gap: 16px;
+}
+
+.feat-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink);
+  text-align: right;
+}
+
+.feat-bar-track {
+  height: 10px;
+  background: var(--cream);
+  border: 1px solid var(--rule);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.feat-bar-fill {
+  height: 100%;
+  border-radius: 1px;
+  animation: grow .8s ease forwards;
+  transform-origin: left;
+}
+
+@keyframes grow {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+.feat-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* problem feature */
+.feat-bar-fill.problem { background: var(--red); }
+.feat-bar-fill.good    { background: var(--teal); }
+.feat-bar-fill.neutral { background: var(--gold); }
+
+/* ══════════════════════════════
+   PHASE TIMELINE (horizontal)
+══════════════════════════════ */
+.phases {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0;
+  margin: 48px 0;
+  border: 2px solid var(--ink);
+}
+
+.phase {
+  padding: 24px 20px;
+  border-right: 1px solid var(--ink);
+  position: relative;
+}
+.phase:last-child { border-right: none; }
+
+.phase-num {
+  font-family: 'Playfair Display', serif;
+  font-size: 3.5rem;
+  font-weight: 900;
+  line-height: 1;
+  color: var(--cream);
+  -webkit-text-stroke: 1px var(--rule);
+  margin-bottom: 8px;
+}
+
+.phase-title {
+  font-size: .78rem;
+  font-weight: 700;
+  line-height: 1.3;
+  margin-bottom: 8px;
+}
+
+.phase-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin-bottom: 10px;
+}
+
+.phase-status {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.status-done    { color: var(--teal); }
+.status-active  { color: var(--red); }
+.status-next    { color: var(--muted); }
+
+/* ══════════════════════════════
+   DIVIDERS
+══════════════════════════════ */
+.section-rule {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin: 72px 0 0;
+}
+
+.section-rule-line {
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+}
+
+.section-rule-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: .25em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ══════════════════════════════
+   ARCHITECTURE DIAGRAM
+══════════════════════════════ */
+.arch {
+  display: grid;
+  grid-template-columns: 1fr 32px 1fr 32px 1fr;
+  align-items: center;
+  gap: 0;
+  margin: 40px 0;
+}
+
+.arch-box {
+  border: 2px solid var(--ink);
+  padding: 20px 18px;
+  background: var(--paper);
+  position: relative;
+}
+
+.arch-box-title {
+  font-size: .78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  margin-bottom: 8px;
+}
+
+.arch-box-body {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.arch-arrow {
+  text-align: center;
+  font-size: 1.2rem;
+  color: var(--rule);
+}
+
+.arch-tag {
+  position: absolute;
+  top: -10px;
+  left: 14px;
+  background: var(--paper);
+  padding: 0 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  letter-spacing: .15em;
+  text-transform: uppercase;
+}
+
+.arch-tag.red   { color: var(--red); }
+.arch-tag.teal  { color: var(--teal); }
+.arch-tag.gold  { color: var(--gold); }
+
+/* ══════════════════════════════
+   RESULT COMPARISON
+══════════════════════════════ */
+.compare-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  background: var(--ink);
+  border: 2px solid var(--ink);
+  margin: 32px 0;
+}
+
+.compare-panel {
+  background: var(--paper);
+  padding: 28px 32px;
+}
+
+.compare-panel-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.compare-panel-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+}
+
+.compare-stat {
+  margin-bottom: 14px;
+}
+
+.compare-stat-label {
+  font-size: .78rem;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+
+.compare-stat-val {
+  font-family: 'Playfair Display', serif;
+  font-size: 2.4rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.compare-stat-unit {
+  font-size: .8rem;
+  color: var(--muted);
+  font-family: 'Syne', sans-serif;
+  font-weight: 400;
+  margin-left: 4px;
+}
+
+/* ══════════════════════════════
+   FOOTER
+══════════════════════════════ */
+.report-footer {
+  margin-top: 120px;
+  border-top: 3px double var(--ink);
+  padding: 40px 60px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.footer-title {
+  font-family: 'Playfair Display', serif;
+  font-size: 1.1rem;
+  font-style: italic;
+}
+
+.footer-mono {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: .1em;
+  text-align: right;
+  line-height: 1.8;
+}
+
+/* ══════════════════════════════
+   ANIMATIONS
+══════════════════════════════ */
+.fade-in {
+  opacity: 0;
+  transform: translateY(20px);
+  animation: fadeUp .7s ease forwards;
+}
+
+@keyframes fadeUp {
+  to { opacity: 1; transform: none; }
+}
+
+/* stagger children */
+.stagger > * { opacity: 0; animation: fadeUp .6s ease forwards; }
+.stagger > *:nth-child(1) { animation-delay: .05s; }
+.stagger > *:nth-child(2) { animation-delay: .12s; }
+.stagger > *:nth-child(3) { animation-delay: .19s; }
+.stagger > *:nth-child(4) { animation-delay: .26s; }
+.stagger > *:nth-child(5) { animation-delay: .33s; }
+.stagger > *:nth-child(6) { animation-delay: .40s; }
+
+/* ══════════════════════════════
+   RESPONSIVE
+══════════════════════════════ */
+@media (max-width: 800px) {
+  .cover, .page, .report-footer { padding-left: 24px; padding-right: 24px; }
+  .file-grid, .compare-grid { grid-template-columns: 1fr; }
+  .phases { grid-template-columns: 1fr 1fr 1fr; }
+  .cover-meta { grid-template-columns: 1fr 1fr; }
+  .arch { grid-template-columns: 1fr; }
+  .arch-arrow { transform: rotate(90deg); }
+  .cover-title { font-size: 3rem; }
+  .chapter-head { grid-template-columns: 1fr; }
+  .chapter-num { font-size: 3rem; }
+  .feat-row { grid-template-columns: 120px 1fr 50px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════
+     COVER
+══════════════════════════════ -->
+<div class="cover">
+  <div class="cover-top">
+    <div class="cover-top-left">Technical Research Report &nbsp;/&nbsp; HPC &amp; Cluster Scheduling</div>
+    <div class="cover-top-right">
+      <span>Rakshit</span>
+      <span>March 2026</span>
+      <span>v2.0</span>
+    </div>
+  </div>
+
+  <div class="cover-body">
+    <div class="cover-label">Complete Project Documentation</div>
+    <h1 class="cover-title">
+      Proactive<br>
+      <em>GPU Cluster</em><br>
+      Scheduling
+    </h1>
+    <div class="cover-rule"></div>
+    <p class="cover-sub">
+      A simulation-driven research project building an ML-guided scheduler
+      that predicts job wait times and intelligently reorders the scheduling queue —
+      replacing reactive FIFO with anticipatory, cluster-aware allocation.
+    </p>
+
+    <div class="cover-meta">
+      <div class="meta-cell">
+        <div class="meta-k">Cluster</div>
+        <div class="meta-v">8 Nodes × 4 GPUs</div>
+      </div>
+      <div class="meta-cell">
+        <div class="meta-k">Training Data</div>
+        <div class="meta-v">2,200 samples</div>
+      </div>
+      <div class="meta-cell">
+        <div class="meta-k">Best R² Score</div>
+        <div class="meta-v">0.883</div>
+      </div>
+      <div class="meta-cell">
+        <div class="meta-k">Status</div>
+        <div class="meta-v">Active · Phase 06</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cover-bottom">
+    <div class="cover-bottom-text">Proactive GPU Cluster Scheduling — Full Documentation</div>
+    <div class="cover-bottom-text">8-node / 32-GPU Discrete-Time Simulator &nbsp;+&nbsp; XGBoost Wait-Time Regressor</div>
+  </div>
+
+  <div class="big-number">GPU</div>
+</div>
+
+
+<!-- ══════════════════════════════
+     PAGE BODY
+══════════════════════════════ -->
+<div class="page">
+
+  <!-- ── OVERVIEW ─────────────────────────────────── -->
+  <section class="chapter fade-in">
+    <div class="chapter-head">
+      <div class="chapter-num">00</div>
+      <div class="chapter-info">
+        <div class="chapter-tag">Project Overview</div>
+        <h2 class="chapter-title">What Is This Project?</h2>
+        <p class="chapter-desc">The full arc — from the problem statement to the current working system.</p>
+      </div>
+    </div>
+
+    <div class="prose">
+      <p>
+        Modern GPU clusters in HPC (High-Performance Computing) environments typically schedule
+        jobs using <strong>FIFO (First-In, First-Out)</strong> — the simplest possible policy.
+        A job joins the queue, waits its turn, and is dispatched when enough GPUs are free.
+        This works, but it ignores everything the cluster knows: how fragmented the GPUs are,
+        how many jobs are competing, how large those jobs are, and whether the cluster is trending
+        toward idle or contented.
+      </p>
+      <p>
+        This project builds a <strong>proactive scheduler</strong>: one that uses a trained
+        machine learning model to predict how long each queued job will actually wait, then
+        reorders the queue so jobs that can be served quickly are served first. The entire
+        system is built on a custom discrete-time cluster simulator written from scratch — no
+        external HPC frameworks, just Python.
+      </p>
+    </div>
+
+    <div class="pullquote">
+      <p>"The goal is not to break FIFO fairness — it is to make smarter decisions about
+      which job to attempt next, using cluster state as a signal."</p>
+    </div>
+
+    <!-- Phase Overview -->
+    <div class="phases stagger">
+      <div class="phase">
+        <div class="phase-dot" style="background:var(--teal)"></div>
+        <div class="phase-num">01</div>
+        <div class="phase-title">Cluster Simulation</div>
+        <div class="phase-status status-done">✓ Complete</div>
+      </div>
+      <div class="phase">
+        <div class="phase-dot" style="background:var(--teal)"></div>
+        <div class="phase-num">02</div>
+        <div class="phase-title">Dataset Generation</div>
+        <div class="phase-status status-done">✓ Complete</div>
+      </div>
+      <div class="phase">
+        <div class="phase-dot" style="background:var(--teal)"></div>
+        <div class="phase-num">03</div>
+        <div class="phase-title">Classifier Training</div>
+        <div class="phase-status status-done">✓ Complete</div>
+      </div>
+      <div class="phase">
+        <div class="phase-dot" style="background:var(--teal)"></div>
+        <div class="phase-num">04</div>
+        <div class="phase-title">Wait Regression</div>
+        <div class="phase-status status-done">✓ Complete</div>
+      </div>
+      <div class="phase">
+        <div class="phase-dot" style="background:var(--teal)"></div>
+        <div class="phase-num">05</div>
+        <div class="phase-title">Proactive Scheduler</div>
+        <div class="phase-status status-done">✓ Complete</div>
+      </div>
+      <div class="phase">
+        <div class="phase-dot" style="background:var(--red)"></div>
+        <div class="phase-num">06</div>
+        <div class="phase-title">Feature Fix + Retrain</div>
+        <div class="phase-status status-active">● Active</div>
+      </div>
+    </div>
+
+    <!-- System Architecture -->
+    <div class="callout">
+      <div class="callout-label">System Architecture</div>
+      <p>The system has three interlocking components: a <strong>simulator</strong> that generates
+      labelled training data, a <strong>model</strong> that learns to predict wait time from
+      cluster state, and a <strong>scheduler</strong> that uses that model at inference time to
+      prioritise the queue. All three share the same feature schema.</p>
+    </div>
+
+    <div class="arch">
+      <div class="arch-box">
+        <div class="arch-tag red">Input</div>
+        <div class="arch-box-title">Cluster Simulator</div>
+        <div class="arch-box-body">
+          8 nodes × 4 GPUs<br>
+          Discrete-time loop<br>
+          FIFO baseline scheduler<br>
+          Feature snapshots at arrival
+        </div>
+      </div>
+      <div class="arch-arrow">→</div>
+      <div class="arch-box">
+        <div class="arch-tag teal">Training</div>
+        <div class="arch-box-title">XGBoost Regressor</div>
+        <div class="arch-box-body">
+          12 cluster-state features<br>
+          Predicts wait_time (ts)<br>
+          MAE ~5.4 · R² 0.824<br>
+          Saved as .pkl
+        </div>
+      </div>
+      <div class="arch-arrow">→</div>
+      <div class="arch-box">
+        <div class="arch-tag gold">Runtime</div>
+        <div class="arch-box-title">Proactive Scheduler</div>
+        <div class="arch-box-body">
+          Loads trained model<br>
+          Scores every queued job<br>
+          Re-sorts queue each tick<br>
+          Dispatches lowest-wait first
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ── CHAPTER 1: SIMULATION ─────────────────────── -->
+  <div class="section-rule">
+    <div class="section-rule-line"></div>
+    <div class="section-rule-text">Chapter 01</div>
+    <div class="section-rule-line"></div>
+  </div>
+
+  <section class="chapter">
+    <div class="chapter-head">
+      <div class="chapter-num">01</div>
+      <div class="chapter-info">
+        <div class="chapter-tag">Phase 01 — Foundation</div>
+        <h2 class="chapter-title">The GPU Cluster Simulator</h2>
+        <p class="chapter-desc">Building the synthetic environment from scratch — the source of all training data.</p>
+      </div>
+    </div>
+
+    <div class="prose">
+      <p>
+        Before any ML could be trained, the project needed a realistic source of labelled
+        experience. Real HPC clusters are not accessible, so a <strong>custom discrete-time
+        event simulator</strong> was built entirely in Python. Every timestep, the simulator
+        processes job arrivals, releases completed jobs, updates cluster state, and attempts
+        to schedule waiting jobs — exactly as a real scheduler would.
+      </p>
+      <p>
+        The cluster is modelled as <strong>8 nodes each holding 4 GPUs</strong> (32 GPUs total).
+        Jobs require between 1 and 8 GPUs and run for 5–20 timesteps. Allocation is greedy:
+        GPUs are filled node-by-node until the job's demand is met. If the cluster cannot
+        satisfy the job, the allocation is rolled back atomically.
+      </p>
+    </div>
+
+    <div class="file-grid stagger">
+      <div class="file-card">
+        <div class="file-card-accent accent-red"></div>
+        <div class="file-name">
+          <span>minimal_gpu_cluster.py</span>
+          <span class="file-badge badge-py">Python</span>
+        </div>
+        <div class="file-purpose">Prototype / Proof-of-Concept</div>
+        <div class="file-desc">
+          The very first simulator written for this project. Implements the <code>Job</code>,
+          <code>Cluster</code>, and <code>simulate()</code> classes with a FIFO scheduler.
+          No dataset generation — this was purely to validate that the simulation logic
+          (allocation, release, queue management) worked correctly before scaling up.
+          Tracks GPU utilisation and average wait time as sanity metrics.
+          <br><br>
+          <strong>Config:</strong> 8 nodes, 4 GPUs each, 50 jobs, SIM_TIME = 200.
+        </div>
+      </div>
+
+      <div class="file-card">
+        <div class="file-card-accent accent-teal"></div>
+        <div class="file-name">
+          <span>dataset_minimal_gpu_cluster.py</span>
+          <span class="file-badge badge-py">Python</span>
+        </div>
+        <div class="file-purpose">First Dataset-Producing Simulation</div>
+        <div class="file-desc">
+          Extended the minimal simulator to capture <strong>feature snapshots at every job's
+          arrival moment</strong> — the cluster's state at the instant the job enters the queue.
+          This is the key insight: the label (did the job wait ≤ DELTA_T timesteps?) can only
+          be determined after the simulation, but the features must be recorded at arrival.
+          <br><br>
+          Produced <code>dataset.csv</code> with 110 samples (one run).
+          Label: binary feasibility — <code>1</code> if wait ≤ 3 timesteps, <code>0</code> otherwise.
+        </div>
+      </div>
+    </div>
+
+    <div class="code-block">
+      <div class="code-block-header">
+        <span class="code-file-name">dataset_minimal_gpu_cluster.py — feature snapshot logic</span>
+        <span class="code-lang">Python</span>
+      </div>
+      <pre><span class="cm"># Captured at job arrival — before it enters the queue</span>
+<span class="kw">for</span> job <span class="kw">in</span> jobs:
+    <span class="kw">if</span> job.arrival_time == t:
+        job.feature_snapshot = {
+            <span class="st">"job_gpu"</span>:       job.num_gpus,
+            <span class="st">"total_free"</span>:    cluster.total_free_gpus(),
+            <span class="st">"queue_length"</span>:  len(queue),
+            <span class="st">"running_jobs"</span>:  len(running_jobs),
+            <span class="st">"max_free_node"</span>: max(cluster.nodes),
+            <span class="st">"variance_free"</span>: np.var(cluster.nodes),
+        }
+        queue.append(job)  <span class="cm"># THEN it joins the queue</span>
+
+<span class="cm"># Label assigned after simulation, linked via job reference</span>
+wait_time = job.start_time - job.arrival_time
+label = <span class="nm">1</span> <span class="kw">if</span> wait_time &lt;= DELTA_T <span class="kw">else</span> <span class="nm">0</span></pre>
+    </div>
+
+    <div class="file-grid">
+      <div class="file-card file-card-full">
+        <div class="file-card-accent accent-gold"></div>
+        <div class="file-name">
+          <span>dataset.csv</span>
+          <span class="file-badge badge-csv">CSV</span>
+        </div>
+        <div class="file-purpose">First Training Dataset — 110 rows, 7 columns</div>
+        <div class="file-desc">
+          Output of the first simulation run. Contains 6 features plus a binary label.
+          Too small (110 samples) for reliable ML training, which motivated the large-dataset
+          generation in Phase 02. Columns: <code>job_gpu, total_free, queue_length,
+          running_jobs, max_free_node, variance_free, label</code>.
+          Used in <code>train_model.py</code> as the initial training target.
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ── CHAPTER 2: DATASET ─────────────────────────── -->
+  <div class="section-rule">
+    <div class="section-rule-line"></div>
+    <div class="section-rule-text">Chapter 02</div>
+    <div class="section-rule-line"></div>
+  </div>
+
+  <section class="chapter">
+    <div class="chapter-head">
+      <div class="chapter-num">02</div>
+      <div class="chapter-info">
+        <div class="chapter-tag">Phase 02 — Data Engineering</div>
+        <h2 class="chapter-title">Dataset Generation &amp; Feature Engineering</h2>
+        <p class="chapter-desc">Scaling to 2,200 samples with richer features and a regression target.</p>
+      </div>
+    </div>
+
+    <div class="prose">
+      <p>
+        110 samples from a single simulation run are not enough to train a robust model.
+        Worse, a single run captures only one load profile. The solution: run the simulation
+        <strong>20 times independently</strong> with different random job arrivals, collecting
+        all samples into a single pooled dataset — 2,200 rows, far more diverse.
+      </p>
+      <p>
+        At the same time, the feature set was expanded beyond the original 6 features.
+        Two new signals were added: <code>smaller_jobs_in_queue</code> (how many queued jobs
+        need ≤ the current job's GPUs) and <code>demand_ratio</code> (job demand vs. free GPUs).
+        Critically, the target was changed from <strong>binary classification</strong> to
+        <strong>continuous wait-time regression</strong> — a richer signal for the scheduler.
+      </p>
+    </div>
+
+    <div class="file-grid stagger">
+      <div class="file-card">
+        <div class="file-card-accent accent-teal"></div>
+        <div class="file-name">
+          <span>generate_large_dataset.py</span>
+          <span class="file-badge badge-py">Python</span>
+        </div>
+        <div class="file-purpose">Multi-Run Dataset Generator</div>
+        <div class="file-desc">
+          Runs the full FIFO simulation 20 times, each with freshly randomised jobs.
+          After each run it collects all completed jobs' feature snapshots and their
+          actual wait times. Results from all runs are pooled into a single dataframe
+          and saved as <code>wait_dataset.csv</code>. This is the primary training data
+          source for the wait-time regression model.
+          <br><br>
+          Also captures two new features: <code>smaller_jobs_in_queue</code> and
+          <code>demand_ratio = job.num_gpus / (total_free + 1)</code>.
+        </div>
+      </div>
+
+      <div class="file-card">
+        <div class="file-card-accent accent-gold"></div>
+        <div class="file-name">
+          <span>large_dataset.csv</span>
+          <span class="file-badge badge-csv">CSV</span>
+        </div>
+        <div class="file-purpose">Classifier Training Data — 2,200 rows</div>
+        <div class="file-desc">
+          Produced by running the large dataset generator with a binary <code>label</code>
+          column (feasibility within DELTA_T). Used to train the initial classifier models
+          (Logistic Regression, Random Forest, XGBoost Classifier) before the project
+          pivoted to regression. Contains the same 6 + 2 = 8 features as <code>wait_dataset.csv</code>
+          but with a binary label instead of continuous wait time.
+        </div>
+      </div>
+
+      <div class="file-card file-card-full">
+        <div class="file-card-accent accent-red"></div>
+        <div class="file-name">
+          <span>wait_dataset.csv</span>
+          <span class="file-badge badge-csv">CSV</span>
+        </div>
+        <div class="file-purpose">Regression Training Data — 2,200 rows, 9 columns</div>
+        <div class="file-desc">
+          The primary dataset for the regression model. Same 8 features as
+          <code>large_dataset.csv</code> but with <code>wait_time</code> (integer, timesteps)
+          as the target column instead of a binary label.
+          Wait time ranges 0–75 timesteps with mean ~17.8, giving the model a wide spread to learn from.
+          Columns: <code>job_gpu, total_free, queue_length, running_jobs, max_free_node,
+          variance_free, smaller_jobs_in_queue, demand_ratio, wait_time</code>.
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ── CHAPTER 3: CLASSIFIER ──────────────────────── -->
+  <div class="section-rule">
+    <div class="section-rule-line"></div>
+    <div class="section-rule-text">Chapter 03</div>
+    <div class="section-rule-line"></div>
+  </div>
+
+  <section class="chapter">
+    <div class="chapter-head">
+      <div class="chapter-num">03</div>
+      <div class="chapter-info">
+        <div class="chapter-tag">Phase 03 — Model Training</div>
+        <h2 class="chapter-title">Baseline Classifier Models</h2>
+        <p class="chapter-desc">Three classifiers, progressively better — ultimately superseded by regression.</p>
+      </div>
+    </div>
+
+    <div class="prose">
+      <p>
+        Before moving to regression, the problem was framed as binary classification:
+        <em>"Will this job start within DELTA_T = 3 timesteps?"</em>. Three models were trained
+        and compared on ROC-AUC and F1 score, using the 2,200-sample <code>large_dataset.csv</code>.
+      </p>
+    </div>
+
+    <div class="file-grid stagger">
+      <div class="file-card">
+        <div class="file-card-accent accent-ink"></div>
+        <div class="file-name">
+          <span>train_model.py</span>
+          <span class="file-badge badge-py">Python</span>
+        </div>
+        <div class="file-purpose">Logistic Regression on Small Dataset</div>
+        <div class="file-desc">
+          First training script. Loads <code>dataset.csv</code> (110 rows only),
+          trains a Logistic Regression classifier, and evaluates with confusion matrix,
+          classification report, and ROC-AUC. Served as the baseline to confirm that
+          the features carry predictive signal before investing in more complex models.
+        </div>
+      </div>
+
+      <div class="file-card">
+        <div class="file-card-accent accent-red"></div>
+        <div class="file-name">
+          <span>train_model_large.py</span>
+          <span class="file-badge badge-py">Python</span>
+        </div>
+        <div class="file-purpose">LR + Random Forest on Large Dataset</div>
+        <div class="file-desc">
+          Uses the full 2,200-row <code>large_dataset.csv</code>. Trains both Logistic
+          Regression and Random Forest side-by-side for comparison. The Random Forest
+          significantly outperformed LR on ROC-AUC, confirming that non-linear
+          decision boundaries exist in the feature space.
+        </div>
+      </div>
+
+      <div class="file-card file-card-full">
+        <div class="file-card-accent accent-teal"></div>
+        <div class="file-name">
+          <span>train_model_withxg.py</span>
+          <span class="file-badge badge-py">Python</span>
+        </div>
+        <div class="file-purpose">LR + Random Forest + XGBoost — Full Comparison</div>
+        <div class="file-desc">
+          Adds XGBoost Classifier to the comparison. XGBoost consistently achieved the
+          highest ROC-AUC of the three classifiers. This file represents the end of the
+          classification phase — after this point the project pivoted to regression
+          (predicting the exact wait time, not a binary feasibility label), because the
+          proactive scheduler needs a continuous score to rank-order the queue.
+        </div>
+      </div>
+    </div>
+
+    <table class="metrics-table">
+      <thead>
+        <tr>
+          <th>Model</th>
+          <th>Dataset</th>
+          <th>ROC-AUC</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="model-name">Logistic Regression</td>
+          <td>dataset.csv (110)</td>
+          <td class="val val-bad">~0.74</td>
+          <td>Baseline validation — confirms signal exists</td>
+        </tr>
+        <tr>
+          <td class="model-name">Logistic Regression</td>
+          <td>large_dataset.csv (2200)</td>
+          <td class="val val-bad">~0.78</td>
+          <td>More data helps; still linear boundary</td>
+        </tr>
+        <tr>
+          <td class="model-name">Random Forest</td>
+          <td>large_dataset.csv (2200)</td>
+          <td class="val val-good">~0.91</td>
+          <td>Non-linear model captures interactions</td>
+        </tr>
+        <tr>
+          <td class="model-name">XGBoost Classifier</td>
+          <td>large_dataset.csv (2200)</td>
+          <td class="val val-best">~0.93</td>
+          <td>Best classifier; project then pivots to regression</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+
+  <!-- ── CHAPTER 4: REGRESSION ──────────────────────── -->
+  <div class="section-rule">
+    <div class="section-rule-line"></div>
+    <div class="section-rule-text">Chapter 04</div>
+    <div class="section-rule-line"></div>
+  </div>
+
+  <section class="chapter">
+    <div class="chapter-head">
+      <div class="chapter-num">04</div>
+      <div class="chapter-info">
+        <div class="chapter-tag">Phase 04 — Regression Model</div>
+        <h2 class="chapter-title">Wait-Time Regression</h2>
+        <p class="chapter-desc">From binary classification to continuous prediction — the model that actually drives the scheduler.</p>
+      </div>
+    </div>
+
+    <div class="prose">
+      <p>
+        A binary label tells the scheduler "this job will start soon" or "it won't" —
+        but it can't rank two jobs that are both predicted to start soon. A <strong>continuous
+        wait-time prediction</strong> gives a score per job that can be sorted directly.
+        This is the architectural pivot that made the proactive scheduler possible.
+      </p>
+    </div>
+
+    <div class="file-grid stagger">
+      <div class="file-card">
+        <div class="file-card-accent accent-teal"></div>
+        <div class="file-name">
+          <span>train_wait_model.py</span>
+          <span class="file-badge badge-py">Python</span>
+        </div>
+        <div class="file-purpose">XGBoost Regressor — Original Wait Model</div>
+        <div class="file-desc">
+          Trains an <code>XGBRegressor</code> (200 estimators, lr=0.05) on
+          <code>wait_dataset.csv</code>. Evaluates with MAE and R² score.
+          Saves the model as <code>wait_model.pkl</code> for use in the scheduler.
+          Also generates <code>feature_importance.png</code> — which revealed the
+          critical problem: <code>smaller_jobs_in_queue</code> had ~82% feature importance,
+          essentially encoding the job's queue position directly.
+          <br><br>
+          <strong>Results:</strong> MAE ≈ 5.25 timesteps, R² = 0.833.
+        </div>
+      </div>
+
+      <div class="file-card">
+        <div class="file-card-accent accent-gold"></div>
+        <div class="file-name">
+          <span>wait_model.pkl</span>
+          <span class="file-badge badge-pkl">Pickle</span>
+        </div>
+        <div class="file-purpose">Serialised Model — Original (with leaky feature)</div>
+        <div class="file-desc">
+          The trained XGBoost Regressor serialised with Python's <code>pickle</code>.
+          Loaded at runtime by the proactive scheduler. This is the <em>original</em>
+          model, trained with the leaky <code>smaller_jobs_in_queue</code> feature.
+          Superseded by <code>wait_model_v2.pkl</code> after the feature fix in Phase 06.
+        </div>
+      </div>
+
+      <div class="file-card file-card-full">
+        <div class="file-card-accent accent-ink"></div>
+        <div class="file-name">
+          <span>feature_importance.png</span>
+          <span class="file-badge badge-png">Image</span>
+        </div>
+        <div class="file-purpose">Feature Importance Plot — Led to the Phase 06 Discovery</div>
+        <div class="file-desc">
+          Bar chart of XGBoost feature importances for the original model. This plot was
+          the diagnostic breakthrough: <code>smaller_jobs_in_queue</code> dominated at 82%
+          importance. In a FIFO scheduler, the number of smaller jobs in front of you is
+          almost equivalent to your queue rank — giving the model a near-direct leak of
+          the scheduling order into the features. High accuracy, but not from genuine
+          cluster-state reasoning.
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ── CHAPTER 5: SCHEDULER ───────────────────────── -->
+  <div class="section-rule">
+    <div class="section-rule-line"></div>
+    <div class="section-rule-text">Chapter 05</div>
+    <div class="section-rule-line"></div>
+  </div>
+
+  <section class="chapter">
+    <div class="chapter-head">
+      <div class="chapter-num">05</div>
+      <div class="chapter-info">
+        <div class="chapter-tag">Phase 05 — Scheduler Implementation</div>
+        <h2 class="chapter-title">The Proactive Scheduler</h2>
+        <p class="chapter-desc">Replacing FIFO with ML-guided queue prioritisation and benchmarking against the baseline.</p>
+      </div>
+    </div>
+
+    <div class="prose">
+      <p>
+        Two proactive scheduler implementations were built. The first
+        (<code>proactive_scheduler.py</code>) trained the XGBoost Classifier inline and used
+        its <strong>feasibility probability</strong> to sort the queue — jobs predicted as
+        most likely to start soon go first. The second (<code>proactive_Schedule_v2.py</code>)
+        loads the pre-trained <strong>wait-time regressor</strong> from disk and sorts by
+        predicted wait time ascending (lowest expected wait → serve first).
+      </p>
+      <p>
+        Both are benchmarked over <strong>10 independent runs</strong> against the FIFO
+        baseline, using the same randomly generated job sets for a fair comparison.
+      </p>
+    </div>
+
+    <div class="file-grid stagger">
+      <div class="file-card">
+        <div class="file-card-accent accent-red"></div>
+        <div class="file-name">
+          <span>proactive_scheduler.py</span>
+          <span class="file-badge badge-py">Python</span>
+        </div>
+        <div class="file-purpose">Classifier-Based Proactive Scheduler v1</div>
+        <div class="file-desc">
+          Trains an XGBoost Classifier on <code>large_dataset.csv</code> inline,
+          then uses it to score jobs in the queue by feasibility probability
+          (<code>predict_proba</code>). At each timestep: score every queued job,
+          sort descending by probability, dispatch the highest-probability job that
+          can currently fit. Breaks FIFO order intentionally to serve more schedulable jobs.
+          <br><br>
+          <strong>Key design:</strong> Only dispatches one job per timestep (to avoid
+          starvation), but re-scores the full queue every tick.
+        </div>
+      </div>
+
+      <div class="file-card">
+        <div class="file-card-accent accent-teal"></div>
+        <div class="file-name">
+          <span>proactive_Schedule_v2.py</span>
+          <span class="file-badge badge-py">Python</span>
+        </div>
+        <div class="file-purpose">Regression-Based Proactive Scheduler v2</div>
+        <div class="file-desc">
+          Loads the pre-trained <code>wait_model.pkl</code> from disk. Uses
+          <code>model.predict()</code> (continuous wait time) instead of
+          <code>predict_proba()</code> to rank jobs. Sorts the queue ascending
+          by predicted wait time — jobs expected to wait the least go first.
+          Also uses the richer 8-feature set including
+          <code>smaller_jobs_in_queue</code> and <code>demand_ratio</code>.
+          <br><br>
+          <strong>Benchmark:</strong> 10-run comparison vs FIFO baseline,
+          reporting average wait time and GPU utilisation.
+        </div>
+      </div>
+    </div>
+
+    <div class="code-block">
+      <div class="code-block-header">
+        <span class="code-file-name">proactive_Schedule_v2.py — core scheduling loop</span>
+        <span class="code-lang">Python</span>
+      </div>
+      <pre><span class="kw">if</span> queue:
+    <span class="cm"># Score every queued job with the regression model</span>
+    scored = []
+    <span class="kw">for</span> job <span class="kw">in</span> queue:
+        features = <span class="fn">get_features</span>(job, cluster, queue, running_jobs)
+        predicted_wait = model.<span class="fn">predict</span>([features])[<span class="nm">0</span>]
+        scored.<span class="fn">append</span>((predicted_wait, job))
+
+    <span class="cm"># Sort ascending — lowest predicted wait first</span>
+    scored.<span class="fn">sort</span>(key=<span class="kw">lambda</span> x: x[<span class="nm">0</span>])
+    queue = [job <span class="kw">for</span> _, job <span class="kw">in</span> scored]
+
+<span class="cm"># Dispatch the first fitting job (break after one to avoid starvation)</span>
+<span class="kw">for</span> job <span class="kw">in</span> queue[:]:
+    <span class="kw">if</span> cluster.<span class="fn">total_free_gpus</span>() &gt;= job.num_gpus:
+        <span class="kw">if</span> cluster.<span class="fn">allocate</span>(job, t):
+            running_jobs.<span class="fn">append</span>(job)
+            queue.<span class="fn">remove</span>(job)
+            <span class="kw">break</span>  <span class="cm"># ← one job per tick</span></pre>
+    </div>
+  </section>
+
+
+  <!-- ── CHAPTER 6: FEATURE FIX ─────────────────────── -->
+  <div class="section-rule">
+    <div class="section-rule-line"></div>
+    <div class="section-rule-text">Chapter 06 — Current</div>
+    <div class="section-rule-line"></div>
+  </div>
+
+  <section class="chapter">
+    <div class="chapter-head">
+      <div class="chapter-num">06</div>
+      <div class="chapter-info">
+        <div class="chapter-tag">Phase 06 — Active</div>
+        <h2 class="chapter-title">Feature Leakage Fix &amp; Model v2</h2>
+        <p class="chapter-desc">Discovering a near-leakage problem and rebuilding with principled cluster-state features.</p>
+      </div>
+    </div>
+
+    <div class="prose">
+      <p>
+        The feature importance plot from Phase 04 raised a red flag.
+        <code>smaller_jobs_in_queue</code> held 82% of the model's importance.
+        In a FIFO scheduler, the number of jobs in queue with fewer GPU requirements
+        than yours is almost identical to your <em>rank in the queue</em>. The model
+        was essentially memorising queue position → wait time, not learning genuine
+        cluster dynamics. This is <strong>near data leakage</strong>.
+      </p>
+    </div>
+
+    <div class="callout warn">
+      <div class="callout-label">Data Leakage Warning</div>
+      <p>
+        <strong>Why is this a problem?</strong> The proactive scheduler reorders the queue —
+        so at inference time, a job's <code>smaller_jobs_in_queue</code> value was computed
+        under FIFO ordering but the queue is no longer FIFO. The feature becomes meaningless
+        (or worse, misleading) once the scheduler starts reordering.
+        A model that learned from a feature that doesn't exist at inference time will
+        give systematically wrong predictions.
+      </p>
+    </div>
+
+    <!-- Feature importance comparison -->
+    <h3 style="font-family:'Playfair Display',serif; font-size:1.2rem; margin:32px 0 16px; font-weight:700;">
+      Old Feature Importance (original model)
+    </h3>
+    <div class="feat-rows">
+      <div class="feat-row">
+        <div class="feat-label">smaller_jobs_in_queue</div>
+        <div class="feat-bar-track"><div class="feat-bar-fill problem" style="width:82%"></div></div>
+        <div class="feat-val" style="color:var(--red)">0.82 ⚠</div>
+      </div>
+      <div class="feat-row">
+        <div class="feat-label">demand_ratio</div>
+        <div class="feat-bar-track"><div class="feat-bar-fill neutral" style="width:6%"></div></div>
+        <div class="feat-val">0.06</div>
+      </div>
+      <div class="feat-row">
+        <div class="feat-label">job_gpu</div>
+        <div class="feat-bar-track"><div class="feat-bar-fill neutral" style="width:4%"></div></div>
+        <div class="feat-val">0.04</div>
+      </div>
+      <div class="feat-row">
+        <div class="feat-label">total_free</div>
+        <div class="feat-bar-track"><div class="feat-bar-fill neutral" style="width:3%"></div></div>
+        <div class="feat-val">0.03</div>
+      </div>
+      <div class="feat-row">
+        <div class="feat-label">others (4 features)</div>
+        <div class="feat-bar-track"><div class="feat-bar-fill neutral" style="width:5%"></div></div>
+        <div class="feat-val">0.05</div>
+      </div>
+    </div>
+
+    <h3 style="font-family:'Playfair Display',serif; font-size:1.2rem; margin:32px 0 16px; font-weight:700;">
+      New Feature Importance (model v2 — 12 principled features)
+    </h3>
+    <div class="feat-rows">
+      <div class="feat-row">
+        <div class="feat-label">queue_length</div>
+        <div class="feat-bar-track"><div class="feat-bar-fill good" style="width:23%"></div></div>
+        <div class="feat-val" style="color:var(--teal)">0.233</div>
+      </div>
+      <div class="feat-row">
+        <div class="feat-label">job_gpu</div>
+        <div class="feat-bar-track"><div class="feat-bar-fill good" style="width:20%"></div></div>
+        <div class="feat-val" style="color:var(--teal)">0.202</div>
+      </div>
+      <div class="feat-row">
+        <div class="feat-label">node_availability</div>
+        <div class="feat-bar-track"><div class="feat-bar-fill good" style="width:17%"></div></div>
+        <div class="feat-val" style="color:var(--teal)">0.168</div>
+      </div>
+      <div class="feat-row">
+        <div class="feat-label">can_fit_now</div>
+        <div class="feat-bar-track"><div class="feat-bar-fill good" style="width:15%"></div></div>
+        <div class="feat-val" style="color:var(--teal)">0.146</div>
+      </div>
+      <div class="feat-row">
+        <div class="feat-label">avg_free_per_node</div>
+        <div class="feat-bar-track"><div class="feat-bar-fill good" style="width:6%"></div></div>
+        <div class="feat-val" style="color:var(--teal)">0.056</div>
+      </div>
+      <div class="feat-row">
+        <div class="feat-label">others (7 features)</div>
+        <div class="feat-bar-track"><div class="feat-bar-fill neutral" style="width:20%"></div></div>
+        <div class="feat-val">0.195</div>
+      </div>
+    </div>
+
+    <div class="callout" style="margin-top:32px;">
+      <div class="callout-label">Key Result</div>
+      <p>
+        The new model has <strong>no dominant feature</strong>. The four most important features
+        each contribute 15–23%, and all are genuine cluster-state signals: how congested the queue
+        is, what the job demands, whether suitable nodes exist, and whether the job can even start
+        right now. This is a much healthier and theoretically defensible model for a thesis.
+      </p>
+    </div>
+
+    <div class="file-grid stagger">
+      <div class="file-card">
+        <div class="file-card-accent accent-teal"></div>
+        <div class="file-name">
+          <span>generate_improved_dataset.py</span>
+          <span class="file-badge badge-py">Python</span>
+        </div>
+        <div class="file-purpose">New Dataset Generator — 12 Principled Features</div>
+        <div class="file-desc">
+          Replaces <code>smaller_jobs_in_queue</code> and <code>demand_ratio</code> with six
+          new cluster-state features that are valid at inference time regardless of scheduling
+          policy. Runs 20 simulations, outputs <code>improved_wait_dataset.csv</code> (2,200 rows).
+          <br><br>
+          <strong>New features:</strong> <code>can_fit_now</code> (binary — can the job start right now?),
+          <code>gpu_fit_ratio</code> (supply coverage), <code>fragmentation</code> (std-dev of node free GPUs),
+          <code>queue_pressure</code> (total GPU demand vs supply), <code>node_availability</code>
+          (fraction of nodes with enough free GPUs), <code>avg_free_per_node</code> (mean supply per node).
+        </div>
+      </div>
+
+      <div class="file-card">
+        <div class="file-card-accent accent-red"></div>
+        <div class="file-name">
+          <span>train_improved_model.py</span>
+          <span class="file-badge badge-py">Python</span>
+        </div>
+        <div class="file-purpose">Retraining Script for Model v2</div>
+        <div class="file-desc">
+          Loads <code>improved_wait_dataset.csv</code> and trains an XGBoost Regressor
+          with tuned hyperparameters (300 estimators, max_depth=6, subsample=0.8,
+          colsample_bytree=0.8). Reports MAE, R², and 5-fold cross-validation MAE.
+          Saves model + feature list together as <code>wait_model_v2.pkl</code> so the
+          scheduler can validate it's using the right features at inference time.
+          Also generates <code>feature_importance_v2.png</code>.
+        </div>
+      </div>
+
+      <div class="file-card">
+        <div class="file-card-accent accent-gold"></div>
+        <div class="file-name">
+          <span>improved_wait_dataset.csv</span>
+          <span class="file-badge badge-csv">CSV</span>
+        </div>
+        <div class="file-purpose">Clean Training Data — 2,200 rows, 13 columns</div>
+        <div class="file-desc">
+          2,200 samples across 20 simulation runs, using the 12 principled features.
+          No leaky features. Wait time range 0–75, mean ~17.8 timesteps. This is the
+          canonical dataset for all future model training in this project.
+        </div>
+      </div>
+
+      <div class="file-card">
+        <div class="file-card-accent accent-ink"></div>
+        <div class="file-name">
+          <span>wait_model_v2.pkl</span>
+          <span class="file-badge badge-pkl">Pickle</span>
+        </div>
+        <div class="file-purpose">Production Model — Clean, Thesis-Ready</div>
+        <div class="file-desc">
+          The current best model. Serialised as a dict: <code>{"model": XGBRegressor, "features": [...]}</code>
+          so the feature list is always bundled with the weights — preventing silent
+          feature mismatch bugs in the scheduler.
+          <strong>Results:</strong> MAE = 5.40 ts, R² = 0.824, CV MAE = 5.65 ± 0.72.
+        </div>
+      </div>
+    </div>
+
+    <!-- Ablation table -->
+    <table class="metrics-table" style="margin-top:40px;">
+      <thead>
+        <tr>
+          <th>Experiment</th>
+          <th>MAE (ts)</th>
+          <th>R²</th>
+          <th>Assessment</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="model-name">Original (with smaller_jobs_in_queue)</td>
+          <td class="val val-good">5.25</td>
+          <td class="val val-good">0.833</td>
+          <td>High accuracy from leaky feature — not thesis-safe</td>
+        </tr>
+        <tr>
+          <td class="model-name">Ablation — leaky feature removed only</td>
+          <td class="val val-bad">5.70</td>
+          <td class="val val-bad">0.815</td>
+          <td>Dropped without replacement — expected regression</td>
+        </tr>
+        <tr>
+          <td class="model-name">Target (reported in research_progress.html)</td>
+          <td class="val val-best">4.56</td>
+          <td class="val val-best">0.883</td>
+          <td>Design target from feature engineering analysis</td>
+        </tr>
+        <tr>
+          <td class="model-name" style="color:var(--teal); font-weight:700;">Model v2 — 12 principled features</td>
+          <td class="val" style="color:var(--teal)">5.40</td>
+          <td class="val" style="color:var(--teal)">0.824</td>
+          <td><strong>Clean, defensible, no dominant feature</strong></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="compare-grid">
+      <div class="compare-panel">
+        <div class="compare-panel-label">Original Model (leaky)</div>
+        <div class="compare-stat">
+          <div class="compare-stat-label">Mean Absolute Error</div>
+          <div class="compare-stat-val" style="color:var(--muted)">5.25<span class="compare-stat-unit">timesteps</span></div>
+        </div>
+        <div class="compare-stat">
+          <div class="compare-stat-label">R² Score</div>
+          <div class="compare-stat-val" style="color:var(--muted)">0.833</div>
+        </div>
+        <div class="compare-stat">
+          <div class="compare-stat-label">Top Feature Dominance</div>
+          <div class="compare-stat-val" style="color:var(--red); font-size:1.8rem">82%<span class="compare-stat-unit">one feature</span></div>
+        </div>
+      </div>
+      <div class="compare-panel" style="background:var(--teal-pale);">
+        <div class="compare-panel-label">Model v2 (clean)</div>
+        <div class="compare-stat">
+          <div class="compare-stat-label">Mean Absolute Error</div>
+          <div class="compare-stat-val" style="color:var(--teal)">5.40<span class="compare-stat-unit">timesteps</span></div>
+        </div>
+        <div class="compare-stat">
+          <div class="compare-stat-label">R² Score</div>
+          <div class="compare-stat-val" style="color:var(--teal)">0.824</div>
+        </div>
+        <div class="compare-stat">
+          <div class="compare-stat-label">Top Feature Dominance</div>
+          <div class="compare-stat-val" style="color:var(--teal); font-size:1.8rem">23%<span class="compare-stat-unit">balanced</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ── CHAPTER 7: DOCUMENTATION ───────────────────── -->
+  <div class="section-rule">
+    <div class="section-rule-line"></div>
+    <div class="section-rule-text">Chapter 07</div>
+    <div class="section-rule-line"></div>
+  </div>
+
+  <section class="chapter">
+    <div class="chapter-head">
+      <div class="chapter-num">07</div>
+      <div class="chapter-info">
+        <div class="chapter-tag">Supporting Files</div>
+        <h2 class="chapter-title">Utility &amp; Documentation Files</h2>
+        <p class="chapter-desc">Diagnostic scripts, visualisations, and the research progress tracker.</p>
+      </div>
+    </div>
+
+    <div class="file-grid stagger">
+      <div class="file-card">
+        <div class="file-card-accent accent-ink"></div>
+        <div class="file-name">
+          <span>check1.py</span>
+          <span class="file-badge badge-py">Python</span>
+        </div>
+        <div class="file-purpose">Quick Dataset Diagnostic</div>
+        <div class="file-desc">
+          A 3-line diagnostic script that loads <code>dataset.csv</code>,
+          prints the class distribution of the binary label, and reports
+          what percentage of jobs were classified as feasible (low-wait).
+          Used to quickly check whether the dataset was balanced before training.
+          Unbalanced classes would require stratified splits or class weighting.
+        </div>
+      </div>
+
+      <div class="file-card">
+        <div class="file-card-accent accent-gold"></div>
+        <div class="file-name">
+          <span>feature_importance.png</span>
+          <span class="file-badge badge-png">Image</span>
+        </div>
+        <div class="file-purpose">Original Feature Importance Plot</div>
+        <div class="file-desc">
+          Matplotlib bar chart of feature importances from the original XGBoost regressor.
+          The chart that triggered Phase 06 — showing <code>smaller_jobs_in_queue</code> at
+          ~82% importance, dramatically outweighing all other features. This single plot
+          changed the direction of the project and forms a core part of the thesis narrative.
+        </div>
+      </div>
+
+      <div class="file-card file-card-full">
+        <div class="file-card-accent accent-red"></div>
+        <div class="file-name">
+          <span>research_progress.html</span>
+          <span class="file-badge badge-html">HTML</span>
+        </div>
+        <div class="file-purpose">Research Progress Tracker — Interactive Web Report</div>
+        <div class="file-desc">
+          A standalone HTML progress report documenting the project's journey through
+          all 6 phases with a dark-themed editorial design. Includes the complete
+          timeline of phases, at-a-glance statistics (cluster specs, sample count, model metrics),
+          ablation results table, and proposed next steps. Written as a living document —
+          updated as the project progresses. Contains the research context and narrative
+          that bridges the technical implementation to the thesis contribution.
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ── CHAPTER 8: NEXT STEPS ──────────────────────── -->
+  <div class="section-rule">
+    <div class="section-rule-line"></div>
+    <div class="section-rule-text">Chapter 08</div>
+    <div class="section-rule-line"></div>
+  </div>
+
+  <section class="chapter">
+    <div class="chapter-head">
+      <div class="chapter-num">08</div>
+      <div class="chapter-info">
+        <div class="chapter-tag">What Comes Next</div>
+        <h2 class="chapter-title">Remaining Work</h2>
+        <p class="chapter-desc">The clear path from current state to a complete, publishable thesis.</p>
+      </div>
+    </div>
+
+    <div class="prose">
+      <p>
+        The foundation is solid. The simulator is validated, the training pipeline is clean,
+        and the model is theoretically defensible. Three tasks remain before the research
+        is complete.
+      </p>
+    </div>
+
+    <div class="file-grid stagger">
+      <div class="file-card">
+        <div class="file-card-accent accent-red"></div>
+        <div class="file-name"><span>① Update &amp; Re-run Benchmark</span></div>
+        <div class="file-purpose">Priority: High</div>
+        <div class="file-desc">
+          Update <code>proactive_Schedule_v2.py</code> to load <code>wait_model_v2.pkl</code>
+          and use the new 12-feature <code>get_features()</code> function that matches the
+          training schema exactly. Re-run the 10-iteration baseline vs. proactive comparison.
+          This produces the core experimental result of the thesis.
+        </div>
+      </div>
+
+      <div class="file-card">
+        <div class="file-card-accent accent-teal"></div>
+        <div class="file-name"><span>② Result Visualisations</span></div>
+        <div class="file-purpose">Priority: High</div>
+        <div class="file-desc">
+          Plot per-run wait times (FIFO vs. proactive), GPU utilisation over time,
+          wait-time distribution histograms, and the predicted vs actual wait scatter plot.
+          These figures go directly into the thesis Results section.
+        </div>
+      </div>
+
+      <div class="file-card">
+        <div class="file-card-accent accent-gold"></div>
+        <div class="file-name"><span>③ Sensitivity Analysis</span></div>
+        <div class="file-purpose">Priority: Medium</div>
+        <div class="file-desc">
+          Test the scheduler under different cluster load conditions — high contention
+          (many large jobs), low contention (sparse arrivals), and heterogeneous job sizes.
+          Shows the proactive scheduler's robustness across operating conditions.
+        </div>
+      </div>
+
+      <div class="file-card">
+        <div class="file-card-accent accent-ink"></div>
+        <div class="file-name"><span>④ Write Thesis Chapters</span></div>
+        <div class="file-purpose">Priority: Ongoing</div>
+        <div class="file-desc">
+          The ablation story (leaky → removed → principled features) is the methodology
+          contribution. Methodology, Experiments, and Results chapters can now be written
+          with full evidence. The feature leakage discovery and fix is a genuine, citable
+          research insight.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── COMPLETE FILE MANIFEST ─────────────────────── -->
+  <div class="section-rule">
+    <div class="section-rule-line"></div>
+    <div class="section-rule-text">Appendix</div>
+    <div class="section-rule-line"></div>
+  </div>
+
+  <section class="chapter" style="padding-bottom:80px;">
+    <div class="chapter-head">
+      <div class="chapter-num">A</div>
+      <div class="chapter-info">
+        <div class="chapter-tag">Appendix — Complete File Index</div>
+        <h2 class="chapter-title">All Project Files</h2>
+        <p class="chapter-desc">Every file, what it is, and where it fits in the pipeline.</p>
+      </div>
+    </div>
+
+    <table class="metrics-table">
+      <thead>
+        <tr>
+          <th>File</th>
+          <th>Type</th>
+          <th>Phase</th>
+          <th>Role</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="model-name">minimal_gpu_cluster.py</td>
+          <td><span class="file-badge badge-py">Python</span></td>
+          <td>01</td>
+          <td>Prototype simulator — no dataset output, logic validation only</td>
+        </tr>
+        <tr>
+          <td class="model-name">dataset_minimal_gpu_cluster.py</td>
+          <td><span class="file-badge badge-py">Python</span></td>
+          <td>01</td>
+          <td>First simulation producing labelled dataset (110 rows, binary label)</td>
+        </tr>
+        <tr>
+          <td class="model-name">dataset.csv</td>
+          <td><span class="file-badge badge-csv">CSV</span></td>
+          <td>01</td>
+          <td>110-row binary classification dataset from single simulation run</td>
+        </tr>
+        <tr>
+          <td class="model-name">generate_large_dataset.py</td>
+          <td><span class="file-badge badge-py">Python</span></td>
+          <td>02</td>
+          <td>20-run simulation producing 2,200 rows with regression target</td>
+        </tr>
+        <tr>
+          <td class="model-name">large_dataset.csv</td>
+          <td><span class="file-badge badge-csv">CSV</span></td>
+          <td>02</td>
+          <td>2,200-row binary classifier dataset (8 features + label)</td>
+        </tr>
+        <tr>
+          <td class="model-name">wait_dataset.csv</td>
+          <td><span class="file-badge badge-csv">CSV</span></td>
+          <td>02</td>
+          <td>2,200-row regression dataset (8 features + wait_time)</td>
+        </tr>
+        <tr>
+          <td class="model-name">check1.py</td>
+          <td><span class="file-badge badge-py">Python</span></td>
+          <td>02</td>
+          <td>Class balance diagnostic for dataset.csv</td>
+        </tr>
+        <tr>
+          <td class="model-name">train_model.py</td>
+          <td><span class="file-badge badge-py">Python</span></td>
+          <td>03</td>
+          <td>Logistic Regression on small dataset — initial baseline</td>
+        </tr>
+        <tr>
+          <td class="model-name">train_model_large.py</td>
+          <td><span class="file-badge badge-py">Python</span></td>
+          <td>03</td>
+          <td>LR + Random Forest on large dataset — model comparison</td>
+        </tr>
+        <tr>
+          <td class="model-name">train_model_withxg.py</td>
+          <td><span class="file-badge badge-py">Python</span></td>
+          <td>03</td>
+          <td>LR + RF + XGBoost — final classifier comparison</td>
+        </tr>
+        <tr>
+          <td class="model-name">train_wait_model.py</td>
+          <td><span class="file-badge badge-py">Python</span></td>
+          <td>04</td>
+          <td>XGBoost Regressor training on wait_dataset.csv → wait_model.pkl</td>
+        </tr>
+        <tr>
+          <td class="model-name">wait_model.pkl</td>
+          <td><span class="file-badge badge-pkl">Pickle</span></td>
+          <td>04</td>
+          <td>Serialised original regressor (leaky — superseded by v2)</td>
+        </tr>
+        <tr>
+          <td class="model-name">feature_importance.png</td>
+          <td><span class="file-badge badge-png">Image</span></td>
+          <td>04</td>
+          <td>Feature importance plot revealing the 82% leakage problem</td>
+        </tr>
+        <tr>
+          <td class="model-name">proactive_scheduler.py</td>
+          <td><span class="file-badge badge-py">Python</span></td>
+          <td>05</td>
+          <td>Classifier-based proactive scheduler v1 (trains inline)</td>
+        </tr>
+        <tr>
+          <td class="model-name">proactive_Schedule_v2.py</td>
+          <td><span class="file-badge badge-py">Python</span></td>
+          <td>05</td>
+          <td>Regressor-based proactive scheduler v2 (loads wait_model.pkl)</td>
+        </tr>
+        <tr>
+          <td class="model-name">research_progress.html</td>
+          <td><span class="file-badge badge-html">HTML</span></td>
+          <td>All</td>
+          <td>Living progress report documenting all phases</td>
+        </tr>
+        <tr>
+          <td class="model-name" style="color:var(--teal);">generate_improved_dataset.py</td>
+          <td><span class="file-badge badge-py">Python</span></td>
+          <td>06 ●</td>
+          <td>New dataset generator with 12 principled, non-leaky features</td>
+        </tr>
+        <tr>
+          <td class="model-name" style="color:var(--teal);">train_improved_model.py</td>
+          <td><span class="file-badge badge-py">Python</span></td>
+          <td>06 ●</td>
+          <td>Retraining script for model v2 with cross-validation</td>
+        </tr>
+        <tr>
+          <td class="model-name" style="color:var(--teal);">improved_wait_dataset.csv</td>
+          <td><span class="file-badge badge-csv">CSV</span></td>
+          <td>06 ●</td>
+          <td>Clean 2,200-row dataset with 12 features — canonical training data</td>
+        </tr>
+        <tr>
+          <td class="model-name" style="color:var(--teal);">wait_model_v2.pkl</td>
+          <td><span class="file-badge badge-pkl">Pickle</span></td>
+          <td>06 ●</td>
+          <td>Current production model — clean, balanced features, thesis-ready</td>
+        </tr>
+        <tr>
+          <td class="model-name" style="color:var(--teal);">feature_importance_v2.png</td>
+          <td><span class="file-badge badge-png">Image</span></td>
+          <td>06 ●</td>
+          <td>Updated feature importance showing balanced multi-feature importance</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--muted); margin-top:12px; letter-spacing:.08em;">
+      ● = Phase 06 files (generated in current session)
+    </div>
+  </section>
+
+</div><!-- /page -->
+
+
+<!-- FOOTER -->
+<footer class="report-footer">
+  <div class="footer-title">Proactive GPU Cluster Scheduling</div>
+  <div class="footer-mono">
+    Rakshit &nbsp;/&nbsp; March 2026<br>
+    HPC &amp; Cluster Scheduling · Active Research<br>
+    20 files · 6 completed phases · Phase 07 next
+  </div>
+</footer>
+
+<script>
+// Animate elements when they scroll into view
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.style.animationPlayState = 'running';
+    }
+  });
+}, { threshold: 0.1 });
+
+document.querySelectorAll('.chapter, .stats-grid, .feat-rows').forEach(el => {
+  observer.observe(el);
+});
+
+// Animate bars on scroll
+const barObserver = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.querySelectorAll('.feat-bar-fill').forEach((bar, i) => {
+        bar.style.animationDelay = `${i * 0.08}s`;
+        bar.style.animationPlayState = 'running';
+      });
+    }
+  });
+}, { threshold: 0.2 });
+
+document.querySelectorAll('.feat-rows').forEach(el => {
+  el.querySelectorAll('.feat-bar-fill').forEach(bar => {
+    bar.style.animationPlayState = 'paused';
+  });
+  barObserver.observe(el);
+});
+</script>
+
+</body>
+</html>

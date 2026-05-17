@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Research Progress — Proactive GPU Scheduler</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0b0f1a;
+    --surface:   #111827;
+    --border:    #1e2d45;
+    --accent:    #38bdf8;
+    --accent2:   #818cf8;
+    --accent3:   #34d399;
+    --warn:      #fb923c;
+    --text:      #e2e8f0;
+    --muted:     #64748b;
+    --card:      #0f172a;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body { background: var(--bg); color: var(--text); font-family: 'Instrument Sans', sans-serif; min-height: 100vh; overflow-x: hidden; }
+  body::before { content: ''; position: fixed; inset: 0; background-image: linear-gradient(rgba(56,189,248,.03) 1px, transparent 1px), linear-gradient(90deg, rgba(56,189,248,.03) 1px, transparent 1px); background-size: 48px 48px; pointer-events: none; z-index: 0; }
+  .orb { position: fixed; border-radius: 50%; filter: blur(120px); pointer-events: none; z-index: 0; opacity: 0.18; }
+  .orb-1 { width: 600px; height: 600px; background: var(--accent);  top: -200px; left: -200px; }
+  .orb-2 { width: 500px; height: 500px; background: var(--accent2); bottom: -150px; right: -150px; }
+  .orb-3 { width: 300px; height: 300px; background: var(--accent3); top: 50%; left: 50%; transform: translate(-50%,-50%); opacity: 0.08; }
+  main { position: relative; z-index: 1; max-width: 900px; margin: 0 auto; padding: 80px 32px 120px; }
+  header { margin-bottom: 80px; animation: fadeUp .8s ease both; }
+  .tag { display: inline-block; font-family: 'DM Mono', monospace; font-size: 11px; font-weight: 500; letter-spacing: .15em; text-transform: uppercase; color: var(--accent); border: 1px solid rgba(56,189,248,.3); background: rgba(56,189,248,.07); padding: 4px 14px; border-radius: 999px; margin-bottom: 24px; }
+  h1 { font-family: 'DM Serif Display', serif; font-size: clamp(2.2rem, 5vw, 3.6rem); line-height: 1.1; color: #f1f5f9; margin-bottom: 20px; }
+  h1 em { font-style: italic; color: var(--accent); }
+  .subtitle { font-size: 1.05rem; color: var(--muted); line-height: 1.7; max-width: 600px; margin-bottom: 36px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 24px; }
+  .meta-item { display: flex; flex-direction: column; gap: 4px; }
+  .meta-label { font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .meta-value { font-size: .95rem; font-weight: 500; color: var(--text); }
+  .divider { height: 1px; background: linear-gradient(90deg, transparent, var(--border), transparent); margin: 56px 0; }
+  .section-label { font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: var(--accent2); margin-bottom: 32px; display: flex; align-items: center; gap: 12px; }
+  .section-label::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+  .timeline { position: relative; display: flex; flex-direction: column; gap: 0; }
+  .timeline::before { content: ''; position: absolute; left: 19px; top: 8px; bottom: 8px; width: 1px; background: linear-gradient(to bottom, var(--accent), var(--accent2), var(--accent3)); opacity: .25; }
+  .tl-item { display: grid; grid-template-columns: 40px 1fr; gap: 20px; padding-bottom: 40px; opacity: 0; transform: translateY(20px); animation: fadeUp .6s ease forwards; }
+  .tl-item:nth-child(1){animation-delay:.1s}.tl-item:nth-child(2){animation-delay:.2s}.tl-item:nth-child(3){animation-delay:.3s}.tl-item:nth-child(4){animation-delay:.4s}.tl-item:nth-child(5){animation-delay:.5s}.tl-item:nth-child(6){animation-delay:.6s}.tl-item:nth-child(7){animation-delay:.7s}
+  .tl-dot { display: flex; flex-direction: column; align-items: center; padding-top: 4px; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid; background: var(--bg); flex-shrink: 0; position: relative; z-index: 1; }
+  .dot.blue   { border-color: var(--accent);  box-shadow: 0 0 10px rgba(56,189,248,.4); }
+  .dot.purple { border-color: var(--accent2); box-shadow: 0 0 10px rgba(129,140,248,.4); }
+  .dot.green  { border-color: var(--accent3); box-shadow: 0 0 10px rgba(52,211,153,.4); }
+  .dot.orange { border-color: var(--warn);    box-shadow: 0 0 10px rgba(251,146,60,.4); }
+  .dot.green.filled { background: var(--accent3); }
+  .tl-step { font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+  .tl-title { font-family: 'DM Serif Display', serif; font-size: 1.3rem; color: #f1f5f9; margin-bottom: 10px; line-height: 1.3; }
+  .tl-desc { font-size: .9rem; color: var(--muted); line-height: 1.7; margin-bottom: 14px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .chip { font-family: 'DM Mono', monospace; font-size: 11px; padding: 3px 10px; border-radius: 4px; border: 1px solid; }
+  .chip.blue   { color: var(--accent);  border-color: rgba(56,189,248,.25);  background: rgba(56,189,248,.07); }
+  .chip.purple { color: var(--accent2); border-color: rgba(129,140,248,.25); background: rgba(129,140,248,.07); }
+  .chip.green  { color: var(--accent3); border-color: rgba(52,211,153,.25);  background: rgba(52,211,153,.07); }
+  .chip.orange { color: var(--warn);    border-color: rgba(251,146,60,.25);  background: rgba(251,146,60,.07); }
+  .result-box { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-top: 4px; display: flex; flex-direction: column; gap: 10px; }
+  .result-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  .result-label { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); }
+  .result-val { font-family: 'DM Mono', monospace; font-size: 13px; font-weight: 500; }
+  .bar-wrap { flex: 1; min-width: 120px; height: 4px; background: var(--border); border-radius: 999px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 999px; }
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-top: 8px; }
+  .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; position: relative; overflow: hidden; transition: border-color .2s, transform .2s; }
+  .stat-card:hover { border-color: rgba(56,189,248,.3); transform: translateY(-2px); }
+  .stat-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; border-radius: 10px 10px 0 0; }
+  .stat-card.blue::before   { background: var(--accent); }
+  .stat-card.purple::before { background: var(--accent2); }
+  .stat-card.green::before  { background: var(--accent3); }
+  .stat-card.orange::before { background: var(--warn); }
+  .stat-num { font-family: 'DM Serif Display', serif; font-size: 2rem; line-height: 1; margin-bottom: 6px; }
+  .stat-card.blue   .stat-num { color: var(--accent); }
+  .stat-card.purple .stat-num { color: var(--accent2); }
+  .stat-card.green  .stat-num { color: var(--accent3); }
+  .stat-card.orange .stat-num { color: var(--warn); }
+  .stat-label { font-size: .8rem; color: var(--muted); line-height: 1.4; }
+  .finding { background: rgba(52,211,153,.06); border: 1px solid rgba(52,211,153,.2); border-left: 3px solid var(--accent3); border-radius: 8px; padding: 14px 18px; font-size: .88rem; color: #a7f3d0; line-height: 1.65; margin-top: 6px; }
+  .finding strong { color: var(--accent3); }
+  .warn-box { background: rgba(251,146,60,.06); border: 1px solid rgba(251,146,60,.2); border-left: 3px solid var(--warn); border-radius: 8px; padding: 14px 18px; font-size: .88rem; color: #fed7aa; line-height: 1.65; margin-top: 6px; }
+  .warn-box strong { color: var(--warn); }
+  .next-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 8px; }
+  .next-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 18px; display: flex; gap: 14px; align-items: flex-start; transition: border-color .2s; }
+  .next-card:hover { border-color: rgba(129,140,248,.35); }
+  .next-icon { font-size: 1.4rem; flex-shrink: 0; margin-top: 2px; }
+  .next-title { font-weight: 600; font-size: .9rem; margin-bottom: 4px; color: #e2e8f0; }
+  .next-body { font-size: .82rem; color: var(--muted); line-height: 1.55; }
+  footer { position: relative; z-index: 1; text-align: center; padding: 32px; font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); letter-spacing: .06em; border-top: 1px solid var(--border); }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+<div class="orb orb-1"></div>
+<div class="orb orb-2"></div>
+<div class="orb orb-3"></div>
+<main>
+
+  <header>
+    <div class="tag">Research Progress Report — Updated April 2026</div>
+    <h1>Proactive GPU Cluster<br><em>Scheduling with ML</em></h1>
+    <p class="subtitle">
+      A simulation-driven approach to predicting job wait times and intelligently
+      reordering the scheduling queue — moving beyond reactive FIFO towards
+      ML-guided proactive allocation.
+    </p>
+    <div class="meta-row">
+      <div class="meta-item"><span class="meta-label">Researcher</span><span class="meta-value">Rakshit</span></div>
+      <div class="meta-item"><span class="meta-label">Domain</span><span class="meta-value">HPC / Cluster Scheduling</span></div>
+      <div class="meta-item"><span class="meta-label">Stage</span><span class="meta-value">&#10003; Experiments Complete</span></div>
+      <div class="meta-item"><span class="meta-label">Updated</span><span class="meta-value">April 2026</span></div>
+    </div>
+  </header>
+
+  <div class="section-label">At a Glance</div>
+  <div class="stats-grid" style="animation: fadeUp .7s .2s ease both; opacity:0;">
+    <div class="stat-card blue">
+      <div class="stat-num">8&#xD7;4</div>
+      <div class="stat-label">GPU Cluster simulated<br>(8 nodes, 4 GPUs each)</div>
+    </div>
+    <div class="stat-card purple">
+      <div class="stat-num">2,200</div>
+      <div class="stat-label">Training samples generated<br>across 20 simulation runs</div>
+    </div>
+    <div class="stat-card green">
+      <div class="stat-num">0.937</div>
+      <div class="stat-label">Model R&#178; score<br>(XGBoost, 12 principled features)</div>
+    </div>
+    <div class="stat-card orange">
+      <div class="stat-num">10.4%</div>
+      <div class="stat-label">Avg wait time reduction<br>vs FIFO baseline (10-run bench)</div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="section-label">Research Journey</div>
+  <div class="timeline">
+
+    <div class="tl-item">
+      <div class="tl-dot"><div class="dot blue"></div></div>
+      <div class="tl-body">
+        <div class="tl-step">Phase 01</div>
+        <div class="tl-title">GPU Cluster Simulation</div>
+        <div class="tl-desc">Built a discrete-time event simulator from scratch modelling a realistic 8-node, 32-GPU cluster with FIFO scheduling, greedy GPU allocation, and full cluster state tracking at every timestep.</div>
+        <div class="chips">
+          <span class="chip blue">minimal_gpu_cluster.py</span>
+          <span class="chip blue">dataset_minimal_gpu_cluster.py</span>
+          <span class="chip blue">8 nodes &#xD7; 4 GPUs</span>
+          <span class="chip blue">SIM_TIME = 300</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot"><div class="dot purple"></div></div>
+      <div class="tl-body">
+        <div class="tl-step">Phase 02</div>
+        <div class="tl-title">Dataset Generation &amp; Feature Engineering</div>
+        <div class="tl-desc">Ran 20 independent simulations to generate 2,200 diverse training samples. Feature snapshots captured at each job's arrival moment. Pivoted from binary classification to continuous wait-time regression.</div>
+        <div class="chips">
+          <span class="chip purple">generate_large_dataset.py</span>
+          <span class="chip purple">2,200 samples</span>
+          <span class="chip purple">20 simulation runs</span>
+          <span class="chip purple">wait_dataset.csv</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot"><div class="dot purple"></div></div>
+      <div class="tl-body">
+        <div class="tl-step">Phase 03</div>
+        <div class="tl-title">Model Training &#8212; Baseline Classifiers</div>
+        <div class="tl-desc">Compared Logistic Regression, Random Forest, and XGBoost on the feasibility classification task (ROC-AUC ~0.93 for XGBoost). Project then pivoted to regression for a richer, rankable scheduling signal.</div>
+        <div class="chips">
+          <span class="chip purple">Logistic Regression</span>
+          <span class="chip purple">Random Forest</span>
+          <span class="chip purple">XGBoost Classifier</span>
+          <span class="chip purple">train_model_withxg.py</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot"><div class="dot green"></div></div>
+      <div class="tl-body">
+        <div class="tl-step">Phase 04</div>
+        <div class="tl-title">Wait-Time Regression Model</div>
+        <div class="tl-desc">
+          Extended to continuous wait-time regression using XGBoost Regressor. Original model (MAE 5.25 ts, R&#178; 0.833) revealed a near-leakage issue:
+          <code style="font-family:'DM Mono',monospace;font-size:11px;color:var(--accent3);">smaller_jobs_in_queue</code>
+          contributed 82% of feature importance &#8212; essentially encoding FIFO queue rank directly.
+        </div>
+        <div class="chips">
+          <span class="chip green">XGBoost Regressor</span>
+          <span class="chip green">train_wait_model.py</span>
+          <span class="chip green">wait_model.pkl</span>
+          <span class="chip green">feature_importance.png</span>
+        </div>
+        <div class="warn-box" style="margin-top:10px;">
+          <strong>Problem identified:</strong> <code style="font-family:'DM Mono',monospace;font-size:11px;">smaller_jobs_in_queue</code>
+          at 0.82 importance = near data leakage. In a FIFO scheduler this feature encodes queue position directly.
+          At inference time (proactive ordering), the queue is reordered so this feature becomes meaningless &#8212; or actively misleading.
+        </div>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot"><div class="dot green filled"></div></div>
+      <div class="tl-body">
+        <div class="tl-step">Phase 05 &#8212; &#10003; Complete</div>
+        <div class="tl-title">Feature Leakage Fix &amp; Model v2</div>
+        <div class="tl-desc">
+          Replaced leaky features with 6 principled cluster-state signals that are valid at any scheduling policy.
+          Retrained on clean 2,200-sample dataset (12 features total). No dominant feature &#8212;
+          top 4 each contribute 15&#8211;23% importance. Model now learns genuine cluster dynamics.
+        </div>
+        <div class="chips">
+          <span class="chip green">can_fit_now</span>
+          <span class="chip green">gpu_fit_ratio</span>
+          <span class="chip green">fragmentation</span>
+          <span class="chip green">queue_pressure</span>
+          <span class="chip green">node_availability</span>
+          <span class="chip green">avg_free_per_node</span>
+        </div>
+        <div class="result-box">
+          <div class="result-row">
+            <span class="result-label">Original (with leakage)</span>
+            <div class="bar-wrap"><div class="bar-fill" style="width:75%;background:var(--muted);"></div></div>
+            <span class="result-val" style="color:var(--muted);">MAE 5.25 &#xB7; R&#178; 0.833</span>
+          </div>
+          <div class="result-row">
+            <span class="result-label">Model v2 &#8212; 12 principled features</span>
+            <div class="bar-wrap"><div class="bar-fill" style="width:95%;background:var(--accent3);"></div></div>
+            <span class="result-val" style="color:var(--accent3);">MAE 2.87 &#xB7; R&#178; 0.937</span>
+          </div>
+        </div>
+        <div class="finding" style="margin-top:10px;">
+          <strong>Significant improvement:</strong> Removing the leaky feature and replacing with principled cluster-state
+          features improved R&#178; from 0.833 &#8594; 0.937 and MAE from 5.25 &#8594; 2.87 timesteps.
+          The model now learns genuine cluster dynamics, not queue position.
+        </div>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot"><div class="dot green filled"></div></div>
+      <div class="tl-body">
+        <div class="tl-step">Phase 06 &#8212; &#10003; Complete</div>
+        <div class="tl-title">Proactive Scheduler Benchmark</div>
+        <div class="tl-desc">
+          Updated proactive scheduler to load <code style="font-family:'DM Mono',monospace;font-size:11px;color:var(--accent3);">wait_model_v2.pkl</code>
+          with the correct 12-feature schema. Fixed a critical dispatching bug: the original implementation dispatched only one job
+          per tick (via <code style="font-family:'DM Mono',monospace;font-size:11px;color:var(--warn);">break</code>), artificially
+          throttling throughput vs the FIFO baseline. With both schedulers dispatching all fitting jobs per tick &#8212;
+          differing only in queue order &#8212; the proactive scheduler achieves consistent wait-time reductions.
+        </div>
+        <div class="chips">
+          <span class="chip green">proactive_Schedule_v2.py</span>
+          <span class="chip green">wait_model_v2.pkl</span>
+          <span class="chip green">benchmark_and_plot.py</span>
+          <span class="chip green">10-run benchmark</span>
+        </div>
+        <div class="result-box" style="margin-top:10px;">
+          <div class="result-row">
+            <span class="result-label">Baseline Avg Wait</span>
+            <div class="bar-wrap"><div class="bar-fill" style="width:85%;background:var(--muted);"></div></div>
+            <span class="result-val" style="color:var(--muted);">20.64 timesteps</span>
+          </div>
+          <div class="result-row">
+            <span class="result-label">Proactive Avg Wait</span>
+            <div class="bar-wrap"><div class="bar-fill" style="width:75%;background:var(--accent3);"></div></div>
+            <span class="result-val" style="color:var(--accent3);">18.08 timesteps</span>
+          </div>
+          <div class="result-row">
+            <span class="result-label">GPU Utilisation (both schedulers)</span>
+            <div class="bar-wrap"><div class="bar-fill" style="width:66%;background:var(--accent);"></div></div>
+            <span class="result-val" style="color:var(--accent);">65.6%</span>
+          </div>
+        </div>
+        <div class="finding" style="margin-top:10px;">
+          <strong>Result:</strong> Proactive scheduler reduces average job wait time by <strong>10.4%</strong>
+          (std 11.5%) over 10 independent runs, with identical GPU utilisation to FIFO.
+          The improvement is purely from smarter queue ordering &#8212; the model guides <em>which</em> job to serve
+          next, not how many. Result plots saved to <code style="font-family:'DM Mono',monospace;font-size:11px;color:var(--accent3);">05_results/</code>.
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="section-label">Remaining Work</div>
+  <div class="next-grid" style="animation: fadeUp .7s .5s ease both; opacity:0;">
+    <div class="next-card">
+      <div class="next-icon">&#128202;</div>
+      <div>
+        <div class="next-title">Sensitivity Analysis</div>
+        <div class="next-body">Test scheduler robustness under varying cluster loads (high/low contention) and heterogeneous job size distributions to strengthen the evaluation section.</div>
+      </div>
+    </div>
+    <div class="next-card">
+      <div class="next-icon">&#128221;</div>
+      <div>
+        <div class="next-title">Write Thesis Chapters</div>
+        <div class="next-body">Methodology, Experiments, and Results chapters. The leakage discovery &#8594; fix &#8594; measured 10.4% improvement is the core contribution narrative.</div>
+      </div>
+    </div>
+    <div class="next-card">
+      <div class="next-icon">&#128200;</div>
+      <div>
+        <div class="next-title">Results Figures Ready</div>
+        <div class="next-body">wait_comparison.png, util_comparison.png, and scatter_pred_vs_actual.png are in 05_results/ and ready for direct inclusion in the thesis.</div>
+      </div>
+    </div>
+    <div class="next-card">
+      <div class="next-icon">&#128300;</div>
+      <div>
+        <div class="next-title">Statistical Significance</div>
+        <div class="next-body">Run 30+ seeds and apply a paired t-test or Wilcoxon signed-rank test on per-run wait times to formally establish significance of the improvement.</div>
+      </div>
+    </div>
+  </div>
+
+</main>
+<footer>Proactive GPU Cluster Scheduling &#8212; Research Progress &#xB7; April 2026 &#xB7; Phases 01&#8211;06 Complete</footer>
+</body>
+</html>

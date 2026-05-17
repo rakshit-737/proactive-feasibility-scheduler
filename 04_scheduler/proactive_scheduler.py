@@ -2,8 +2,11 @@ import random
 import numpy as np
 import pandas as pd
 import pickle
+import os
+from xgboost import XGBRegressor
 
-with open("wait_model.pkl", "rb") as f:
+model_path = os.path.join(os.path.dirname(__file__), "wait_model.pkl")
+with open(model_path, "rb") as f:
     model = pickle.load(f)
 
 class Job:
@@ -61,18 +64,26 @@ def generate_jobs(num_jobs, max_time):
     return sorted(jobs, key=lambda x: x.arrival_time)
 
 def get_features(job, cluster, queue, running_jobs):
+    NUM_NODES = cluster.num_nodes
+    GPUS_PER_NODE = cluster.gpus_per_node
     total_free = cluster.total_free_gpus()
-    smaller_jobs = sum(1 for q in queue if q.num_gpus <= job.num_gpus)
-    demand_ratio = job.num_gpus / (total_free + 1)
+    max_free_node = max(cluster.nodes)
+    variance_free = np.var(cluster.nodes)
+    queue_length = len(queue)
+
+    can_fit_now       = 1 if total_free >= job.num_gpus else 0
+    gpu_fit_ratio     = total_free / (job.num_gpus + 1e-6)
+    fragmentation     = 1.0 - (max_free_node / (GPUS_PER_NODE + 1e-6))
+    queue_pressure    = (queue_length * job.num_gpus) / (total_free + 1)
+    nodes_that_fit    = sum(1 for n in cluster.nodes if n >= job.num_gpus)
+    node_availability = nodes_that_fit / NUM_NODES
+    avg_free_per_node = total_free / NUM_NODES
+
     return [
-        job.num_gpus,
-        total_free,
-        len(queue),
-        len(running_jobs),
-        max(cluster.nodes),
-        np.var(cluster.nodes),
-        smaller_jobs,
-        demand_ratio
+        job.num_gpus, total_free, queue_length, len(running_jobs),
+        max_free_node, variance_free,
+        can_fit_now, gpu_fit_ratio, fragmentation,
+        queue_pressure, node_availability, avg_free_per_node,
     ]
 
 def run_baseline(jobs_input):
@@ -112,7 +123,7 @@ def run_baseline(jobs_input):
     wait_times = [j.start_time - j.arrival_time for j in completed_jobs if j.start_time is not None]
     return np.mean(wait_times), np.mean(gpu_usage), len(completed_jobs)
 
-def run_proactive(jobs_input):
+def run_proactive(jobs_input, model):
     SIM_TIME = 300
     NUM_NODES = 8
     GPUS_PER_NODE = 4
@@ -138,7 +149,7 @@ def run_proactive(jobs_input):
                 queue.append(job)
 
         if queue:
-            # predict wait time for each job and sort by predicted wait ascending
+            # predict wait time for each job, sort ascending (lowest wait first)
             scored = []
             for job in queue:
                 features = get_features(job, cluster, queue, running_jobs)
@@ -161,7 +172,7 @@ def run_proactive(jobs_input):
     wait_times = [j.start_time - j.arrival_time for j in completed_jobs if j.start_time is not None]
     return np.mean(wait_times), np.mean(gpu_usage), len(completed_jobs)
 
-# run comparison
+
 NUM_RUNS = 10
 baseline_waits, baseline_utils = [], []
 proactive_waits, proactive_utils = [], []
@@ -170,15 +181,17 @@ for i in range(NUM_RUNS):
     jobs = generate_jobs(110, 300)
 
     bwait, butil, bjobs = run_baseline(jobs)
-    pwait, putil, pjobs = run_proactive(jobs)
+    pwait, putil, pjobs = run_proactive(jobs, model)
 
     baseline_waits.append(bwait)
     baseline_utils.append(butil)
     proactive_waits.append(pwait)
     proactive_utils.append(putil)
 
-    print(f"Run {i+1}: Baseline wait={bwait:.2f} util={butil:.2f} | Proactive wait={pwait:.2f} util={putil:.2f}")
+    print(f"Run {i+1:2d}: Baseline wait={bwait:.2f} util={butil:.2f} | Proactive wait={pwait:.2f} util={putil:.2f}")
 
 print("\n=== Final Results (avg over 10 runs) ===")
 print(f"Baseline   — Avg Wait: {np.mean(baseline_waits):.2f} | Avg Utilization: {np.mean(baseline_utils):.2f}")
 print(f"Proactive  — Avg Wait: {np.mean(proactive_waits):.2f} | Avg Utilization: {np.mean(proactive_utils):.2f}")
+wait_improvement = (np.mean(baseline_waits) - np.mean(proactive_waits)) / np.mean(baseline_waits) * 100
+print(f"Wait time reduction:   {wait_improvement:+.1f}%")

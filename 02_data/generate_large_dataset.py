@@ -61,6 +61,7 @@ def run_simulation():
     NUM_NODES = 8
     GPUS_PER_NODE = 4
     NUM_JOBS = 110
+    TOTAL_GPUS = NUM_NODES * GPUS_PER_NODE
 
     cluster = Cluster(NUM_NODES, GPUS_PER_NODE)
     jobs = generate_jobs(NUM_JOBS, SIM_TIME)
@@ -79,24 +80,34 @@ def run_simulation():
 
         for job in jobs:
             if job.arrival_time == t:
-                # richer features
                 total_free = cluster.total_free_gpus()
                 queue_length = len(queue)
                 running_count = len(running_jobs)
                 max_free_node = max(cluster.nodes)
                 variance_free = np.var(cluster.nodes)
-                smaller_jobs_in_queue = sum(1 for q in queue if q.num_gpus <= job.num_gpus)
-                demand_ratio = job.num_gpus / (total_free + 1)
+
+                # Principled features — no queue-rank leakage
+                can_fit_now      = 1 if total_free >= job.num_gpus else 0
+                gpu_fit_ratio    = total_free / (job.num_gpus + 1e-6)
+                fragmentation    = 1.0 - (max_free_node / (GPUS_PER_NODE + 1e-6))
+                queue_pressure   = (queue_length * job.num_gpus) / (total_free + 1)
+                nodes_that_fit   = sum(1 for n in cluster.nodes if n >= job.num_gpus)
+                node_availability = nodes_that_fit / NUM_NODES
+                avg_free_per_node = total_free / NUM_NODES
 
                 job.feature_snapshot = {
-                    "job_gpu": job.num_gpus,
-                    "total_free": total_free,
-                    "queue_length": queue_length,
-                    "running_jobs": running_count,
-                    "max_free_node": max_free_node,
-                    "variance_free": variance_free,
-                    "smaller_jobs_in_queue": smaller_jobs_in_queue,
-                    "demand_ratio": demand_ratio
+                    "job_gpu":           job.num_gpus,
+                    "total_free":        total_free,
+                    "queue_length":      queue_length,
+                    "running_jobs":      running_count,
+                    "max_free_node":     max_free_node,
+                    "variance_free":     variance_free,
+                    "can_fit_now":       can_fit_now,
+                    "gpu_fit_ratio":     gpu_fit_ratio,
+                    "fragmentation":     fragmentation,
+                    "queue_pressure":    queue_pressure,
+                    "node_availability": node_availability,
+                    "avg_free_per_node": avg_free_per_node,
                 }
                 queue.append(job)
 
@@ -116,7 +127,7 @@ def run_simulation():
 
     return dataset
 
-# run 20 simulations
+
 all_data = []
 NUM_RUNS = 20
 
@@ -126,8 +137,14 @@ for i in range(NUM_RUNS):
     print(f"Run {i+1}/{NUM_RUNS} — {len(result)} samples")
 
 df = pd.DataFrame(all_data)
+
+before = len(df)
+df = df.drop_duplicates().reset_index(drop=True)
+print(f"\nDropped {before - len(df)} duplicate rows")
+
 df.to_csv("wait_dataset.csv", index=False)
 
-print(f"\nTotal samples: {len(df)}")
+print(f"Total samples: {len(df)}")
 print(f"Avg wait time: {df['wait_time'].mean():.2f}")
 print(f"Wait time range: {df['wait_time'].min()} to {df['wait_time'].max()}")
+print(f"Features: {[c for c in df.columns if c != 'wait_time']}")
