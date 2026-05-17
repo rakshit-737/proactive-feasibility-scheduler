@@ -175,11 +175,13 @@ def main():
     improv_pct = results_df["improvement_pct"].to_numpy()
 
     ttest = stats.ttest_rel(results_df["baseline_wait"], results_df["proactive_wait"])
+    wilcoxon_note = ""
     try:
         wilcoxon = stats.wilcoxon(results_df["baseline_wait"], results_df["proactive_wait"], zero_method="wilcox")
         wilcoxon_p = float(wilcoxon.pvalue)
-    except ValueError:
+    except ValueError as exc:
         wilcoxon_p = np.nan
+        wilcoxon_note = str(exc)
 
     diff_mean, diff_std, diff_ci_low, diff_ci_high = confidence_interval_95(wait_diff)
     pct_mean, pct_std, pct_ci_low, pct_ci_high = confidence_interval_95(improv_pct)
@@ -208,6 +210,8 @@ def main():
     print(f"Mean difference (B-P): {diff_mean:.3f} ± {diff_std:.3f}")
     print(f"Paired t-test p-value: {ttest.pvalue:.6g}")
     print(f"Wilcoxon p-value: {wilcoxon_p:.6g}" if not np.isnan(wilcoxon_p) else "Wilcoxon p-value: n/a")
+    if wilcoxon_note:
+        print(f"Wilcoxon warning: {wilcoxon_note}")
     print(f"95% CI (difference): [{diff_ci_low:.3f}, {diff_ci_high:.3f}]")
     print(f"95% CI (improvement %): [{pct_ci_low:.3f}%, {pct_ci_high:.3f}%]")
     print(f"Saved: {RESULTS_CSV}")

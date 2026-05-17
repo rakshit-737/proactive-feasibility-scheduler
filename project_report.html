@@ -1922,7 +1922,7 @@ label = <span class="nm">1</span> <span class="kw">if</span> wait_time &lt;= DEL
         </tr>
         <tr>
           <td class="model-name">Load-profile generalization</td>
-          <td>High contention remains predictable (MAE 12.19, R² 0.920); mixed/bursty MAE 1.20</td>
+          <td>High contention remains predictable (MAE 12.19, R² 0.920); low-contention is a near-zero-wait regime (MAE 0, R² 1.0)</td>
           <td><code>05_results/xgboost_load_profile_performance.csv</code></td>
         </tr>
         <tr>
@@ -1932,12 +1932,12 @@ label = <span class="nm">1</span> <span class="kw">if</span> wait_time &lt;= DEL
         </tr>
         <tr>
           <td class="model-name">XGBoost grid search</td>
-          <td>Best params found; MAE slightly higher (-0.0366), R² improved (+0.0096)</td>
+          <td>Best params found; MAE became slightly worse (+0.0366 tuned-minus-baseline), while R² improved (+0.0096)</td>
           <td><code>05_results/xgboost_tuning_results.csv</code></td>
         </tr>
         <tr>
           <td class="model-name">OOD sensitivity</td>
-          <td>Strong degradation under long runtimes / fewer nodes; robust under bursty arrivals</td>
+          <td>Failure appears in some OOD regimes (negative R² for Nodes=12 and Runtime=Short); strongest robustness under bursty arrivals</td>
           <td><code>05_results/sensitivity_analysis_results.csv</code></td>
         </tr>
       </tbody>

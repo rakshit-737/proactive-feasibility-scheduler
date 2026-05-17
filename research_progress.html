@@ -134,7 +134,7 @@
     </div>
     <div class="stat-card orange">
       <div class="stat-num">7.5%</div>
-      <div class="stat-label">Avg wait time reduction<br>vs FIFO baseline (40-run paired benchmark)</div>
+      <div class="stat-label">Avg wait time reduction<br>vs FIFO baseline (40-run paired benchmark; more conservative than 10-run 10.4%)</div>
     </div>
   </div>
 
@@ -286,10 +286,11 @@
           </div>
         </div>
         <div class="finding" style="margin-top:10px;">
-          <strong>Result:</strong> Proactive scheduler reduces average job wait time by <strong>10.4%</strong>
+          <strong>Result:</strong> Pilot benchmark shows <strong>10.4%</strong> wait-time reduction
           (std 11.5%) over 10 independent runs, with identical GPU utilisation to FIFO.
           The improvement is purely from smarter queue ordering &#8212; the model guides <em>which</em> job to serve
-          next, not how many. Result plots saved to <code style="font-family:'DM Mono',monospace;font-size:11px;color:var(--accent3);">05_results/</code>.
+          next, not how many. The larger 40-run benchmark in Phase 09 reports a more conservative but statistically
+          significant 7.5% mean improvement. Result plots saved to <code style="font-family:'DM Mono',monospace;font-size:11px;color:var(--accent3);">05_results/</code>.
         </div>
       </div>
     </div>
@@ -351,7 +352,7 @@
       <div class="tl-body">
         <div class="tl-step">Phase 10 &#8212; &#10003; Complete</div>
         <div class="tl-title">XGBoost Hyperparameter Tuning</div>
-        <div class="tl-desc">Executed advisor-provided 243-configuration grid search. Best configuration improved R&#178; (+0.0096) with a minor MAE trade-off (&#8722;0.0366 baseline-minus-tuned).</div>
+        <div class="tl-desc">Executed advisor-provided 243-configuration grid search. Best configuration improved R&#178; (+0.0096), while MAE became slightly worse (+0.0366 tuned-minus-baseline), indicating a metric trade-off to report explicitly.</div>
         <div class="chips">
           <span class="chip orange">GridSearchCV</span>
           <span class="chip orange">243 configs</span>
@@ -365,7 +366,7 @@
       <div class="tl-body">
         <div class="tl-step">Phase 11 &#8212; &#10003; Complete</div>
         <div class="tl-title">Sensitivity Analysis (OOD Conditions)</div>
-        <div class="tl-desc">Measured fixed-model robustness under node-count, runtime-distribution, and arrival-pattern shifts without retraining.</div>
+        <div class="tl-desc">Measured fixed-model robustness under node-count, runtime-distribution, and arrival-pattern shifts without retraining. Some OOD settings produced negative R&#178;, indicating model failure outside the training distribution.</div>
         <div class="chips">
           <span class="chip blue">nodes: 6, 10, 12</span>
           <span class="chip blue">runtime: short/long</span>

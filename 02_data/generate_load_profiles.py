@@ -134,7 +134,8 @@ def run_simulation(profile):
     completed_jobs = []
 
     t = 0
-    while t < 1200 and (t < sim_time or jobs or queue or running_jobs):
+    max_time = sim_time * 4
+    while t < max_time and (t < sim_time or jobs or queue or running_jobs):
         for job in running_jobs[:]:
             if job.end_time == t:
                 cluster.release(job)

@@ -4,6 +4,11 @@ from xgboost import XGBRegressor
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import mean_absolute_error, r2_score
 
+"""
+Runs the full advisor-specified XGBoost grid search:
+3*3*3*3*3 = 243 parameter combinations, with 3-fold CV = 729 model fits.
+"""
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_PATH = os.path.join(PROJECT_ROOT, "02_data", "improved_wait_dataset.csv")
 RESULTS_PATH = os.path.join(PROJECT_ROOT, "05_results", "xgboost_tuning_results.csv")
