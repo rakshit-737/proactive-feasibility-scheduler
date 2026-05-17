@@ -103,7 +103,7 @@
 <main>
 
   <header>
-    <div class="tag">Research Progress Report — Updated April 2026</div>
+    <div class="tag">Research Progress Report — Updated May 2026</div>
     <h1>Proactive GPU Cluster<br><em>Scheduling with ML</em></h1>
     <p class="subtitle">
       A simulation-driven approach to predicting job wait times and intelligently
@@ -113,8 +113,8 @@
     <div class="meta-row">
       <div class="meta-item"><span class="meta-label">Researcher</span><span class="meta-value">Rakshit</span></div>
       <div class="meta-item"><span class="meta-label">Domain</span><span class="meta-value">HPC / Cluster Scheduling</span></div>
-      <div class="meta-item"><span class="meta-label">Stage</span><span class="meta-value">&#10003; Experiments Complete</span></div>
-      <div class="meta-item"><span class="meta-label">Updated</span><span class="meta-value">April 2026</span></div>
+      <div class="meta-item"><span class="meta-label">Stage</span><span class="meta-value">&#10003; Phase 11 Expansion Complete</span></div>
+      <div class="meta-item"><span class="meta-label">Updated</span><span class="meta-value">May 2026</span></div>
     </div>
   </header>
 
@@ -133,8 +133,8 @@
       <div class="stat-label">Model R&#178; score<br>(XGBoost, 12 principled features)</div>
     </div>
     <div class="stat-card orange">
-      <div class="stat-num">10.4%</div>
-      <div class="stat-label">Avg wait time reduction<br>vs FIFO baseline (10-run bench)</div>
+      <div class="stat-num">7.5%</div>
+      <div class="stat-label">Avg wait time reduction<br>vs FIFO baseline (40-run paired benchmark)</div>
     </div>
   </div>
 
@@ -294,43 +294,123 @@
       </div>
     </div>
 
+    <div class="tl-item">
+      <div class="tl-dot"><div class="dot purple filled"></div></div>
+      <div class="tl-body">
+        <div class="tl-step">Phase 07 &#8212; &#10003; Complete</div>
+        <div class="tl-title">Multi-Model Regression Comparison</div>
+        <div class="tl-desc">Benchmarked seven algorithms on improved_wait_dataset.csv and exported thesis Table 1 metrics (MAE, R&#178;, training time).</div>
+        <div class="chips">
+          <span class="chip purple">Linear Regression</span>
+          <span class="chip purple">Random Forest</span>
+          <span class="chip purple">LightGBM</span>
+          <span class="chip purple">CatBoost</span>
+          <span class="chip purple">MLP</span>
+          <span class="chip purple">XGBoost</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot"><div class="dot blue filled"></div></div>
+      <div class="tl-body">
+        <div class="tl-step">Phase 08 &#8212; &#10003; Complete</div>
+        <div class="tl-title">Load-Profile Data Expansion</div>
+        <div class="tl-desc">Generated three 2,200-sample datasets (low contention, high contention, mixed/bursty), and evaluated XGBoost separately on each profile.</div>
+        <div class="chips">
+          <span class="chip blue">low/high/bursty datasets</span>
+          <span class="chip blue">20 runs each</span>
+          <span class="chip blue">xgboost_load_profile_performance.csv</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot"><div class="dot green filled"></div></div>
+      <div class="tl-body">
+        <div class="tl-step">Phase 09 &#8212; &#10003; Complete</div>
+        <div class="tl-title">40-Run Statistical Benchmark</div>
+        <div class="tl-desc">Ran 40 paired seeds for FIFO and proactive schedulers. Improvement remains statistically significant with paired t-test and Wilcoxon confirmation.</div>
+        <div class="result-box" style="margin-top:10px;">
+          <div class="result-row">
+            <span class="result-label">Mean improvement</span>
+            <div class="bar-wrap"><div class="bar-fill" style="width:75%;background:var(--accent3);"></div></div>
+            <span class="result-val" style="color:var(--accent3);">7.50%</span>
+          </div>
+          <div class="result-row">
+            <span class="result-label">Paired t-test p-value</span>
+            <div class="bar-wrap"><div class="bar-fill" style="width:95%;background:var(--accent);"></div></div>
+            <span class="result-val" style="color:var(--accent);">1.10e-06</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot"><div class="dot orange filled"></div></div>
+      <div class="tl-body">
+        <div class="tl-step">Phase 10 &#8212; &#10003; Complete</div>
+        <div class="tl-title">XGBoost Hyperparameter Tuning</div>
+        <div class="tl-desc">Executed advisor-provided 243-configuration grid search. Best configuration improved R&#178; (+0.0096) with a minor MAE trade-off (&#8722;0.0366 baseline-minus-tuned).</div>
+        <div class="chips">
+          <span class="chip orange">GridSearchCV</span>
+          <span class="chip orange">243 configs</span>
+          <span class="chip orange">best: depth=4, lr=0.01, n=500</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot"><div class="dot blue filled"></div></div>
+      <div class="tl-body">
+        <div class="tl-step">Phase 11 &#8212; &#10003; Complete</div>
+        <div class="tl-title">Sensitivity Analysis (OOD Conditions)</div>
+        <div class="tl-desc">Measured fixed-model robustness under node-count, runtime-distribution, and arrival-pattern shifts without retraining.</div>
+        <div class="chips">
+          <span class="chip blue">nodes: 6, 10, 12</span>
+          <span class="chip blue">runtime: short/long</span>
+          <span class="chip blue">arrivals: sparse/dense/bursty</span>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <div class="divider"></div>
 
-  <div class="section-label">Remaining Work</div>
+  <div class="section-label">Next Steps</div>
   <div class="next-grid" style="animation: fadeUp .7s .5s ease both; opacity:0;">
     <div class="next-card">
       <div class="next-icon">&#128202;</div>
       <div>
-        <div class="next-title">Sensitivity Analysis</div>
-        <div class="next-body">Test scheduler robustness under varying cluster loads (high/low contention) and heterogeneous job size distributions to strengthen the evaluation section.</div>
+        <div class="next-title">Thesis Table Integration</div>
+        <div class="next-body">Insert Table 1 (7-model comparison) and profile-specific XGBoost metrics into the Results chapter with discussion of algorithmic trade-offs.</div>
       </div>
     </div>
     <div class="next-card">
       <div class="next-icon">&#128221;</div>
       <div>
         <div class="next-title">Write Thesis Chapters</div>
-        <div class="next-body">Methodology, Experiments, and Results chapters. The leakage discovery &#8594; fix &#8594; measured 10.4% improvement is the core contribution narrative.</div>
+        <div class="next-body">Methodology, expanded experimentation (Phases 07&#8211;11), statistical significance interpretation, and robustness discussion are now ready to formalize.</div>
       </div>
     </div>
     <div class="next-card">
       <div class="next-icon">&#128200;</div>
       <div>
-        <div class="next-title">Results Figures Ready</div>
-        <div class="next-body">wait_comparison.png, util_comparison.png, and scatter_pred_vs_actual.png are in 05_results/ and ready for direct inclusion in the thesis.</div>
+        <div class="next-title">Results Packaging</div>
+        <div class="next-body">Use the new CSV artifacts in 05_results/ for reproducible plots and appendix tables (comparison, tuning, statistical benchmark, sensitivity).</div>
       </div>
     </div>
     <div class="next-card">
       <div class="next-icon">&#128300;</div>
       <div>
-        <div class="next-title">Statistical Significance</div>
-        <div class="next-body">Run 30+ seeds and apply a paired t-test or Wilcoxon signed-rank test on per-run wait times to formally establish significance of the improvement.</div>
+        <div class="next-title">Narrative Consolidation</div>
+        <div class="next-body">Frame final contribution as: principled feature redesign + statistically significant wait reduction + cross-profile and OOD robustness evaluation.</div>
       </div>
     </div>
   </div>
 
 </main>
-<footer>Proactive GPU Cluster Scheduling &#8212; Research Progress &#xB7; April 2026 &#xB7; Phases 01&#8211;06 Complete</footer>
+<footer>Proactive GPU Cluster Scheduling &#8212; Research Progress &#xB7; May 2026 &#xB7; Phases 01&#8211;11 Complete</footer>
 </body>
 </html>
