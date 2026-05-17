@@ -1,0 +1,14 @@
+metric,value
+runs,40.0
+baseline_wait_mean,18.268863636363637
+proactive_wait_mean,16.715227272727272
+mean_wait_difference,1.5536363636363633
+std_wait_difference,1.7042842690337132
+mean_improvement_pct,7.50470054019645
+std_improvement_pct,8.97017504393867
+ttest_pvalue,1.0964041274226218e-06
+wilcoxon_pvalue,2.2321128199109808e-06
+wait_diff_ci95_low,1.0085798115889337
+wait_diff_ci95_high,2.0986929156837926
+improvement_ci95_low,4.635899384457803
+improvement_ci95_high,10.373501695935097

@@ -866,11 +866,11 @@ pre {
       </div>
       <div class="meta-cell">
         <div class="meta-k">Best R² Score</div>
-        <div class="meta-v">0.883</div>
+        <div class="meta-v">0.937</div>
       </div>
       <div class="meta-cell">
         <div class="meta-k">Status</div>
-        <div class="meta-v">Active · Phase 06</div>
+        <div class="meta-v">Active · Phase 11</div>
       </div>
     </div>
   </div>
@@ -1844,67 +1844,104 @@ label = <span class="nm">1</span> <span class="kw">if</span> wait_time &lt;= DEL
     <div class="chapter-head">
       <div class="chapter-num">08</div>
       <div class="chapter-info">
-        <div class="chapter-tag">What Comes Next</div>
-        <h2 class="chapter-title">Remaining Work</h2>
-        <p class="chapter-desc">The clear path from current state to a complete, publishable thesis.</p>
+        <div class="chapter-tag">Phase 07–11 Expansion</div>
+        <h2 class="chapter-title">Advisor-Directed Expansion Results</h2>
+        <p class="chapter-desc">Systematic model, data, statistical, tuning, and robustness expansion as requested.</p>
       </div>
     </div>
 
     <div class="prose">
       <p>
-        The foundation is solid. The simulator is validated, the training pipeline is clean,
-        and the model is theoretically defensible. Three tasks remain before the research
-        is complete.
+        The five-point roadmap has now been implemented with reproducible scripts and outputs.
+        New experiments include seven-model comparison, profile-specific datasets, 40-run
+        statistical benchmarking, full XGBoost grid search, and out-of-distribution sensitivity
+        analysis.
       </p>
     </div>
 
     <div class="file-grid stagger">
       <div class="file-card">
         <div class="file-card-accent accent-red"></div>
-        <div class="file-name"><span>① Update &amp; Re-run Benchmark</span></div>
-        <div class="file-purpose">Priority: High</div>
+        <div class="file-name"><span>① Multi-Model Comparison (Table 1)</span></div>
+        <div class="file-purpose">Completed</div>
         <div class="file-desc">
-          Update <code>proactive_Schedule_v2.py</code> to load <code>wait_model_v2.pkl</code>
-          and use the new 12-feature <code>get_features()</code> function that matches the
-          training schema exactly. Re-run the 10-iteration baseline vs. proactive comparison.
-          This produces the core experimental result of the thesis.
+          <code>compare_multiple_models.py</code> compares Linear Regression, Random Forest,
+          LightGBM, CatBoost, Gradient Boosting, MLP, and XGBoost on
+          <code>improved_wait_dataset.csv</code>. Best MAE: MLP (5.318), strongest classical
+          tree performance: CatBoost (R² 0.837, MAE 5.319).
         </div>
       </div>
 
       <div class="file-card">
         <div class="file-card-accent accent-teal"></div>
-        <div class="file-name"><span>② Result Visualisations</span></div>
-        <div class="file-purpose">Priority: High</div>
+        <div class="file-name"><span>② Load-Profile Data Expansion</span></div>
+        <div class="file-purpose">Completed</div>
         <div class="file-desc">
-          Plot per-run wait times (FIFO vs. proactive), GPU utilisation over time,
-          wait-time distribution histograms, and the predicted vs actual wait scatter plot.
-          These figures go directly into the thesis Results section.
+          <code>generate_load_profiles.py</code> creates three 2,200-row datasets:
+          low contention, high contention, and mixed/bursty. Profile-wise XGBoost evaluation
+          is exported to <code>xgboost_load_profile_performance.csv</code> for generalization reporting.
         </div>
       </div>
 
       <div class="file-card">
         <div class="file-card-accent accent-gold"></div>
-        <div class="file-name"><span>③ Sensitivity Analysis</span></div>
-        <div class="file-purpose">Priority: Medium</div>
+        <div class="file-name"><span>③ 40-Run Statistical Benchmark</span></div>
+        <div class="file-purpose">Completed</div>
         <div class="file-desc">
-          Test the scheduler under different cluster load conditions — high contention
-          (many large jobs), low contention (sparse arrivals), and heterogeneous job sizes.
-          Shows the proactive scheduler's robustness across operating conditions.
+          <code>benchmark_statistical.py</code> runs 40 paired seeds (FIFO vs proactive),
+          then reports paired t-test and Wilcoxon significance, effect size, and 95% CI.
+          Result: mean improvement 7.50%, p-value ≈ 1.10e-06 (t-test).
         </div>
       </div>
 
       <div class="file-card">
         <div class="file-card-accent accent-ink"></div>
-        <div class="file-name"><span>④ Write Thesis Chapters</span></div>
-        <div class="file-purpose">Priority: Ongoing</div>
+        <div class="file-name"><span>④ Tuning + Sensitivity</span></div>
+        <div class="file-purpose">Completed</div>
         <div class="file-desc">
-          The ablation story (leaky → removed → principled features) is the methodology
-          contribution. Methodology, Experiments, and Results chapters can now be written
-          with full evidence. The feature leakage discovery and fix is a genuine, citable
-          research insight.
+          <code>tune_xgboost.py</code> executes the advisor-specified grid (243 configs),
+          and <code>sensitivity_analysis.py</code> evaluates fixed-model robustness on
+          node-count, runtime-distribution, and arrival-pattern shifts (no retraining).
         </div>
       </div>
     </div>
+
+    <table class="metrics-table" style="margin-top:32px;">
+      <thead>
+        <tr>
+          <th>Expansion Track</th>
+          <th>Key Result</th>
+          <th>Output</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="model-name">7-model comparison</td>
+          <td>MAE best: 5.318 (MLP), R² best among tree models: 0.837 (CatBoost)</td>
+          <td><code>05_results/model_comparison_table1.csv</code></td>
+        </tr>
+        <tr>
+          <td class="model-name">Load-profile generalization</td>
+          <td>High contention remains predictable (MAE 12.19, R² 0.920); low-contention is a near-zero-wait regime (MAE 0, R² 1.0)</td>
+          <td><code>05_results/xgboost_load_profile_performance.csv</code></td>
+        </tr>
+        <tr>
+          <td class="model-name">40-run statistical power</td>
+          <td>Mean wait diff: 1.554 ± 1.704 ts; t-test p=1.10e-06; 95% CI [1.009, 2.099]</td>
+          <td><code>05_results/benchmark_statistical_summary.csv</code></td>
+        </tr>
+        <tr>
+          <td class="model-name">XGBoost grid search</td>
+          <td>Best params found; MAE became slightly worse (+0.0366 tuned-minus-baseline), while R² improved (+0.0096)</td>
+          <td><code>05_results/xgboost_tuning_results.csv</code></td>
+        </tr>
+        <tr>
+          <td class="model-name">OOD sensitivity</td>
+          <td>Failure appears in some OOD regimes (negative R² for Nodes=12 and Runtime=Short); strongest robustness under bursty arrivals</td>
+          <td><code>05_results/sensitivity_analysis_results.csv</code></td>
+        </tr>
+      </tbody>
+    </table>
   </section>
 
   <!-- ── COMPLETE FILE MANIFEST ─────────────────────── -->
@@ -2060,6 +2097,36 @@ label = <span class="nm">1</span> <span class="kw">if</span> wait_time &lt;= DEL
           <td>06 ●</td>
           <td>Updated feature importance showing balanced multi-feature importance</td>
         </tr>
+        <tr>
+          <td class="model-name" style="color:var(--teal);">compare_multiple_models.py</td>
+          <td><span class="file-badge badge-py">Python</span></td>
+          <td>07 ●</td>
+          <td>7-model regression comparison (MAE, R², training time) for thesis Table 1</td>
+        </tr>
+        <tr>
+          <td class="model-name" style="color:var(--teal);">generate_load_profiles.py</td>
+          <td><span class="file-badge badge-py">Python</span></td>
+          <td>08 ●</td>
+          <td>Generates low/high/bursty 2,200-sample datasets and profile-specific XGBoost metrics</td>
+        </tr>
+        <tr>
+          <td class="model-name" style="color:var(--teal);">benchmark_statistical.py</td>
+          <td><span class="file-badge badge-py">Python</span></td>
+          <td>09 ●</td>
+          <td>40-run paired FIFO vs proactive benchmark with t-test, Wilcoxon, and confidence intervals</td>
+        </tr>
+        <tr>
+          <td class="model-name" style="color:var(--teal);">tune_xgboost.py</td>
+          <td><span class="file-badge badge-py">Python</span></td>
+          <td>10 ●</td>
+          <td>GridSearchCV tuning over 243 XGBoost parameter combinations</td>
+        </tr>
+        <tr>
+          <td class="model-name" style="color:var(--teal);">sensitivity_analysis.py</td>
+          <td><span class="file-badge badge-py">Python</span></td>
+          <td>11 ●</td>
+          <td>Out-of-distribution robustness checks on nodes, runtime distributions, and arrivals</td>
+        </tr>
       </tbody>
     </table>
 
@@ -2077,7 +2144,7 @@ label = <span class="nm">1</span> <span class="kw">if</span> wait_time &lt;= DEL
   <div class="footer-mono">
     Rakshit &nbsp;/&nbsp; March 2026<br>
     HPC &amp; Cluster Scheduling · Active Research<br>
-    20 files · 6 completed phases · Phase 07 next
+    25+ files · 11 phases complete · Expansion roadmap executed
   </div>
 </footer>
 
