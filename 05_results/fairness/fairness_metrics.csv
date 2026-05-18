@@ -1,0 +1,4 @@
+scheduler,mean_wait,max_wait,starvation_count,fairness_gini,completed_jobs
+fifo,18.575,57.85,22.25,0.5261904919201371,110.0
+proactive,16.55818181818182,124.55,19.1,0.7901398779178594,110.0
+proactive_starvation,16.443636363636365,90.35,29.95,0.6939904083152926,110.0

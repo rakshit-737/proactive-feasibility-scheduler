@@ -113,7 +113,7 @@
     <div class="meta-row">
       <div class="meta-item"><span class="meta-label">Researcher</span><span class="meta-value">Rakshit</span></div>
       <div class="meta-item"><span class="meta-label">Domain</span><span class="meta-value">HPC / Cluster Scheduling</span></div>
-      <div class="meta-item"><span class="meta-label">Stage</span><span class="meta-value">&#10003; Phase 11 Expansion Complete</span></div>
+      <div class="meta-item"><span class="meta-label">Stage</span><span class="meta-value">&#10003; Phase 21 Publication Pipeline Complete</span></div>
       <div class="meta-item"><span class="meta-label">Updated</span><span class="meta-value">May 2026</span></div>
     </div>
   </header>
@@ -125,8 +125,8 @@
       <div class="stat-label">GPU Cluster simulated<br>(8 nodes, 4 GPUs each)</div>
     </div>
     <div class="stat-card purple">
-      <div class="stat-num">2,200</div>
-      <div class="stat-label">Training samples generated<br>across 20 simulation runs</div>
+      <div class="stat-num">21</div>
+      <div class="stat-label">Completed research phases<br>(full thesis enhancement pipeline)</div>
     </div>
     <div class="stat-card green">
       <div class="stat-num">0.937</div>
@@ -375,43 +375,55 @@
       </div>
     </div>
 
+
+    <div class="tl-item">
+      <div class="tl-dot"><div class="dot green filled"></div></div>
+      <div class="tl-body">
+        <div class="tl-step">Phase 12 &#8212; &#10003; Complete</div>
+        <div class="tl-title">Ablation Study</div>
+        <div class="tl-desc">Implemented systematic 12-feature ablation with R&#178; drop ranking and visualization export.</div>
+        <div class="chips"><span class="chip green">03_models/ablation_study.py</span><span class="chip green">ablation_study_results.csv</span></div>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot"><div class="dot blue filled"></div></div>
+      <div class="tl-body">
+        <div class="tl-step">Phase 13 &#8212; &#10003; Complete</div>
+        <div class="tl-title">Fairness &amp; Starvation Analysis</div>
+        <div class="tl-desc">Added fairness metrics (max wait, Gini, starvation, completion by size) and starvation prevention bumping policy.</div>
+        <div class="chips"><span class="chip blue">04_scheduler/fairness_analysis.py</span><span class="chip blue">fairness_metrics.csv</span></div>
+      </div>
+    </div>
+
+    <div class="tl-item"><div class="tl-dot"><div class="dot purple filled"></div></div><div class="tl-body"><div class="tl-step">Phase 14 &#8212; &#10003; Complete</div><div class="tl-title">Additional Scheduler Baselines</div><div class="tl-desc">Implemented SJF, Priority, and NN schedulers and benchmarked all 5 schedulers with MAE/wait/fairness/throughput reporting.</div><div class="chips"><span class="chip purple">multi_scheduler_benchmark.csv</span></div></div></div>
+
+    <div class="tl-item"><div class="tl-dot"><div class="dot orange filled"></div></div><div class="tl-body"><div class="tl-step">Phase 15 &#8212; &#10003; Complete</div><div class="tl-title">SHAP Explainability</div><div class="tl-desc">Generated SHAP summary, dependence, and force-plot visualizations for model explainability.</div><div class="chips"><span class="chip orange">03_models/explainability_shap.py</span></div></div></div>
+
+    <div class="tl-item"><div class="tl-dot"><div class="dot green filled"></div></div><div class="tl-body"><div class="tl-step">Phase 16 &#8212; &#10003; Complete</div><div class="tl-title">Real-Trace Validation</div><div class="tl-desc">Added LANL parser and synthetic-vs-real evaluation with cross-dataset metrics and comparison plots.</div><div class="chips"><span class="chip green">02_data/load_real_traces.py</span><span class="chip green">lanl_validation_results.csv</span></div></div></div>
+
+    <div class="tl-item"><div class="tl-dot"><div class="dot blue filled"></div></div><div class="tl-body"><div class="tl-step">Phase 17 &#8212; &#10003; Complete</div><div class="tl-title">Scaling Analysis</div><div class="tl-desc">Benchmarked 4/8/16/32-node configurations and measured overhead/inference scaling behavior.</div><div class="chips"><span class="chip blue">04_scheduler/scaling_analysis.py</span></div></div></div>
+
+    <div class="tl-item"><div class="tl-dot"><div class="dot purple filled"></div></div><div class="tl-body"><div class="tl-step">Phase 18 &#8212; &#10003; Complete</div><div class="tl-title">Online Learning &amp; Concept Drift</div><div class="tl-desc">Implemented incremental retraining and adaptive drift-triggered model updates for workload shifts.</div><div class="chips"><span class="chip purple">online_learning.py</span><span class="chip purple">concept_drift_detection.py</span></div></div></div>
+
+    <div class="tl-item"><div class="tl-dot"><div class="dot orange filled"></div></div><div class="tl-body"><div class="tl-step">Phase 19 &#8212; &#10003; Complete</div><div class="tl-title">ROI &amp; Cost-Benefit Analysis</div><div class="tl-desc">Quantified GPU-hour savings, energy savings, cloud cost reductions, and deployment ROI.</div><div class="chips"><span class="chip orange">05_results/roi_analysis.py</span></div></div></div>
+
+    <div class="tl-item"><div class="tl-dot"><div class="dot green filled"></div></div><div class="tl-body"><div class="tl-step">Phase 20 &#8212; &#10003; Complete</div><div class="tl-title">Reproducibility Kit</div><div class="tl-desc">Added one-click orchestration script, requirements, Dockerfile, and reproducibility guide.</div><div class="chips"><span class="chip green">run_all_experiments.sh</span><span class="chip green">README_REPRODUCIBILITY.md</span></div></div></div>
+
+    <div class="tl-item"><div class="tl-dot"><div class="dot blue filled"></div></div><div class="tl-body"><div class="tl-step">Phase 21 &#8212; &#10003; Complete</div><div class="tl-title">Interactive Dashboard &amp; GitHub Pages</div><div class="tl-desc">Delivered Streamlit dashboard and professional GitHub Pages portal with timeline, charts, and artifact links.</div><div class="chips"><span class="chip blue">dashboard.py</span><span class="chip blue">docs/index.html</span></div></div></div>
+
   </div>
 
   <div class="divider"></div>
 
   <div class="section-label">Next Steps</div>
   <div class="next-grid" style="animation: fadeUp .7s .5s ease both; opacity:0;">
-    <div class="next-card">
-      <div class="next-icon">&#128202;</div>
-      <div>
-        <div class="next-title">Thesis Table Integration</div>
-        <div class="next-body">Insert Table 1 (7-model comparison) and profile-specific XGBoost metrics into the Results chapter with discussion of algorithmic trade-offs.</div>
-      </div>
-    </div>
-    <div class="next-card">
-      <div class="next-icon">&#128221;</div>
-      <div>
-        <div class="next-title">Write Thesis Chapters</div>
-        <div class="next-body">Methodology, expanded experimentation (Phases 07&#8211;11), statistical significance interpretation, and robustness discussion are now ready to formalize.</div>
-      </div>
-    </div>
-    <div class="next-card">
-      <div class="next-icon">&#128200;</div>
-      <div>
-        <div class="next-title">Results Packaging</div>
-        <div class="next-body">Use the new CSV artifacts in 05_results/ for reproducible plots and appendix tables (comparison, tuning, statistical benchmark, sensitivity).</div>
-      </div>
-    </div>
-    <div class="next-card">
-      <div class="next-icon">&#128300;</div>
-      <div>
-        <div class="next-title">Narrative Consolidation</div>
-        <div class="next-body">Frame final contribution as: principled feature redesign + statistically significant wait reduction + cross-profile and OOD robustness evaluation.</div>
-      </div>
-    </div>
+    <div class="next-card"><div class="next-icon">&#128640;</div><div><div class="next-title">Publication Packaging</div><div class="next-body">Integrate Phase 12&#8211;21 tables and plots into thesis chapters and defense slides.</div></div></div>
+    <div class="next-card"><div class="next-icon">&#128202;</div><div><div class="next-title">Regeneration Check</div><div class="next-body">Use <code>run_all_experiments.sh</code> for full reproducibility validation in a clean environment.</div></div></div>
+    <div class="next-card"><div class="next-icon">&#127760;</div><div><div class="next-title">GitHub Pages Publish</div><div class="next-body">Enable Pages from <code>docs/</code> to host interactive research documentation.</div></div></div>
+    <div class="next-card"><div class="next-icon">&#128218;</div><div><div class="next-title">Citation &amp; Release</div><div class="next-body">Tag v3.0 and include citation metadata for publication submission artifacts.</div></div></div>
   </div>
-
 </main>
-<footer>Proactive GPU Cluster Scheduling &#8212; Research Progress &#xB7; May 2026 &#xB7; Phases 01&#8211;11 Complete</footer>
+<footer>Proactive GPU Cluster Scheduling &#8212; Research Progress &#xB7; May 2026 &#xB7; Phases 01&#8211;21 Complete</footer>
 </body>
 </html>

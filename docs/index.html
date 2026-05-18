@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Proactive Feasibility Scheduler</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <section class="hero">
+      <h1>Proactive GPU Scheduler Research Portal</h1>
+      <p>Publication-ready hub for all 21 phases: model development, ablation, fairness, scheduler benchmarks, scaling, explainability, trace validation, online learning, ROI, reproducibility, and dashboards.</p>
+    </section>
+
+    <section class="grid">
+      <div class="card"><div class="kpi cyan">21</div><div>Research phases</div></div>
+      <div class="card"><div class="kpi purple">0.937</div><div>Best model R²</div></div>
+      <div class="card"><div class="kpi green">7.5%</div><div>Avg wait reduction</div></div>
+      <div class="card"><div class="kpi orange">5 schedulers</div><div>Comprehensive baselines</div></div>
+    </section>
+
+    <section class="section">
+      <h2>Interactive timeline (Phases 01–21)</h2>
+      <div class="card">
+        <div class="timeline-item">Phases 01–11: Core simulation/modeling and statistical validation complete.</div>
+        <div class="timeline-item">Phase 12: Ablation study with feature-importance ranking.</div>
+        <div class="timeline-item">Phase 13: Fairness and starvation analysis with prevention policy.</div>
+        <div class="timeline-item">Phase 14: FIFO/SJF/Priority/Proactive/NN benchmark comparison.</div>
+        <div class="timeline-item">Phase 15: SHAP force, dependence, and summary visualizations.</div>
+        <div class="timeline-item">Phase 16: Synthetic-vs-real trace generalization validation.</div>
+        <div class="timeline-item">Phase 17: Scaling curves across 8–256 GPUs.</div>
+        <div class="timeline-item">Phase 18: Online learning and concept drift adaptation.</div>
+        <div class="timeline-item">Phase 19: Cost-benefit and ROI estimation.</div>
+        <div class="timeline-item">Phase 20: Reproducibility kit with one-click orchestration.</div>
+        <div class="timeline-item">Phase 21: GitHub Pages + interactive dashboard delivery.</div>
+      </div>
+    </section>
+
+    <section class="section grid">
+      <div class="card">
+        <h2>Ablation Explorer</h2>
+        <canvas id="ablationChart" height="220"></canvas>
+      </div>
+      <div class="card">
+        <h2>Scheduler Benchmark</h2>
+        <canvas id="schedulerChart" height="220"></canvas>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Artifacts and Downloads</h2>
+      <table class="table">
+        <thead><tr><th>Area</th><th>Primary Artifacts</th></tr></thead>
+        <tbody>
+          <tr><td>Models</td><td><a href="assets/data/ablation_study_results.csv">ablation_study_results.csv</a>, <a href="assets/ablation_importance.png">ablation_importance.png</a></td></tr>
+          <tr><td>Schedulers</td><td><a href="assets/data/multi_scheduler_benchmark.csv">multi_scheduler_benchmark.csv</a>, <a href="assets/scheduler_comparison.png">scheduler_comparison.png</a></td></tr>
+          <tr><td>Fairness</td><td><a href="assets/data/fairness_metrics.csv">fairness_metrics.csv</a>, <a href="assets/fairness_wait_distribution.png">wait_time_distribution_by_size.png</a></td></tr>
+          <tr><td>Scaling</td><td><a href="assets/data/scaling_analysis.csv">scaling_analysis.csv</a>, <a href="assets/scaling_curves.png">scaling_curves.png</a></td></tr>
+          <tr><td>SHAP</td><td><a href="assets/shap_summary.png">SHAP summary plot</a> (full set available in repository under <code>05_results/shap/</code>)</td></tr>
+          <tr><td>Traces</td><td><a href="assets/data/lanl_validation_results.csv">lanl_validation_results.csv</a>, <a href="assets/synthetic_vs_real_comparison.png">synthetic_vs_real_comparison.png</a></td></tr>
+          <tr><td>ROI</td><td><a href="assets/data/cost_benefit_analysis.csv">cost_benefit_analysis.csv</a>, <a href="assets/roi_summary.png">roi_summary.png</a></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section grid">
+      <div class="card"><h2>Methodology</h2><p>Uses simulation-generated cluster state features, ML ranking, fairness constraints, baseline scheduler comparisons, and statistical reporting.</p></div>
+      <div class="card"><h2>FAQ</h2><p><strong>How to reproduce?</strong> Run <code>bash run_all_experiments.sh</code>.<br><strong>How to inspect interactively?</strong> Launch <code>streamlit run dashboard.py</code>.</p></div>
+      <div class="card"><h2>Code Gallery</h2><p>Core scripts are organized in <code>02_data/</code>, <code>03_models/</code>, <code>04_scheduler/</code>, and <code>05_results/</code>.</p></div>
+    </section>
+
+    <div class="footer">Proactive Feasibility Scheduler · GitHub Pages documentation (v3.0)</div>
+  </div>
+  <script src="js/interactive.js"></script>
+</body>
+</html>
