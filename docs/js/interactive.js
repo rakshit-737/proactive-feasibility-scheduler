@@ -1,15 +1,23 @@
 async function loadCSV(path) {
-  const res = await fetch(path);
-  if (!res.ok) return null;
-  const txt = await res.text();
-  const lines = txt.trim().split('\n');
-  const header = lines[0].split(',');
-  return lines.slice(1).map(line => {
-    const cols = line.split(',');
-    const row = {};
-    header.forEach((h, i) => row[h] = cols[i]);
-    return row;
-  });
+  try {
+    const res = await fetch(path);
+    if (!res.ok) {
+      console.error(`Failed to load CSV: ${path} (status ${res.status})`);
+      return null;
+    }
+    const txt = await res.text();
+    const lines = txt.trim().split('\n');
+    const header = lines[0].split(',');
+    return lines.slice(1).map(line => {
+      const cols = line.split(',');
+      const row = {};
+      header.forEach((h, i) => row[h] = cols[i]);
+      return row;
+    });
+  } catch (err) {
+    console.error(`Error fetching CSV ${path}:`, err);
+    return null;
+  }
 }
 
 async function initCharts() {
