@@ -1,5 +1,6 @@
 import os
 import pickle
+import warnings
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -26,6 +27,8 @@ DATA_CANDIDATES = [
 BASELINE_KEYS = ["baseline_wait", "fifo_avg_wait", "fifo_wait", "fifo_mean_wait"]
 PROACTIVE_KEYS = ["proactive_wait", "proactive_avg_wait", "proactive_wait_time", "proactive_mean_wait"]
 IMPROVEMENT_KEYS = ["improvement_pct", "improvement_percent", "pct_improvement"]
+# Fixed seed keeps bootstrap CI values reproducible across runs.
+BOOTSTRAP_SEED = 42
 
 
 def _first_present(df, keys):
@@ -110,7 +113,8 @@ def load_benchmark_data():
     return result, optional_pairs, chosen
 
 
-def bootstrap_mean_ci(values, n_bootstrap=10000, ci=0.95, seed=42):
+def bootstrap_mean_ci(values, n_bootstrap=10000, ci=0.95, seed=BOOTSTRAP_SEED):
+    """Return percentile bootstrap CI bounds for the sample mean."""
     values = np.asarray(values, dtype=float)
     if values.size == 0:
         raise ValueError("Cannot bootstrap empty data.")
@@ -144,6 +148,7 @@ def benjamini_hochberg(pvalues):
 
 
 def paired_tests(df, optional_pairs):
+    """Run two-tailed paired t-tests for wait time and optional paired metrics."""
     tests = [
         (
             "wait_time",
@@ -160,6 +165,11 @@ def paired_tests(df, optional_pairs):
     for metric, baseline, proactive in tests:
         t_stat, p_raw = stats.ttest_rel(baseline, proactive, alternative="two-sided")
         if np.isnan(t_stat) or np.isnan(p_raw):
+            warnings.warn(
+                f"Paired t-test produced NaN for '{metric}'. Falling back to t_stat=0.0, p_value=1.0.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             t_stat, p_raw = 0.0, 1.0
         stats_rows.append({"metric": metric, "t_stat": float(t_stat), "p_value_raw": float(p_raw)})
         raw_pvalues.append(float(p_raw))
@@ -173,6 +183,7 @@ def paired_tests(df, optional_pairs):
 
 
 def build_summary(df, test_rows):
+    """Assemble CSV-ready summary rows with CI bounds and corrected p-values."""
     fifo_ci_low, fifo_ci_high = bootstrap_mean_ci(df["baseline_wait"].to_numpy())
     proactive_ci_low, proactive_ci_high = bootstrap_mean_ci(df["proactive_wait"].to_numpy())
     improve_ci_low, improve_ci_high = bootstrap_mean_ci(df["improvement_pct"].to_numpy())
@@ -236,6 +247,7 @@ def build_summary(df, test_rows):
 
 
 def plot_confidence_intervals(summary_df):
+    """Create and save Phase 22 CI forest-style plots for key wait metrics."""
     sns.set_theme(style="whitegrid")
     wait_rows = summary_df[summary_df["metric"].isin(["fifo_mean_wait", "proactive_mean_wait"])].copy()
     imp_row = summary_df[summary_df["metric"] == "wait_improvement_pct"].iloc[0]
@@ -249,9 +261,10 @@ def plot_confidence_intervals(summary_df):
     xerr = np.vstack((means - lower, upper - means))
 
     axes[0].errorbar(means, y_positions, xerr=xerr, fmt="o", capsize=5, color="#1f77b4")
+    metric_labels = [label.replace("_", " ").title() for label in wait_rows["metric"]]
     axes[0].set_yticks(y_positions)
-    axes[0].set_yticklabels(["FIFO mean wait", "Proactive mean wait"])
-    axes[0].set_xlabel("Timesteps")
+    axes[0].set_yticklabels(metric_labels)
+    axes[0].set_xlabel("Mean wait time (timesteps)")
     axes[0].set_title("95% Bootstrap CI (Wait Time)")
 
     mean_imp = imp_row["mean"]
@@ -277,6 +290,7 @@ def plot_confidence_intervals(summary_df):
 
 
 def main():
+    """Execute Phase 22 analysis and write CSV/plot outputs to this directory."""
     os.makedirs(SCRIPT_DIR, exist_ok=True)
     df, optional_pairs, source_path = load_benchmark_data()
     test_rows = paired_tests(df, optional_pairs)
