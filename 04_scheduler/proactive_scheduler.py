@@ -64,6 +64,7 @@ def generate_jobs(num_jobs, max_time):
     return sorted(jobs, key=lambda x: x.arrival_time)
 
 def get_features(job, cluster, queue, running_jobs):
+<<<<<<< HEAD
     """Feature extraction must match generate_improved_dataset.py / wait_model_v2
     EXACTLY, otherwise the model receives out-of-distribution inputs.
     Previously this function used three formulas that did not match the training
@@ -71,17 +72,30 @@ def get_features(job, cluster, queue, running_jobs):
     and queue_pressure = queue_length * job_gpus / free. Those have been replaced
     with the trained schema below."""
     NUM_NODES = cluster.num_nodes
+=======
+    NUM_NODES = cluster.num_nodes
+    GPUS_PER_NODE = cluster.gpus_per_node
+>>>>>>> d420ccc5fc239b03e840287805338721fb55585d
     total_free = cluster.total_free_gpus()
     max_free_node = max(cluster.nodes)
     variance_free = np.var(cluster.nodes)
     queue_length = len(queue)
 
+<<<<<<< HEAD
     can_fit_now       = int(total_free >= job.num_gpus)
     gpu_fit_ratio     = min(total_free / (job.num_gpus + 1e-6), 1.0)   # capped at 1.0
     fragmentation     = float(np.std(cluster.nodes))                    # std-dev of free GPUs
     total_queued_gpus = sum(q.num_gpus for q in queue)
     queue_pressure    = total_queued_gpus / (total_free + 1)            # total queued demand vs supply
     node_availability = sum(1 for n in cluster.nodes if n >= job.num_gpus) / NUM_NODES
+=======
+    can_fit_now       = 1 if total_free >= job.num_gpus else 0
+    gpu_fit_ratio     = total_free / (job.num_gpus + 1e-6)
+    fragmentation     = 1.0 - (max_free_node / (GPUS_PER_NODE + 1e-6))
+    queue_pressure    = (queue_length * job.num_gpus) / (total_free + 1)
+    nodes_that_fit    = sum(1 for n in cluster.nodes if n >= job.num_gpus)
+    node_availability = nodes_that_fit / NUM_NODES
+>>>>>>> d420ccc5fc239b03e840287805338721fb55585d
     avg_free_per_node = total_free / NUM_NODES
 
     return [

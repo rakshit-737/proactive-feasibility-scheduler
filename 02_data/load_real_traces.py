@@ -53,6 +53,7 @@ def main():
     else:
         df = build_fallback_trace()
         source = 'fallback synthetic-real proxy'
+<<<<<<< HEAD
         # Guard: never let the synthetic fallback overwrite an existing real
         # trace CSV. If the user already has a curated lanl_trace_sample.csv and
         # no .swf is present, write the proxy to a clearly-named separate file.
@@ -62,6 +63,8 @@ def main():
                 os.path.dirname(DEFAULT_OUTPUT), 'lanl_trace_fallback_proxy.csv')
             print('No SWF found and a real trace CSV already exists; '
                   f'writing fallback proxy to {args.output} instead of overwriting it.')
+=======
+>>>>>>> d420ccc5fc239b03e840287805338721fb55585d
 
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
     df.to_csv(args.output, index=False)

@@ -1,6 +1,7 @@
 # Results Summary (Phases 01–21)
 
 ## High-level findings
+<<<<<<< HEAD
 - Model quality: **R² ≈ 0.83, MAE ≈ 5.35** on a proper 20% holdout (5-fold CV MAE 5.68 ± 0.71). Note: an in-sample (full-data) evaluation reads R² ≈ 0.96 / MAE ≈ 2.56, but that overstates generalisation and should not be quoted as model quality.
 - Proactive scheduling: **7.5% mean wait-time reduction** vs FIFO (40-run paired benchmark, p = 1.10e-06), at **identical GPU utilisation**.
 - Trade-off: proactive reordering **worsens tail latency** (mean max-wait ~58 → 128 ts) and **fairness** (Gini 0.51 → 0.79). The mean-wait gain is not free.
@@ -10,6 +11,18 @@
 - Phase 14 benchmark compares 5 schedulers (FIFO, SJF, Priority, Proactive, NN); SJF wins on mean wait, FIFO wins on fairness.
 - Phase 15 SHAP plots provide local and global explainability artifacts.
 - Phases 16–19 cover scaling, online learning, concept drift, and an assumption-heavy ROI estimate.
+=======
+- Best model quality: **R² ≈ 0.937** on synthetic holdout.
+- Proactive scheduling: **~7.5% mean wait-time reduction** vs FIFO (40-run benchmark context).
+- Phase 12 ablation ranks the most critical wait-time features by R² drop.
+- Phase 13 fairness analysis confirms reduced starvation with anti-starvation bumping.
+- Phase 14 benchmark compares 5 schedulers using MAE, wait, fairness, and throughput.
+- Phase 15 SHAP plots provide local and global explainability artifacts.
+- Phase 16 synthetic-to-real validation reports cross-dataset generalization gaps.
+- Phase 17 scaling confirms proactive advantages persist across larger cluster sizes.
+- Phase 18 online adaptation recovers performance under workload drift.
+- Phase 19 ROI estimates annual GPU-hour and cloud-cost savings.
+>>>>>>> d420ccc5fc239b03e840287805338721fb55585d
 
 ## Artifact index
 - Models: `05_results/models/*`

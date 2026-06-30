@@ -1,7 +1,10 @@
 import pandas as pd
 import numpy as np
 import pickle
+<<<<<<< HEAD
 import os
+=======
+>>>>>>> d420ccc5fc239b03e840287805338721fb55585d
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -9,6 +12,7 @@ from xgboost import XGBRegressor
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.metrics import mean_absolute_error, r2_score
 
+<<<<<<< HEAD
 # Resolve paths relative to the project root so the script works no matter what
 # the current working directory is (previously it assumed the dataset was in
 # the CWD, which broke when run from run_all_experiments.sh at project root).
@@ -17,6 +21,10 @@ MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ── Load data ──────────────────────────────────────────────────
 df = pd.read_csv(os.path.join(PROJECT_ROOT, "02_data", "improved_wait_dataset.csv"))
+=======
+# ── Load data ────────────────────────────────────────────────────────────────
+df = pd.read_csv("improved_wait_dataset.csv")
+>>>>>>> d420ccc5fc239b03e840287805338721fb55585d
 print(f"Dataset shape: {df.shape}")
 print(f"Wait time stats:\n{df['wait_time'].describe()}\n")
 
@@ -77,11 +85,19 @@ ax.set_title("Feature Importance — Improved Wait-Time Model", fontsize=13)
 ax.set_ylabel("Importance")
 plt.xticks(rotation=40, ha='right', fontsize=9)
 plt.tight_layout()
+<<<<<<< HEAD
 plt.savefig(os.path.join(MODEL_DIR, "feature_importance_v2.png"), dpi=150)
 print("\nPlot saved: feature_importance_v2.png")
 
 # ── Save model ────────────────────────────────────────────────
 with open(os.path.join(MODEL_DIR, "wait_model_v2.pkl"), "wb") as f:
+=======
+plt.savefig("feature_importance_v2.png", dpi=150)
+print("\nPlot saved: feature_importance_v2.png")
+
+# ── Save model ────────────────────────────────────────────────────────────────
+with open("wait_model_v2.pkl", "wb") as f:
+>>>>>>> d420ccc5fc239b03e840287805338721fb55585d
     pickle.dump({"model": model, "features": FEATURES}, f)
 
 print("Model saved : wait_model_v2.pkl")

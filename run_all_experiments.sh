@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT_DIR"
 
+<<<<<<< HEAD
 # Resolve a Python interpreter (python3 preferred, fall back to python).
 PY="$(command -v python3 || command -v python)"
 
@@ -18,6 +19,9 @@ echo "[0/11] Generate dataset and train wait_model_v2"
 "$PY" 03_models/train_improved_model.py
 
 echo "[1/11] Ablation study"
+=======
+echo "[1/10] Ablation study"
+>>>>>>> d420ccc5fc239b03e840287805338721fb55585d
 python 03_models/ablation_study.py
 
 echo "[2/10] Fairness analysis"

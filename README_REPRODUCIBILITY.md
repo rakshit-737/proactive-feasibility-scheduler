@@ -4,7 +4,10 @@
 ```bash
 bash run_all_experiments.sh
 ```
+<<<<<<< HEAD
 Step 0 of the script regenerates the dataset (`02_data/improved_wait_dataset.csv`) and retrains the model (`03_models/wait_model_v2.pkl`) before running any analysis, so the pipeline reproduces from a clean checkout without relying on pre-committed artifacts. Scripts resolve paths relative to the project root, so they can be run from any working directory.
+=======
+>>>>>>> d420ccc5fc239b03e840287805338721fb55585d
 
 ## Local setup
 ```bash
