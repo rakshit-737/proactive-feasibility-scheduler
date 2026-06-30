@@ -1,0 +1,2 @@
+annual_jobs,mean_wait_improvement_pct,baseline_gpu_hours,saved_gpu_hours,cloud_cost_reduction_usd,energy_saved_kwh,energy_cost_reduction_usd,total_annual_savings_usd,estimated_deployment_cost_usd,roi_pct
+180000,7.5,450000.0,33750.0,74250.0,11812.5,1653.7500000000002,75903.75,42000,80.72321428571428
