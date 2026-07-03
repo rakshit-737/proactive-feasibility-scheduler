@@ -830,13 +830,8 @@ pre {
         <div class="meta-v">2,200 samples</div>
       </div>
       <div class="meta-cell">
-<<<<<<< HEAD
         <div class="meta-k">Model Quality</div>
         <div class="meta-v">Holdout R² 0.83 · MAE 5.35</div>
-=======
-        <div class="meta-k">Best Model</div>
-        <div class="meta-v">R² 0.937 · MAE 2.87</div>
->>>>>>> d420ccc5fc239b03e840287805338721fb55585d
       </div>
       <div class="meta-cell">
         <div class="meta-k">Status</div>
@@ -960,11 +955,7 @@ pre {
         <div class="arch-box-body">
           12 cluster-state features<br>
           Predicts wait_time (ts)<br>
-<<<<<<< HEAD
           Holdout MAE 5.35 · R² 0.83<br>
-=======
-          MAE 2.87 · R² 0.937<br>
->>>>>>> d420ccc5fc239b03e840287805338721fb55585d
           Saved as .pkl
         </div>
       </div>
@@ -974,15 +965,9 @@ pre {
         <div class="arch-box-title">Proactive Scheduler</div>
         <div class="arch-box-body">
           Reorders queue by predicted wait<br>
-<<<<<<< HEAD
           7.5% mean-wait reduction vs FIFO<br>
           Identical GPU utilisation<br>
           Trade-off: higher tail latency
-=======
-          Fairness bumping policy<br>
-          7.5% avg wait reduction vs FIFO<br>
-          Identical GPU utilisation
->>>>>>> d420ccc5fc239b03e840287805338721fb55585d
         </div>
       </div>
     </div>
@@ -1012,17 +997,12 @@ pre {
           <th>Metric</th>
           <th>Baseline (FIFO)</th>
           <th>Proactive (ML-Guided)</th>
-<<<<<<< HEAD
           <th>Change</th>
-=======
-          <th>Improvement</th>
->>>>>>> d420ccc5fc239b03e840287805338721fb55585d
         </tr>
       </thead>
       <tbody>
         <tr>
           <td class="model-name">Mean Wait Time (ts)</td>
-<<<<<<< HEAD
           <td class="val val-bad">18.27</td>
           <td class="val val-good">16.72</td>
           <td class="val val-best">7.5% ↓</td>
@@ -1054,44 +1034,10 @@ pre {
           <td class="model-name">Model MAE (20% holdout, ts)</td>
           <td colspan="2" class="val val-good">5.35 · 5-fold CV 5.68 ± 0.71</td>
           <td class="val">in-sample 2.56</td>
-=======
-          <td class="val val-bad">20.64</td>
-          <td class="val val-good">18.08</td>
-          <td class="val val-best">12.4% ↓</td>
-        </tr>
-        <tr>
-          <td class="model-name">Max Wait Time (ts)</td>
-          <td class="val val-bad">68.2</td>
-          <td class="val val-good">61.5</td>
-          <td class="val val-best">9.8% ↓</td>
-        </tr>
-        <tr>
-          <td class="model-name">GPU Utilisation</td>
-          <td class="val">65.6%</td>
-          <td class="val">65.6%</td>
-          <td class="val val-good">Identical ✓</td>
-        </tr>
-        <tr>
-          <td class="model-name">Starvation Events</td>
-          <td class="val val-bad">2.3</td>
-          <td class="val val-good">0.8</td>
-          <td class="val val-best">65% ↓</td>
-        </tr>
-        <tr>
-          <td class="model-name">Model R² Score</td>
-          <td colspan="2" class="val val-best">0.937 (12 principled features)</td>
-          <td class="val val-good">State-of-art</td>
-        </tr>
-        <tr>
-          <td class="model-name">Model MAE (ts)</td>
-          <td colspan="2" class="val val-best">2.87</td>
-          <td class="val">vs 5.25 leaky</td>
->>>>>>> d420ccc5fc239b03e840287805338721fb55585d
         </tr>
       </tbody>
     </table>
 
-<<<<<<< HEAD
     <div class="callout warn">
       <div class="callout-label">Honest Reporting Note</div>
       <p>All figures above are from the 40-run paired benchmark and a proper 20% holdout / 5-fold cross-validation.
@@ -1102,8 +1048,6 @@ pre {
       this report now states plainly rather than claiming a fairness improvement.</p>
     </div>
 
-=======
->>>>>>> d420ccc5fc239b03e840287805338721fb55585d
     <div class="compare-grid">
       <div class="compare-panel">
         <div class="compare-panel-label">40-Run Paired Benchmark (Conservative)</div>
@@ -1169,15 +1113,10 @@ pre {
       <code style="font-family:'JetBrains Mono',monospace;font-size:0.9em;">smaller_jobs_in_queue</code>
       dominated feature importance (82%), essentially encoding FIFO queue rank. At inference time, the queue is
       reordered, making this feature meaningless or actively misleading. <strong>Phase 05 Fix:</strong> Replaced leaky features
-<<<<<<< HEAD
       with 6 principled cluster-state signals valid at any scheduling policy. Result: the model now learns genuine
       cluster dynamics rather than queue position, and no single feature dominates importance. On a proper 20% holdout
       the clean model scores R² 0.83 / MAE 5.35 ts (in-sample 0.96 / 2.56); the original leaky model's apparent quality
       was an artefact of encoding FIFO rank, not real predictive skill.</p>
-=======
-      with 6 principled cluster-state signals valid at any scheduling policy. Result: R² improved 0.833 → 0.937,
-      MAE improved 5.25 → 2.87 ts. No single feature dominates; top 4 each contribute 15–23%.</p>
->>>>>>> d420ccc5fc239b03e840287805338721fb55585d
     </div>
 
     <h3 style="margin-top:40px; margin-bottom:16px; font-family:'Playfair Display',serif; font-size:1.5rem;">Core Phases (01–05)</h3>
@@ -1196,19 +1135,11 @@ pre {
     <h3 style="margin-top:40px; margin-bottom:16px; font-family:'Playfair Display',serif; font-size:1.5rem;">Robustness & Explainability Phases (10–13)</h3>
     <div class="list-item"><strong>Phase 10: Sensitivity Analysis (OOD).</strong> Measured model robustness under node-count shifts (6/10/12), runtime distributions, and arrival patterns. Some OOD settings show negative R²; informs deployment guardrails.</div>
     <div class="list-item"><strong>Phase 11: Ablation Study.</strong> Systematic 12-feature ablation with R² drop ranking. Top features: can_fit_now, gpu_fit_ratio, fragmentation, queue_pressure.</div>
-<<<<<<< HEAD
     <div class="list-item"><strong>Phase 12: Fairness & Starvation Analysis.</strong> Added fairness metrics (max wait, Gini, starvation count) across FIFO, proactive, and a proactive+anti-starvation variant. Key honest finding: plain proactive reordering <em>worsens</em> tail latency (max wait ~58→128 ts) and Gini (0.51→0.79) versus FIFO — the mean-wait gain comes at a fairness cost. The anti-starvation bumping variant exists to claw some of that back.</div>
     <div class="list-item"><strong>Phase 13: SHAP Explainability.</strong> Generated summary, dependence, and force plots explaining model decisions. Validated feature interpretability.</div>
 
     <h3 style="margin-top:40px; margin-bottom:16px; font-family:'Playfair Display',serif; font-size:1.5rem;">Advanced Analysis Phases (14–21)</h3>
     <div class="list-item"><strong>Phase 14: Real-Trace Validation.</strong> Parsed LANL-format workloads and tested the synthetic-trained model on them. Honest result: cross-dataset R² ≈ −0.02 (no better than predicting the mean) — the model does <em>not</em> transfer to real traces without retraining. This is a documented limitation, not validated production-readiness.</div>
-=======
-    <div class="list-item"><strong>Phase 12: Fairness & Starvation Analysis.</strong> Added fairness metrics (max wait, Gini, starvation count) and bumping policy. Proactive scheduler shows 65% fewer starvation events.</div>
-    <div class="list-item"><strong>Phase 13: SHAP Explainability.</strong> Generated summary, dependence, and force plots explaining model decisions. Validated feature interpretability.</div>
-
-    <h3 style="margin-top:40px; margin-bottom:16px; font-family:'Playfair Display',serif; font-size:1.5rem;">Advanced Analysis Phases (14–21)</h3>
-    <div class="list-item"><strong>Phase 14: Real-Trace Validation.</strong> Parsed LANL-format workloads. Evaluated cross-dataset performance and domain transfer.</div>
->>>>>>> d420ccc5fc239b03e840287805338721fb55585d
     <div class="list-item"><strong>Phase 15: Scaling Study.</strong> Evaluated 4/8/16/32-node cluster sizes (8/32/128/256 GPUs). Overhead and inference time analysis.</div>
     <div class="list-item"><strong>Phase 16: Online Learning.</strong> Incremental model updates on streaming data using mini-batch retraining.</div>
     <div class="list-item"><strong>Phase 17: Concept Drift Detection.</strong> Rolling MAE trigger for adaptive retraining. Validates stability over time.</div>
@@ -1328,28 +1259,16 @@ pre {
 
       <div class="file-card">
         <div class="file-card-accent accent-teal"></div>
-<<<<<<< HEAD
         <div class="file-name"><span class="file-badge badge-py">Python</span> train_improved_model.py</div>
         <div class="file-purpose">Model Training</div>
         <div class="file-desc">XGBoost Regressor on 12 principled features. Exports wait_model_v2.pkl (holdout R² 0.83, MAE 5.35).</div>
-=======
-        <div class="file-name"><span class="file-badge badge-py">Python</span> train_wait_model.py</div>
-        <div class="file-purpose">Model Training</div>
-        <div class="file-desc">XGBoost Regressor on 12 principled features. Exports wait_model_v2.pkl (R² 0.937, MAE 2.87).</div>
->>>>>>> d420ccc5fc239b03e840287805338721fb55585d
       </div>
 
       <div class="file-card">
         <div class="file-card-accent accent-teal"></div>
-<<<<<<< HEAD
         <div class="file-name"><span class="file-badge badge-py">Python</span> proactive_Schedule_v2.py</div>
         <div class="file-purpose">Scheduler</div>
         <div class="file-desc">Loads wait_model_v2.pkl, reorders the queue by predicted wait time using the trained 12-feature schema.</div>
-=======
-        <div class="file-name"><span class="file-badge badge-py">Python</span> proactive_scheduler_v2.py</div>
-        <div class="file-purpose">Scheduler</div>
-        <div class="file-desc">Loads v2 model, reorders queue by predicted wait time, includes fairness bumping policy.</div>
->>>>>>> d420ccc5fc239b03e840287805338721fb55585d
       </div>
 
       <div class="file-card">
@@ -1375,37 +1294,23 @@ pre {
 
       <div class="file-card">
         <div class="file-card-accent accent-gold"></div>
-<<<<<<< HEAD
         <div class="file-name"><span class="file-badge badge-py">Python</span> explainability_shap.py</div>
-=======
-        <div class="file-name"><span class="file-badge badge-py">Python</span> shap_analysis.py</div>
->>>>>>> d420ccc5fc239b03e840287805338721fb55585d
         <div class="file-purpose">Explainability</div>
         <div class="file-desc">SHAP summary, dependence, and force plots. Model interpretation for stakeholders.</div>
       </div>
 
       <div class="file-card">
         <div class="file-card-accent accent-ink"></div>
-<<<<<<< HEAD
         <div class="file-name"><span class="file-badge badge-csv">CSV</span> improved_wait_dataset.csv</div>
         <div class="file-purpose">Training Data</div>
         <div class="file-desc">2,200 samples with 12 principled features and ground-truth wait times from the simulator.</div>
-=======
-        <div class="file-name"><span class="file-badge badge-csv">CSV</span> wait_dataset.csv</div>
-        <div class="file-purpose">Training Data</div>
-        <div class="file-desc">2,200 samples with 12 features and ground-truth wait times from simulator.</div>
->>>>>>> d420ccc5fc239b03e840287805338721fb55585d
       </div>
 
       <div class="file-card">
         <div class="file-card-accent accent-ink"></div>
         <div class="file-name"><span class="file-badge badge-pkl">PKL</span> wait_model_v2.pkl</div>
         <div class="file-purpose">Trained Model</div>
-<<<<<<< HEAD
         <div class="file-desc">Production XGBoost model (holdout R² 0.83). Loaded by proactive scheduler at runtime.</div>
-=======
-        <div class="file-desc">Production XGBoost model (R² 0.937). Loaded by proactive scheduler at runtime.</div>
->>>>>>> d420ccc5fc239b03e840287805338721fb55585d
       </div>
 
       <div class="file-card file-card-full">
