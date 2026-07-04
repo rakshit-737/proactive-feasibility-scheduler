@@ -1,5 +1,59 @@
 # Changelog
 
+## v3.2 — July 2026 · Research extensions: real traces, backfill, fairness budget, uncertainty
+
+The four highest-leverage items from the v3.1 future-scope roadmap, implemented,
+run at full scale, and documented. Every result below is seeded and regenerable.
+
+### ① Real-trace validation (Phase 25 closed)
+- Downloaded and committed two genuine Parallel Workloads Archive traces
+  (`02_data/LANL-CM5-1994-4.1-cln.swf.gz`, 1,024 procs, 122k jobs;
+  `02_data/SDSC-SP2-1998-4.2-cln.swf.gz`, 128 nodes, 54k jobs).
+- New pipeline: `02_data/build_real_trace_datasets.py` (chronological replay of the
+  recorded schedule reconstructs 8 honest cluster-state features per arrival) →
+  `02_data/real_trace_validation.py` (transfer + retrain + baselines).
+- **Zero-shot transfer of the synthetic model ≈ 0 on both traces** (best-case
+  protocol with rescaled features and affine calibration).
+- **Retrained on the trace: SDSC SP2 R²(log) = 0.494** (vs −0.694 median baseline)
+  — half the log-wait variance of a real batch supercomputer explained; LANL CM-5
+  only 0.101 (interactive machine, median wait ~4 s) — machine-dependent signal,
+  reported honestly.
+
+### ② EASY-backfill baseline (+ hybrid)
+- `04_scheduler/backfill_scheduler.py` (EASY with head reservation, perfect runtime
+  estimates = strongest baseline) + integration into the now-7-scheduler benchmark.
+- Finding: this simulator's "FIFO" already backfills without reservations, so
+  EASY's guarantee **costs ~45% mean wait but is the fairest policy in the study**
+  (Gini 0.365, max wait ~55 ts) — the reservation price, measured.
+- The predicted-wait backfill hybrid ties plain EASY — honest null result.
+
+### ③ Bounded-fairness wait budget
+- `04_scheduler/fairness_budget_sweep.py`: hard escalation budget B swept over
+  9 values × 20 paired runs → a smooth mean-wait ↔ tail-latency Pareto frontier
+  (`05_results/fairness/budget_sweep.csv` + `budget_pareto.png`).
+- **B=60 keeps +7.1% of the +13.2% unbounded gain while capping max wait at 81 ts
+  (vs 136) and Gini at 0.69.** B≤30 is slightly worse than FIFO (churn) — reported.
+
+### ④ Uncertainty-aware scheduling (honest negative)
+- `03_models/train_quantile_model.py` (q10/q50/q90 XGBoost; holdout q50 MAE 4.61;
+  **interval coverage 68% vs 80% nominal — under-dispersed, reported as-is**) +
+  `04_scheduler/uncertainty_scheduler_benchmark.py` (UCB + spread-guarded FIFO
+  fallback across 5 scenarios).
+- Parity with the point model everywhere; the guard fails to fire (0.2% of ticks)
+  in the one regime where reordering hurts. Interval width is **not** a reliable
+  OOD alarm here; the rolling-MAE drift trigger remains the deployment mechanism.
+
+### Fixes & hygiene
+- Eliminated train/eval seed leakage in three benchmarks (evaluation now uses
+  out-of-training seed ranges 1000+/5000+/7000+); PROACTIVE's edge over FIFO on
+  fresh seeds: 6.5% (vs 7.7% near-training).
+- Fixed a unit-scale bug in the real-trace transfer mapping (raw processor counts
+  were fed to a model trained on a 32-GPU world).
+- All three HTML docs, README, RESULTS, DEPLOYMENT, roadmap/status docs, and the
+  manuscript updated with the v3.2 results (including the negatives).
+
+---
+
 ## v3.1 — July 2026 · Full audit, repair & regeneration
 
 This release is the result of a complete project audit: every file was read, every

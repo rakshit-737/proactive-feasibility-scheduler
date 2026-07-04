@@ -12,6 +12,7 @@ from sklearn.neural_network import MLPRegressor
 from sjf_scheduler import order_queue as order_sjf
 from priority_scheduler import order_queue as order_priority
 from neural_network_scheduler import order_queue as order_nn, build_feature_vector
+from backfill_scheduler import easy_backfill_dispatch
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_PATH = os.path.join(PROJECT_ROOT, '03_models', 'wait_model_v2.pkl')
@@ -20,7 +21,7 @@ OUT_DIR = os.path.join(PROJECT_ROOT, '05_results', 'schedulers')
 os.makedirs(OUT_DIR, exist_ok=True)
 
 SIM_TIME = 300
-NUM_RUNS = 15
+NUM_RUNS = 20
 NUM_NODES = 8
 GPUS_PER_NODE = 4
 CAPACITY = NUM_NODES * GPUS_PER_NODE
@@ -122,7 +123,9 @@ def train_nn_predictor():
     return nn
 
 def rank_queue(queue, t, cluster, running, scheduler, nn_model):
-    if scheduler == 'fifo':
+    if scheduler in ('fifo', 'backfill', 'proactive_bf'):
+        # backfill schedulers keep the queue in arrival order; the EASY
+        # dispatch helper handles head reservation + backfill scan itself
         return queue
     if scheduler == 'sjf':
         return order_sjf(queue, t)
@@ -154,23 +157,52 @@ def run_once(jobs_in, scheduler, nn_model):
         if queue:
             queue = rank_queue(queue, t, cluster, running, scheduler, nn_model)
 
-        for job in queue[:]:
-            if cluster.total_free_gpus() >= job.num_gpus:
-                # Predicted wait at the dispatch decision point, from the
-                # PRE-allocation cluster state (only ML schedulers predict
-                # wait times; the others have no comparable prediction).
-                pred = float('nan')
-                if scheduler == 'proactive':
-                    pred = float(wait_model.predict(get_features(job, cluster, queue, running).reshape(1, -1))[0])
-                elif scheduler == 'nn':
-                    pred = float(nn_model.predict(build_feature_vector(job, cluster, queue, running).reshape(1, -1))[0])
+        if scheduler in ('backfill', 'proactive_bf'):
+            # EASY backfill: arrival-order head with a reservation guarantee
+            # (anti-starvation); backfill jobs may never delay the head.
+            bf_order = None
+            hook = None
+            if scheduler == 'proactive_bf':
+                # Backfill scan ordered by wait_model_v2 predicted wait
+                # (shortest first); head stays arrival order.
+                def bf_order(jobs_list, active_jobs, _t=t):
+                    scored = []
+                    for j in jobs_list:
+                        pw = float(wait_model.predict(get_features(j, cluster, jobs_list, active_jobs).reshape(1, -1))[0])
+                        scored.append((pw, j.arrival_time, j.job_id, j))
+                    scored.sort(key=lambda s: s[:3])
+                    return [s[3] for s in scored]
 
-                if cluster.allocate(job, t):
-                    running.append(job)
-                    queue.remove(job)
-                    if not np.isnan(pred):
-                        actual_wait = job.start_time - job.arrival_time
-                        mae_samples.append(abs(pred - actual_wait))
+                # Predicted wait at the dispatch decision point, from the
+                # PRE-allocation cluster state (same convention as PROACTIVE).
+                def hook(job, cl, pending, active, _t=t):
+                    pred = float(wait_model.predict(get_features(job, cl, pending, active).reshape(1, -1))[0])
+                    mae_samples.append(abs(pred - (_t - job.arrival_time)))
+
+            started = easy_backfill_dispatch(cluster, queue, running, t,
+                                             backfill_order=bf_order,
+                                             pre_dispatch_hook=hook)
+            for job in started:
+                queue.remove(job)
+                running.append(job)
+        else:
+            for job in queue[:]:
+                if cluster.total_free_gpus() >= job.num_gpus:
+                    # Predicted wait at the dispatch decision point, from the
+                    # PRE-allocation cluster state (only ML schedulers predict
+                    # wait times; the others have no comparable prediction).
+                    pred = float('nan')
+                    if scheduler == 'proactive':
+                        pred = float(wait_model.predict(get_features(job, cluster, queue, running).reshape(1, -1))[0])
+                    elif scheduler == 'nn':
+                        pred = float(nn_model.predict(build_feature_vector(job, cluster, queue, running).reshape(1, -1))[0])
+
+                    if cluster.allocate(job, t):
+                        running.append(job)
+                        queue.remove(job)
+                        if not np.isnan(pred):
+                            actual_wait = job.start_time - job.arrival_time
+                            mae_samples.append(abs(pred - actual_wait))
 
         util.append((CAPACITY - cluster.total_free_gpus()) / CAPACITY)
 
@@ -187,10 +219,14 @@ def run_once(jobs_in, scheduler, nn_model):
 
 def main():
     nn_model = train_nn_predictor()
-    schedulers = ['fifo', 'sjf', 'priority', 'proactive', 'nn']
+    schedulers = ['fifo', 'sjf', 'priority', 'proactive', 'nn', 'backfill', 'proactive_bf']
     rows = []
 
     for run in range(NUM_RUNS):
+        # per-run seed: paired workloads, every scheduler sees the same jobs
+        # Eval seeds MUST differ from the model's training-data seeds (42+i in
+        # generate_improved_dataset.py) or the benchmark evaluates on training
+        # workloads. 1000+run also restores comparability with prior results.
         random.seed(1000 + run)
         np.random.seed(1000 + run)
         jobs = generate_jobs()
@@ -199,7 +235,7 @@ def main():
             out['run'] = run + 1
             out['scheduler'] = sch.upper()
             rows.append(out)
-            print(f"Run {run+1:02d} | {sch.upper():10s} wait={out['mean_wait']:.2f} throughput={out['throughput']:.3f}")
+            print(f"Run {run+1:02d} | {sch.upper():12s} wait={out['mean_wait']:.2f} throughput={out['throughput']:.3f}")
 
     df = pd.DataFrame(rows)
     summary = df.groupby('scheduler', as_index=False).agg({

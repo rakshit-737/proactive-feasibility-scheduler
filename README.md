@@ -14,7 +14,9 @@ The pipeline now bootstraps itself: step 0 of `run_all_experiments.sh` regenerat
 - Ablation analysis over 12 features
 - Fairness and starvation-prevention analysis
 - 5-scheduler benchmark (FIFO, SJF, Priority, Proactive, NN)
-- Proxy-trace validation (SWF parser ready for real traces), scaling analysis, concept drift adaptation
+- **Real-trace validation (v3.2)**: two Parallel Workloads Archive traces (LANL CM-5, SDSC SP2) evaluated end-to-end
+- EASY-backfill baseline + predicted-wait hybrid; bounded-fairness wait-budget (Pareto-swept); uncertainty-aware scheduling study
+- Scaling analysis, online learning, concept drift adaptation
 - Reproducibility kit (shell script + Docker + requirements)
 - Interactive dashboard (`dashboard.py`) and GitHub Pages docs (`docs/`)
 
@@ -28,10 +30,13 @@ All figures below come from a proper 20% holdout / 5-fold CV (model) and a seede
 | GPU utilisation | **Unchanged** (≈64%) | Improvement is from queue ordering only |
 | Tail latency (max wait) | **Worse: ~58 → 125 ts** | Trade-off: proactive reordering increases tail latency |
 | Fairness (Gini of waits) | **Worse: 0.53 → 0.80** | Mean-wait gain comes at a fairness cost; anti-starvation variant recovers to 0.69 |
-| Proxy-trace transfer | **R² ≈ 0.02** | Evaluated on a **synthetic LANL-schema proxy** (no real trace is committed); real-trace transfer is unvalidated |
-| OOD robustness | **Mean R² < 0** across 72 shifted scenarios | Model must be retrained per deployment regime; FIFO fallback recommended |
+| Real-trace transfer, zero-shot | **R² ≈ 0** (both traces) | Synthetic-trained model does not transfer to LANL CM-5 or SDSC SP2 — quantified on real data (v3.2) |
+| Real-trace, **retrained** | **R²(log) 0.49** on SDSC SP2 | Chronological holdout, vs −0.69 median baseline; LANL CM-5 (interactive machine) only 0.10 — signal is machine-dependent |
+| Backfill baseline (EASY) | **Gini 0.365, max 55 ts** | Reservation guarantee costs ~45% mean wait vs dispatch-all FIFO but is the fairest policy in the study (v3.2) |
+| Fairness budget B | **B=60: +7.1% wait gain, max 81 ts** | Tunable Pareto dial between pure proactive (+13.2%, max 136) and FIFO (v3.2) |
+| OOD robustness | **Mean R² < 0** across 72 shifted scenarios | Retrain per regime; interval-width guards tested and **not** reliable (68% coverage) — use the drift trigger |
 
-**Honest summary:** the proactive scheduler delivers a small but statistically significant mean-wait reduction at no utilisation cost, but trades off tail latency and fairness, degrades out-of-distribution, and has not yet been validated on real traces (the LANL-style trace on disk is a synthetic proxy). See `RESULTS.md`, `docs/project_report.html`, and `docs/research_progress.html` for detail.
+**Honest summary:** the proactive scheduler delivers a small but statistically significant mean-wait reduction at no utilisation cost. The costs are quantified: tail latency and per-job fairness worsen (now tunable via the wait-budget B), prediction collapses out-of-distribution, and zero-shot sim-to-real transfer fails — but retraining on a real batch trace recovers R²(log) 0.49 (SDSC SP2), making "retrain per deployment" an evidence-backed protocol rather than a caveat. See `RESULTS.md`, `docs/index.html`, `docs/project_report.html`, and `docs/research_progress.html` for detail.
 
 ## Results folders
 - `05_results/models`
@@ -52,4 +57,4 @@ All figures below come from a proper 20% holdout / 5-fold CV (model) and a seede
 - Deployment guide: `DEPLOYMENT.md`
 
 ## Citation
-If you use this work, cite the repository and include the phase/version context (v3.1, phases 01–30, post-audit July 2026).
+If you use this work, cite the repository and include the phase/version context (v3.2, phases 01–30 + research extensions, July 2026).

@@ -342,7 +342,7 @@ nav.sidebar a.hidden, nav.sidebar .group.hidden { display: none; }
 <div id="progress" aria-hidden="true"></div>
 <header class="topbar">
   <button id="navToggle" type="button" aria-label="Open navigation">☰</button>
-  <span class="brand">Proactive Feasibility Scheduler <small>Complete Project Documentation · v3.1 · July 2026</small></span>
+  <span class="brand">Proactive Feasibility Scheduler <small>Complete Project Documentation · v3.2 · July 2026</small></span>
   <span class="spacer"></span>
   <button id="themeBtn" type="button">◐ Theme</button>
 </header>
@@ -365,6 +365,7 @@ nav.sidebar a.hidden, nav.sidebar .group.hidden { display: none; }
   <a href="#results">Headline results</a>
   <a href="#tradeoffs">The trade-offs</a>
   <a href="#robustness">Robustness &amp; drift</a>
+  <a href="#realtrace">Real-trace validation</a>
   <a href="#explainability">Explainability</a>
   <a href="#roi">ROI estimate</a>
   <div class="group">The repository</div>
@@ -392,12 +393,12 @@ nav.sidebar a.hidden, nav.sidebar .group.hidden { display: none; }
     <div class="kpi"><div class="label">GPU utilisation change</div><div class="value">±0</div><div class="delta">≈64% for both schedulers</div></div>
     <div class="kpi"><div class="label">Tail latency (max wait)</div><div class="value">2.2×</div><div class="delta down">worse: ~58 → ~125 ts</div></div>
     <div class="kpi"><div class="label">Fairness (per-job Gini)</div><div class="value">0.53→0.80</div><div class="delta down">worse; mitigation recovers 0.69</div></div>
-    <div class="kpi"><div class="label">Real-trace validation</div><div class="value">Open</div><div class="delta">proxy-trace R² ≈ 0.02 — no transfer</div></div>
+    <div class="kpi"><div class="label">Real-trace validation (SDSC SP2)</div><div class="value">R² 0.49</div><div class="delta up">retrained, log-space · zero-shot transfer ≈ 0</div></div>
   </div>
 
   <div class="callout hero-note">
     <div class="t">Why this documentation is different</div>
-    This page explains the project <em>from scratch</em> — the problem, the simulator, the features, the model, the scheduler, every file in the repository, the honest results including the failures, and where the research should go next. It reflects the July 2026 audit that found and fixed 37 verified defects (including fabricated results in four analysis scripts) and made the entire pipeline seeded and reproducible. <a href="#audit">See the audit section</a>.
+    This page explains the project <em>from scratch</em> — the problem, the simulator, the features, the model, the scheduler, every file in the repository, the honest results including the failures, and where the research should go next. It reflects the July 2026 audit that found and fixed 37 verified defects (including fabricated results in four analysis scripts) and made the entire pipeline seeded and reproducible (<a href="#audit">audit section</a>). The v3.2 extensions then closed the four biggest gaps: <a href="#realtrace">validation on two real supercomputer traces</a>, a <a href="#results">real EASY-backfill baseline</a>, a <a href="#tradeoffs">tunable fairness budget</a>, and an <a href="#robustness">uncertainty-aware scheduling study</a>.
   </div>
 </section>
 
@@ -731,13 +732,13 @@ for job in queue:              # 4. dispatch ALL
     <div class="tableview"></div>
   </figure>
 
-  <h3>Five schedulers, head to head</h3>
-  <p>Twenty paired runs through five policies (Proactive highlighted; note what each column costs):</p>
+  <h3>Seven schedulers, head to head</h3>
+  <p>Twenty paired runs through seven policies on fresh out-of-training seeds (v3.2 added the two backfill variants). Proactive is highlighted; note what each column costs:</p>
 
   <figure class="chart" data-chart="schedulerWait">
     <div class="head"><span class="title">Mean wait — the prize</span><span class="subtitle">20-run mean, identical workloads · lower is better</span><button class="btn" data-toggle-table>Table view</button></div>
     <div class="svgmount"></div>
-    <figcaption>SJF wins mean wait but needs true runtimes in advance (an oracle real clusters lack). Proactive matches the NN reranker and beats Priority and FIFO using only observable state.</figcaption>
+    <figcaption>SJF wins mean wait but needs true runtimes in advance (an oracle real clusters lack). Proactive matches the NN reranker and beats Priority and FIFO using only observable state — a 6.5% edge over FIFO on seeds the model never trained on. The two backfill variants pay a ~45% mean-wait premium for their reservation guarantee (see below).</figcaption>
     <div class="tableview"></div>
   </figure>
 
@@ -756,7 +757,12 @@ for job in queue:              # 4. dispatch ALL
   </figure>
   </div>
 
-  <p>Throughput (0.367 jobs/ts) and GPU utilisation (63.6%) are <strong>identical for all five schedulers</strong> — with this workload everything completes within the horizon; the policies differ only in <em>who</em> waits.</p>
+  <p>Throughput (0.367 jobs/ts) and GPU utilisation (63.7%) are <strong>identical for all seven schedulers</strong> — with this workload everything completes within the horizon; the policies differ only in <em>who</em> waits.</p>
+
+  <div class="callout">
+    <div class="t">The backfill result, read correctly (v3.2)</div>
+    This benchmark's "FIFO" dispatches <em>every job that fits, every tick</em> — which is already <strong>unrestricted, no-reservation backfilling</strong>. EASY backfill (SLURM's real policy) is <em>stricter</em>: it guarantees the head job a reservation that no backfilled job may delay — even with perfect runtime estimates (our implementation gives it those, the strongest possible baseline). That guarantee costs ~45% mean wait on this workload but buys the <strong>best fairness in the entire study</strong> (Gini 0.365 vs FIFO's 0.516) and a FIFO-class tail (max ~55 ts). The reservation price is now measured, not assumed. And the hybrid — EASY's reservation with model-ordered backfilling — ties plain EASY (24.91 vs 24.94 ts): an honest null result; once a reservation constrains the schedule, backfill <em>order</em> barely matters here.
+  </div>
 </section>
 
 <!-- ================================================================ -->
@@ -769,7 +775,7 @@ for job in queue:              # 4. dispatch ALL
     <div class="head"><span class="title">Mean wait vs tail vs fairness, three policies</span><span class="subtitle">05_results/fairness/fairness_metrics.csv (regenerated)</span><button class="btn" data-toggle-table>Table view</button></div>
     <div class="svgmount"></div>
     <div class="legend"><span class="key"><span class="swatch" style="background:var(--deemph)"></span>FIFO</span><span class="key"><span class="swatch" style="background:var(--series-1)"></span>Proactive</span><span class="key"><span class="swatch" style="background:var(--series-2)"></span>Proactive + anti-starvation</span></div>
-    <figcaption>The guard recovers about half the fairness loss (Gini 0.80 → 0.69, max wait 125 → 87 ts) while keeping nearly all of the mean-wait gain (16.5 vs 16.5 ts) — but its forced promotions bump <em>other</em> jobs more often (starvation count rises). Choosing the operating point is an ops decision, not a modelling one; see <a href="#future">future scope</a> for the principled fix.</figcaption>
+    <figcaption>The guard recovers about half the fairness loss (Gini 0.80 → 0.69, max wait 125 → 87 ts) while keeping nearly all of the mean-wait gain (16.5 vs 16.5 ts) — but its forced promotions bump <em>other</em> jobs more often (starvation count rises). Choosing the operating point is an ops decision — and as of v3.2 it is a measured dial: see the wait-budget sweep below.</figcaption>
     <div class="tableview"></div>
   </figure>
 
@@ -784,6 +790,16 @@ for job in queue:              # 4. dispatch ALL
       <tr><td>Run-level Jain index (40 runs)</td><td class="num">0.918</td><td class="num"><strong>0.922</strong></td><td class="num">—</td></tr>
     </tbody>
   </table></div>
+
+  <h3>The fairness dial: a hard wait-budget <span class="chip info">v3.2</span></h3>
+  <p>The principled fix, implemented and swept: reorder the queue freely by predicted wait, <strong>except</strong> that any job waiting longer than a budget <strong>B</strong> escalates to the queue head (in arrival order). B = ∞ is pure proactive; B = 0 collapses to FIFO. Twenty paired runs per budget on out-of-training seeds:</p>
+
+  <figure class="chart" data-chart="pareto">
+    <div class="head"><span class="title">The mean-wait ↔ tail-latency Pareto frontier</span><span class="subtitle">each point = one budget B (ts) · 20 paired runs · 05_results/fairness/budget_sweep.csv</span><button class="btn" data-toggle-table>Table view</button></div>
+    <div class="svgmount"></div>
+    <figcaption>A smooth, monotone trade-off curve. <strong>B = 60</strong> (highlighted) keeps more than half the mean-wait gain (+7.1% of the unbounded +13.2%) while capping the worst wait at 81 ts instead of 136 and holding Gini to 0.69. Tiny budgets (0–30 ts) are honestly reported as slightly <em>worse</em> than FIFO (−0.4…−1.7%): constant escalation churns the order without leaving the model room to optimise. "Proactive is unfair" is now "choose your point on this curve."</figcaption>
+    <div class="tableview"></div>
+  </figure>
 </section>
 
 <!-- ================================================================ -->
@@ -816,11 +832,66 @@ for job in queue:              # 4. dispatch ALL
     <div class="card"><h4 style="margin-top:0">Online retraining <span class="chip info">phase 17</span></h4><p>An SGD regressor updated incrementally on the drifted stream improves MAE 6.98 → 6.88 and R² 0.694 → 0.704 vs a frozen model — a modest but real recovery, and the mechanism that closes the loop with the drift trigger.</p></div>
   </div>
 
-  <h3>The proxy-trace result (read carefully)</h3>
+  <h3>Can the model's own uncertainty guard it? <span class="chip info">v3.2</span></h3>
+  <p>A quantile XGBoost (q10/q50/q90, same 12 features) was trained to test uncertainty-aware scheduling: <strong>UCB</strong> orders the queue by pessimistic q90; <strong>Guarded</strong> falls back to FIFO whenever the queue's mean interval spread exceeds the in-distribution 95th percentile. Ten paired runs across five scenarios:</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Scenario</th><th class="num">Proactive</th><th class="num">UCB (q90)</th><th class="num">Guarded</th><th>Reading</th></tr></thead>
+    <tbody>
+      <tr><td>In-distribution</td><td class="num">+6.5%</td><td class="num">+6.1%</td><td class="num">+6.3%</td><td>Parity — uncertainty costs nothing</td></tr>
+      <tr><td>2× arrivals, 4 nodes (overload)</td><td class="num">+39.0%</td><td class="num">+38.9%</td><td class="num">+38.7%</td><td>All huge; smart policies also <em>started</em> 131 vs FIFO's 114 jobs</td></tr>
+      <tr><td>2× arrivals, 16 nodes</td><td class="num">+18.6%</td><td class="num">+19.3%</td><td class="num">+18.7%</td><td>Mild UCB tail win (max 105 vs 126 ts)</td></tr>
+      <tr><td><strong>0.5× arrivals, 4 nodes</strong></td><td class="num" style="color:var(--critical)">−5.0%</td><td class="num" style="color:var(--critical)">−4.3%</td><td class="num" style="color:var(--critical)">−4.3%</td><td><strong>All negative — and the guard fired on only 0.2% of ticks</strong></td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout warn">
+    <div class="t">Honest negative result</div>
+    The quantile intervals are under-dispersed ([q10,q90] covers only <strong>68%</strong> of holdout targets vs the 80% nominal), so interval width fails to flag the one regime where reordering genuinely hurts. Uncertainty-aware variants match the point model everywhere — they cost nothing but rescue nothing. <strong>Operational conclusion unchanged:</strong> the rolling-MAE drift trigger (phase 18), not interval width, remains the deployment fallback mechanism.
+  </div>
+
+  <h3>The proxy-trace result (historical)</h3>
+  <div class="callout">
+    <div class="t">Superseded in v3.2 — real traces have now been evaluated</div>
+    <p style="margin:6px 0 0">The paragraph below is preserved as project history: it described the state after the July 2026 audit, when the only "trace" on disk was a synthetic proxy. The gap it names is now closed — see <a href="#realtrace">Real-trace validation</a> for the results on two genuine Parallel Workloads Archive traces.</p>
+  </div>
   <div class="callout bad">
-    <div class="t">No real trace has been evaluated — and the repository now says so honestly</div>
+    <div class="t">The audit finding (July 2026): the committed "real LANL trace" was synthetic</div>
     <p style="margin:6px 0 0">The file <code>02_data/lanl_trace_sample.csv</code> was previously presented as a real LANL supercomputer trace. The 2026 audit <strong>proved it is synthetic</strong> — regenerating the loader's fallback path reproduces it row-for-row (it is the training distribution with waits scaled by 1.15). Scored against even this <em>schema-matched proxy</em>, the model transfers with <strong>R² ≈ 0.015</strong> (MAE ≈ 15 ts vs holdout 4.7). Transfer to genuinely real traces can only be harder. The loader now parses real SWF files correctly (an off-by-one in the field mapping was also fixed), falls back <em>loudly</em>, labels everything <code>synthetic_proxy_trace</code>, and documents where to download real traces. Closing this gap is <a href="#future">future-scope item #1</a>.</p>
   </div>
+</section>
+
+<!-- ================================================================ -->
+<section id="realtrace">
+  <div class="kicker">Evidence · 3½ · v3.2</div>
+  <h2>Real-trace validation — the wall, climbed</h2>
+  <p>Two genuine traces from the <a href="https://www.cs.huji.ac.il/labs/parallel/workload/" target="_blank">Parallel Workloads Archive</a> were downloaded, committed (as <code>.swf.gz</code>), and evaluated: <strong>LANL CM-5</strong> (1,024 processors, 1994–96, 122,055 usable jobs) and <strong>SDSC SP2</strong> (128 nodes, 1998, 42,117 evaluated arrivals). For every arrival, the recorded schedule is replayed chronologically to reconstruct the cluster state the scheduler actually saw — giving 8 honestly-derivable state features and the job's real recorded wait.</p>
+
+  <div class="cards c2">
+    <div class="card"><div class="kpi" style="border:0;padding:0;box-shadow:none"><div class="label">SDSC SP2 — retrained, chronological 80/20 holdout</div><div class="value">R² 0.49</div><div class="delta up">log-space · MAE 622 min vs 684 (median) / 1009 (rolling)</div></div><p style="margin-top:8px;font-size:0.88rem">On a real batch supercomputer with 15-hour p90 waits, cluster-state features explain <strong>about half the log-wait variance</strong>. The approach works on real workloads — when retrained.</p></div>
+    <div class="card"><div class="kpi" style="border:0;padding:0;box-shadow:none"><div class="label">Zero-shot transfer (both traces, best-case protocol)</div><div class="value">R² ≈ 0</div><div class="delta down">0.072 (SDSC) · −0.001 (LANL), even with affine calibration</div></div><p style="margin-top:8px;font-size:0.88rem">The synthetic-trained model does not transfer — now quantified on <em>real</em> data with a deliberately generous mapping. "Retrain per deployment" is evidence, not caveat.</p></div>
+  </div>
+
+  <div class="tablewrap" style="margin-top:14px"><table>
+    <thead><tr><th>Evaluation</th><th class="num">LANL CM-5</th><th class="num">SDSC SP2</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Zero-shot transfer (calibrated)</td><td class="num">R² −0.001 · 41 min MAE</td><td class="num">R² 0.072 · 452 min MAE</td><td>Synthetic model, rescaled features, affine output calibration — best-case protocol</td></tr>
+      <tr><td><strong>Retrained on trace</strong></td><td class="num">R²(log) 0.101 · 33.7 min</td><td class="num"><strong>R²(log) 0.494 · 622 min</strong></td><td>Chronological 80/20 split — no shuffle, realistic deployment</td></tr>
+      <tr><td>Baseline: global median</td><td class="num">R² −0.106 · 33.5 min</td><td class="num">R² −0.694 · 684 min</td><td>Constant predictor</td></tr>
+      <tr><td>Baseline: rolling mean (100)</td><td class="num">R² −0.005 · 60.8 min</td><td class="num">R² 0.016 · 1009 min</td><td>Recency heuristic</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="callout warn" style="margin-top:14px">
+    <div class="t">The honest half of the finding: signal is machine-dependent</div>
+    LANL CM-5 was a largely interactive machine — median wait ≈ 4 <em>seconds</em>, with waits driven by bursty exceptions rather than queue physics. There, even the retrained model only reaches R²(log) 0.10 and cannot beat the median baseline's MAE. Wait-time prediction pays off where queueing dominates (SDSC-style batch systems), not everywhere. Both results are reported; only one is flattering.
+  </div>
+
+  <div class="imggrid">
+    <a href="../05_results/traces/real_pred_vs_actual_sdsc.png" target="_blank"><img src="../05_results/traces/real_pred_vs_actual_sdsc.png" alt="SDSC SP2 predicted vs actual waits, log axes" onerror="this.parentElement.style.display='none'"><div class="cap">SDSC SP2 — predicted vs actual (holdout, log axes)</div></a>
+    <a href="../05_results/traces/real_feature_importance_sdsc.png" target="_blank"><img src="../05_results/traces/real_feature_importance_sdsc.png" alt="SDSC SP2 feature importances" onerror="this.parentElement.style.display='none'"><div class="cap">SDSC SP2 — which state features carry the signal</div></a>
+    <a href="../05_results/traces/real_pred_vs_actual_lanl.png" target="_blank"><img src="../05_results/traces/real_pred_vs_actual_lanl.png" alt="LANL CM-5 predicted vs actual waits" onerror="this.parentElement.style.display='none'"><div class="cap">LANL CM-5 — the weak-signal machine</div></a>
+    <a href="../05_results/traces/real_feature_importance_lanl.png" target="_blank"><img src="../05_results/traces/real_feature_importance_lanl.png" alt="LANL CM-5 feature importances" onerror="this.parentElement.style.display='none'"><div class="cap">LANL CM-5 — feature importances</div></a>
+  </div>
+  <p style="font-size:0.85rem;color:var(--ink-3)">Pipeline: <code>02_data/build_real_trace_datasets.py</code> (SWF → replay-reconstructed features) → <code>02_data/real_trace_validation.py</code> (transfer + retrain + baselines) → <code>05_results/traces/real_trace_validation.csv</code>. The uncompressed traces and derived datasets are regenerable and gitignored; the <code>.swf.gz</code> sources are committed.</p>
 </section>
 
 <!-- ================================================================ -->
@@ -893,6 +964,7 @@ for job in queue:              # 4. dispatch ALL
       <tr><td><code>generate_load_profiles.py</code></td><td>Three contention profiles (low/high/mixed-bursty) + per-profile XGBoost evaluation; guards against zero-variance targets (audit fix).</td><td>3 profile CSVs + performance CSV</td></tr>
       <tr><td><code>generate_large_dataset.py</code></td><td>Legacy generator for the v1 dataset; feature formulas aligned to canonical definitions by the audit.</td><td><code>wait_dataset.csv</code> (legacy)</td></tr>
       <tr><td><code>load_real_traces.py</code></td><td>Standard Workload Format (SWF) parser for real HPC traces (field mapping fixed by audit) with a <em>loud, honestly-labelled</em> synthetic fallback when no trace file exists.</td><td><code>lanl_trace_sample.csv</code></td></tr>
+      <tr><td><code>build_real_trace_datasets.py</code> · <code>real_trace_validation.py</code> <span class="chip info">v3.2</span></td><td>Real-trace pipeline: SWF parsing + chronological replay reconstruction of cluster-state features, then transfer/retrain/baseline evaluation on LANL CM-5 and SDSC SP2 (committed as <code>.swf.gz</code>).</td><td><code>05_results/traces/real_trace_validation.csv</code> + 4 plots</td></tr>
       <tr><td><code>synthetic_vs_real_comparison.py</code></td><td>Scores the trained model on the synthetic holdout vs the (proxy) trace — the sim-to-real gap measurement. Split-before-fit bug fixed by audit.</td><td><code>05_results/traces/*</code></td></tr>
       <tr><td><em>CSVs</em></td><td><code>improved_wait_dataset.csv</code> (canonical training data) · <code>wait_dataset.csv</code>/<code>large_dataset.csv</code>/<code>dataset.csv</code> (legacy) · 3 load-profile CSVs · <code>lanl_trace_sample.csv</code> (synthetic proxy)</td><td>—</td></tr>
     </tbody>
@@ -906,6 +978,7 @@ for job in queue:              # 4. dispatch ALL
       <tr><td><code>compare_multiple_models.py</code></td><td>Table 1: seven regressors (LR, RF, LightGBM, CatBoost, sklearn GB, MLP, XGBoost) on identical splits.</td><td><code>model_comparison_table1.csv</code></td></tr>
       <tr><td><code>ablation_study.py</code></td><td>Leave-one-feature-out: retrains 13 times, ranks features by R² drop.</td><td><code>ablation_study_results.csv</code> + plot</td></tr>
       <tr><td><code>explainability_shap.py</code></td><td>SHAP summary, 12 dependence plots, 3 force plots.</td><td><code>05_results/shap/</code> (16 PNGs)</td></tr>
+      <tr><td><code>train_quantile_model.py</code> <span class="chip info">v3.2</span></td><td>Quantile XGBoost (q10/q50/q90) for uncertainty-aware scheduling; reports honest interval coverage (68%).</td><td><code>wait_model_quantile.pkl</code></td></tr>
       <tr><td><code>tune_xgboost.py</code></td><td>GridSearchCV over 243 configs × 3 folds (729 fits); baseline vs tuned.</td><td><code>xgboost_tuning_results.csv</code></td></tr>
       <tr><td><code>online_learning.py</code></td><td>Incremental SGD on a drifted stream vs frozen model.</td><td><code>online_learning_results.csv</code></td></tr>
       <tr><td><code>concept_drift_detection.py</code></td><td>Rolling-MAE drift monitor with retraining triggers on an 880-sample stream.</td><td><code>concept_drift_results.csv</code> + plot</td></tr>
@@ -924,6 +997,7 @@ for job in queue:              # 4. dispatch ALL
       <tr><td><code>scaling_analysis.py</code></td><td>Wait advantage + scheduling overhead at 8→256 GPUs.</td><td><code>scaling/scaling_analysis.csv</code> + plot</td></tr>
       <tr><td><code>sensitivity_analysis.py</code></td><td>Model quality across 8 shifted scenarios (the precursor to phase 23).</td><td><code>sensitivity_analysis_results.csv</code></td></tr>
       <tr><td><code>sjf_scheduler.py</code> · <code>priority_scheduler.py</code> · <code>neural_network_scheduler.py</code></td><td>Importable policy helpers (SJF sort, priority+aging, MLP reranker).</td><td>—</td></tr>
+      <tr><td><code>backfill_scheduler.py</code> · <code>fairness_budget_sweep.py</code> · <code>uncertainty_scheduler_benchmark.py</code> <span class="chip info">v3.2</span></td><td>EASY backfill (+ predicted-wait hybrid), the wait-budget Pareto sweep, and the uncertainty policy benchmark.</td><td><code>budget_sweep.csv</code> · <code>uncertainty_ood_benchmark.csv</code> + plots</td></tr>
       <tr><td><code>proactive_scheduler.py</code></td><td>v1 of the experiment (one-job-per-tick bug fixed by audit; superseded by v2, kept for provenance).</td><td>console</td></tr>
     </tbody>
   </table></div>
@@ -1001,7 +1075,7 @@ for job in queue:              # 4. dispatch ALL
       <tr><td>22</td><td>Statistical rigor</td><td>Bootstrap CIs, BH-corrected paired tests on the 40-run benchmark</td><td><span class="chip ok">done</span></td></tr>
       <tr><td>23</td><td>OOD robustness</td><td>72-scenario domain-shift stress test of the real model</td><td><span class="chip ok">done</span></td></tr>
       <tr><td>24</td><td>Scheduler landscape</td><td>Comparison vs real implementations (fabricated industry baselines removed)</td><td><span class="chip ok">done</span></td></tr>
-      <tr><td>25</td><td>Real traces</td><td>SWF parser + preprocessing scaffold; <strong>no real trace evaluated yet</strong></td><td><span class="chip warn">open</span></td></tr>
+      <tr><td>25</td><td>Real traces</td><td>Two PWA traces evaluated (v3.2): zero-shot transfer ≈ 0; retrained R²(log) 0.49 on SDSC SP2, 0.10 on LANL CM-5</td><td><span class="chip ok">done</span></td></tr>
       <tr><td>26</td><td>Scaling validation</td><td>Saturation stress test 32–256 GPUs, real inference timing</td><td><span class="chip ok">done</span></td></tr>
       <tr><td>27</td><td>Fairness &amp; SLA</td><td>Gini/Jain/SLA from real distributions; trade-off quantified (not claimed away)</td><td><span class="chip ok">done</span></td></tr>
       <tr><td>28</td><td>Manuscript</td><td>LaTeX draft, numbers synced to regenerated artifacts</td><td><span class="chip ok">draft</span></td></tr>
@@ -1049,12 +1123,12 @@ for job in queue:              # 4. dispatch ALL
   <div class="kicker">Outlook · 1</div>
   <h2>Honest limitations</h2>
   <ol>
-    <li><strong>No real-workload validation.</strong> Everything is synthetic; the one "trace" is a proxy derived from the training distribution, and even it defeats the model (R² ≈ 0.02). This is the wall between the current results and any real-world claim.</li>
+    <li><strong>Real-workload validation is partial (v3.2).</strong> Two real traces are now evaluated: retraining recovers strong signal on a batch machine (SDSC R²(log) 0.49) but weak signal on an interactive one (LANL 0.10), and zero-shot transfer is ≈ 0 on both. Still missing: a modern GPU-cluster trace (both PWA traces are 1990s CPU machines) and a <em>scheduling</em> benchmark on real workloads (only <em>prediction</em> has been validated on real data).</li>
     <li><strong>The simulator is minimal.</strong> Uniform job sizes/runtimes, single job class, no preemption, no node failures, no placement constraints (jobs span nodes freely), no runtime uncertainty. Real waits have heavier tails and richer structure.</li>
     <li><strong>The effect is modest and noisy.</strong> 7.7% mean improvement with σ 8.9 — 7 of 40 runs went the other way. Statistically solid, operationally small.</li>
     <li><strong>Fairness/tail costs are real.</strong> Unmitigated, max wait doubles; the anti-starvation patch recovers only part of it and adds its own churn.</li>
-    <li><strong>OOD fragility.</strong> Mean R² &lt; 0 across shifted regimes means the model, as-is, must not be deployed beyond its training distribution without retraining and a fallback.</li>
-    <li><strong>Baseline gap.</strong> No backfill (SLURM's actual policy) baseline yet — the comparison flatters proactive by omitting the strongest practical competitor.</li>
+    <li><strong>OOD fragility.</strong> Mean R² &lt; 0 across shifted regimes means the model, as-is, must not be deployed beyond its training distribution without retraining and a fallback — and v3.2 showed the model's own interval width is <em>not</em> a reliable alarm (68% coverage, guard fired on 0.2% of ticks in the failing regime). Drift-triggered fallback remains the mechanism.</li>
+    <li><strong>Baseline nuance (v3.2).</strong> EASY backfill is now implemented — but note this simulator's "FIFO" already backfills without reservations, so EASY's reservation guarantee <em>costs</em> mean wait here. A comparison on a workload where head-of-line blocking dominates (long-runtime heavy tails) would show EASY's classic upside; the current uniform 5–20 ts runtimes underplay it.</li>
     <li><strong>ROI is illustrative.</strong> Linear wait→cost conversion; assumption-heavy.</li>
   </ol>
 </section>
@@ -1065,21 +1139,21 @@ for job in queue:              # 4. dispatch ALL
   <h2>Future scope — a concrete research roadmap</h2>
   <p>Ordered by scientific leverage per unit of effort. The first tier turns this from a strong coursework project into a publishable paper; the second makes the method competitive; the third is a research program.</p>
 
-  <h3>Tier 1 — Validity (do these first)</h3>
+  <h3>Tier 1 — Validity <span class="chip ok">all four delivered in v3.2</span></h3>
   <div class="cards c2">
-    <div class="card"><h4 style="margin-top:0">1 · Validate on real traces <span class="chip bad">highest priority</span></h4>
-      <p>Download 2–3 real workloads — LANL CM-5 / SDSC-SP2 SWF traces from the <a href="https://www.cs.huji.ac.il/labs/parallel/workload/" target="_blank">Parallel Workloads Archive</a> and the <a href="https://github.com/alibaba/clusterdata" target="_blank">Alibaba GPU cluster trace</a>. Replay them through the simulator, <strong>retrain per trace</strong>, and report within-trace holdout + cross-trace transfer. The SWF parser and preprocessing scaffold are already in place (<code>02_data/load_real_traces.py</code>, phase 25). Every other claim in the project gains or loses credibility with this one experiment.</p></div>
-    <div class="card"><h4 style="margin-top:0">2 · Implement a real backfill baseline <span class="chip bad">highest priority</span></h4>
-      <p>EASY/conservative backfilling is what SLURM actually does and the strongest practical competitor. Implement it in the simulator (~100 lines: reserve start for queue head, let jobs that won't delay it jump ahead). If proactive can't beat or complement backfill, that's essential to know; if it can (e.g., <em>predicted-wait-aware backfill</em>), that's the paper's novelty.</p></div>
-    <div class="card"><h4 style="margin-top:0">3 · Bound the fairness cost principledly</h4>
-      <p>Replace the ad-hoc 3×-mean bump with a <strong>hard wait budget</strong>: reorder freely subject to no job's predicted start exceeding its FIFO-position start by more than B ts. Sweep B to trace the actual mean-wait ↔ tail-latency Pareto frontier — turning today's weakness into a tunable, publishable result.</p></div>
+    <div class="card"><h4 style="margin-top:0">1 · Validate on real traces <span class="chip ok">done — v3.2</span></h4><p style="font-size:0.85rem"><strong>Delivered:</strong> LANL CM-5 + SDSC SP2 evaluated; zero-shot ≈ 0, retrained R²(log) 0.49/0.10 — see <a href="#realtrace">the results</a>. Remaining upside: a modern GPU trace (Alibaba 2020) and per-trace scheduling replay.</p><details><summary style="cursor:pointer;color:var(--ink-3);font-size:0.82rem">original plan</summary>
+      <p>Download 2–3 real workloads — LANL CM-5 / SDSC-SP2 SWF traces from the <a href="https://www.cs.huji.ac.il/labs/parallel/workload/" target="_blank">Parallel Workloads Archive</a> and the <a href="https://github.com/alibaba/clusterdata" target="_blank">Alibaba GPU cluster trace</a>. Replay them through the simulator, <strong>retrain per trace</strong>, and report within-trace holdout + cross-trace transfer. The SWF parser and preprocessing scaffold are already in place (<code>02_data/load_real_traces.py</code>, phase 25). Every other claim in the project gains or loses credibility with this one experiment.</p></details></div>
+    <div class="card"><h4 style="margin-top:0">2 · Implement a real backfill baseline <span class="chip ok">done — v3.2</span></h4><p style="font-size:0.85rem"><strong>Delivered:</strong> EASY backfill + predicted-wait hybrid, benchmarked across 20 paired runs — the reservation price is measured (+45% mean wait for Gini 0.365) and the hybrid is an honest null. See <a href="#results">the seven-scheduler results</a>.</p><details><summary style="cursor:pointer;color:var(--ink-3);font-size:0.82rem">original plan</summary>
+      <p>EASY/conservative backfilling is what SLURM actually does and the strongest practical competitor. Implement it in the simulator (~100 lines: reserve start for queue head, let jobs that won't delay it jump ahead). If proactive can't beat or complement backfill, that's essential to know; if it can (e.g., <em>predicted-wait-aware backfill</em>), that's the paper's novelty.</p></details></div>
+    <div class="card"><h4 style="margin-top:0">3 · Bound the fairness cost principledly <span class="chip ok">done — v3.2</span></h4><p style="font-size:0.85rem"><strong>Delivered:</strong> hard wait-budget B swept over 9 values × 20 paired runs — a clean Pareto frontier with B=60 as the recommended operating point. See <a href="#tradeoffs">the fairness dial</a>.</p><details><summary style="cursor:pointer;color:var(--ink-3);font-size:0.82rem">original plan</summary>
+      <p>Replace the ad-hoc 3×-mean bump with a <strong>hard wait budget</strong>: reorder freely subject to no job's predicted start exceeding its FIFO-position start by more than B ts. Sweep B to trace the actual mean-wait ↔ tail-latency Pareto frontier — turning today's weakness into a tunable, publishable result.</p></details></div>
     <div class="card"><h4 style="margin-top:0">4 · Richer, harder workloads</h4>
       <p>Poisson + diurnal arrivals, heavy-tailed (log-normal) runtimes, mixed job classes, per-node placement constraints, preemption, node failures. The current uniform workload is the easiest possible case for a predictor; credibility requires the hard cases. All generators are seeded — extending them preserves reproducibility.</p></div>
   </div>
 
   <h3>Tier 2 — Method improvements</h3>
   <div class="cards c2">
-    <div class="card"><h4 style="margin-top:0">5 · Uncertainty-aware scheduling</h4><p>Swap point predictions for <strong>quantile regression</strong> (XGBoost <code>reg:quantileerror</code>, or NGBoost/conformal intervals). Schedule on an upper-confidence wait; auto-fallback to FIFO when intervals blow out. This directly addresses the OOD fragility with the model's own uncertainty signal.</p></div>
+    <div class="card"><h4 style="margin-top:0">5 · Uncertainty-aware scheduling <span class="chip ok">done — v3.2 (negative)</span></h4><p style="font-size:0.85rem"><strong>Delivered &amp; honestly negative:</strong> quantile XGBoost (q10/50/90) + UCB + spread-guarded fallback — parity in-distribution, but under-dispersed intervals (68% coverage) fail to flag the harmful regime. Next step if revisited: <em>conformal calibration</em> of the intervals before retrying the guard. See <a href="#robustness">the study</a>.</p></div>
     <div class="card"><h4 style="margin-top:0">6 · Smarter scoring than "sort by ŵ"</h4><p>Sorting by predicted wait conflates "easy to place" with "should go first". Try <em>impact-aware</em> scores — ŵ × requested GPUs (delay-cost), aging-weighted ŵ, or expected-slowdown (ŵ / runtime estimate) — and compare against SJF given <em>predicted</em> (not oracle) runtimes for a fair fight.</p></div>
     <div class="card"><h4 style="margin-top:0">7 · Close the online-learning loop</h4><p>Drift detection (7 correct triggers) and online retraining (MAE 6.98→6.88) exist as separate experiments. Wire them <em>into the scheduler</em>: drift trigger → FIFO fallback → incremental retrain → shadow-validate → re-promote. That's the production story DEPLOYMENT.md describes — implement and measure it.</p></div>
     <div class="card"><h4 style="margin-top:0">8 · Engineering hardening</h4><p>Make it a git repo with CI (the audit found no version control). Extract the copy-pasted Job/Cluster/simulation code (10 near-duplicates) into a shared <code>simlib/</code> package with unit tests; add a config file for cluster/workload parameters; property-based tests for the allocator (allocation+rollback invariants).</p></div>
@@ -1124,7 +1198,7 @@ for job in queue:              # 4. dispatch ALL
   </table></div>
 
   <footer>
-    <p><strong>Proactive Feasibility Scheduler</strong> — complete project documentation · generated July 2026 after the full audit &amp; repair pass · all numbers regenerated by the seeded pipeline on Python 3.14 / Windows 11.<br>
+    <p><strong>Proactive Feasibility Scheduler</strong> — complete project documentation · v3.2, July 2026 · full audit &amp; repair pass + research extensions (real traces, backfill, fairness budget, uncertainty) · all numbers regenerated by the seeded pipeline on Python 3.14 / Windows 11.<br>
     Companion docs: <code>README.md</code> · <code>RESULTS.md</code> · <code>METHODOLOGY.md</code> · <code>DEPLOYMENT.md</code> · <code>README_REPRODUCIBILITY.md</code> · manuscript draft in <code>phases_22_30/phase_28_manuscript/</code>.</p>
   </footer>
 </section>
@@ -1191,19 +1265,33 @@ var DATA = {
                -11.6, 2.9, -0.7, 4.9, 8.6, 9.8, 21.7, 12.1, 6.8, 23.2,
                16.5, 4.9, -14.6, 22.0, 11.7, 9.3, 10.4, 5.2, 13.9, 10.5],
   schedulerWait: [
-    { label: 'SJF (needs runtime oracle)', v: 12.00 }, { label: 'NN reranker', v: 15.69 },
-    { label: 'Proactive', v: 15.71, hot: true }, { label: 'Priority + aging', v: 16.34 },
-    { label: 'FIFO', v: 16.65 }
+    { label: 'SJF (needs runtime oracle)', v: 12.34 }, { label: 'NN reranker', v: 16.07 },
+    { label: 'Proactive', v: 16.10, hot: true }, { label: 'Priority + aging', v: 16.53 },
+    { label: 'FIFO (dispatch-all-that-fit)', v: 17.22 },
+    { label: 'Proactive-backfill hybrid', v: 24.91 }, { label: 'EASY backfill', v: 24.94 }
   ],
   schedulerTail: [
-    { label: 'SJF', v: 143.5 }, { label: 'NN', v: 134.2 },
-    { label: 'Proactive', v: 125.7, hot: true }, { label: 'Priority', v: 127.7 },
-    { label: 'FIFO', v: 53.9 }
+    { label: 'SJF', v: 145.7 }, { label: 'NN', v: 136.4 },
+    { label: 'Proactive', v: 127.3, hot: true }, { label: 'Priority', v: 131.7 },
+    { label: 'FIFO', v: 54.7 },
+    { label: 'Hybrid BF', v: 55.5 }, { label: 'EASY BF', v: 55.4 }
   ],
   schedulerGini: [
-    { label: 'SJF', v: 0.782 }, { label: 'NN', v: 0.796 },
-    { label: 'Proactive', v: 0.790, hot: true }, { label: 'Priority', v: 0.739 },
-    { label: 'FIFO', v: 0.518 }
+    { label: 'SJF', v: 0.785 }, { label: 'NN', v: 0.797 },
+    { label: 'Proactive', v: 0.791, hot: true }, { label: 'Priority', v: 0.743 },
+    { label: 'FIFO', v: 0.516 },
+    { label: 'Hybrid BF', v: 0.365 }, { label: 'EASY BF', v: 0.365 }
+  ],
+  pareto: [
+    { b: '0',   mw: 22.32, mx: 62.95, gini: 0.49, cluster: 'B=0–30 (≈FIFO)' },
+    { b: '10',  mw: 22.34, mx: 66.85, gini: 0.51, nolabel: true },
+    { b: '20',  mw: 22.61, mx: 64.00, gini: 0.53, nolabel: true },
+    { b: '30',  mw: 22.25, mx: 64.20, gini: 0.56, nolabel: true },
+    { b: '40',  mw: 21.82, mx: 67.40, gini: 0.60 },
+    { b: '60',  mw: 20.61, mx: 80.70, gini: 0.69, hot: true },
+    { b: '80',  mw: 19.90, mx: 96.05, gini: 0.74 },
+    { b: '120', mw: 19.35, mx: 124.85, gini: 0.78 },
+    { b: '∞',   mw: 19.22, mx: 135.75, gini: 0.79 }
   ],
   fairness: {
     groups: ['Mean wait (ts)', 'Max wait (ts)', 'Gini × 100'],
@@ -1455,6 +1543,48 @@ function lineChart(fig, cfg) {
     cfg.x.map(function (xv, i) { return [xv, fmt(cfg.y[i], 1)]; }));
 }
 
+/* -------- Pareto frontier (budget sweep) -------- */
+function paretoChart(fig, pts) {
+  var mount = fig.querySelector('.svgmount');
+  var W = 720, H = 320, padL = 60, padR = 30, padT = 16, padB = 48;
+  var svg = el('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img' }, mount);
+  var xmin = 18.8, xmax = 23.0, ymin = 50, ymax = 145;
+  var x = function (v) { return padL + (v - xmin) / (xmax - xmin) * (W - padL - padR); };
+  var y = function (v) { return padT + (1 - (v - ymin) / (ymax - ymin)) * (H - padT - padB); };
+  [60, 80, 100, 120, 140].forEach(function (tv) {
+    el('line', { x1: padL, y1: y(tv), x2: W - padR, y2: y(tv), 'class': 'gridline' }, svg);
+    var tx = el('text', { x: padL - 7, y: y(tv) + 4, 'text-anchor': 'end', 'class': 'axis-text' }, svg); tx.textContent = tv;
+  });
+  [19, 20, 21, 22, 23].forEach(function (tv) {
+    var tx = el('text', { x: x(tv), y: H - padB + 17, 'text-anchor': 'middle', 'class': 'axis-text' }, svg); tx.textContent = tv;
+  });
+  var xl = el('text', { x: (padL + W - padR) / 2, y: H - 8, 'text-anchor': 'middle', 'class': 'axis-text' }, svg);
+  xl.textContent = 'Mean wait (ts) — lower is better →  (left)';
+  var yl = el('text', { x: 14, y: padT + 10, 'class': 'axis-text' }, svg); yl.textContent = 'Max wait (ts)';
+  var path = pts.map(function (p, i) { return (i ? 'L' : 'M') + x(p.mw) + ',' + y(p.mx); }).join(' ');
+  el('path', { d: path, fill: 'none', stroke: 'var(--series-1)', 'stroke-width': 2, 'stroke-linejoin': 'round', opacity: 0.55 }, svg);
+  pts.forEach(function (p) {
+    var hot = !!p.hot;
+    el('circle', { cx: x(p.mw), cy: y(p.mx), r: hot ? 7 : 5.5, fill: hot ? 'var(--series-2)' : 'var(--series-1)', stroke: 'var(--surface-1)', 'stroke-width': 2 }, svg);
+    if (!p.nolabel) {
+      var lb = el('text', { x: x(p.mw) + (p.b === '∞' ? 10 : 9), y: y(p.mx) - 8, 'class': hot ? 'dlabel strong' : 'dlabel' }, svg);
+      lb.textContent = p.cluster || ('B=' + p.b + (hot ? ' ← recommended' : ''));
+    }
+    var hit = el('rect', { x: x(p.mw) - 16, y: y(p.mx) - 16, width: 32, height: 32, fill: 'transparent', tabindex: 0 }, svg);
+    ['pointermove', 'focus'].forEach(function (ev) {
+      hit.addEventListener(ev, function (e) {
+        showTip(ev === 'focus' ? { clientX: 220, clientY: 220 } : e, 'Budget B = ' + p.b + ' ts',
+          [{ value: p.mw.toFixed(2) + ' ts', label: 'mean wait', color: 'var(--series-1)' },
+           { value: p.mx.toFixed(1) + ' ts', label: 'max wait', color: 'var(--series-6)' },
+           { value: p.gini.toFixed(2), label: 'Gini', color: 'var(--series-3)' }]);
+      });
+    });
+    ['pointerleave', 'blur'].forEach(function (ev) { hit.addEventListener(ev, hideTip); });
+  });
+  makeTable(fig.querySelector('.tableview'), ['Budget B (ts)', 'Mean wait', 'Max wait', 'Gini'],
+    pts.map(function (p) { return [p.b, p.mw.toFixed(2), p.mx.toFixed(1), p.gini.toFixed(2)]; }));
+}
+
 /* -------- diverging heatmap -------- */
 function heatmap(fig, cfg) {
   var mount = fig.querySelector('.svgmount');
@@ -1509,6 +1639,7 @@ document.querySelectorAll('figure.chart').forEach(function (fig) {
     if (kind === 'schedulerTail') hBarChart(fig, DATA.schedulerTail, { dec: 1, unit: 'ts', metric: 'max wait', cat: 'Scheduler', padL: 110 });
     if (kind === 'schedulerGini') hBarChart(fig, DATA.schedulerGini, { dec: 3, metric: 'Gini', cat: 'Scheduler', padL: 110 });
     if (kind === 'fairness') groupedBars(fig, DATA.fairness);
+    if (kind === 'pareto') paretoChart(fig, DATA.pareto);
     if (kind === 'scaling') lineChart(fig, DATA.scaling);
     if (kind === 'oodHeat') heatmap(fig, DATA.oodHeat);
   } catch (err) { /* chart failure must never break the document */ }

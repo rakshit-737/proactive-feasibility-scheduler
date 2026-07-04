@@ -14,7 +14,7 @@
 | 22 | Statistical Rigor | `phase_22_stats/stats_bootstrap.py` | ✅ Complete (real 40-run data) |
 | 23 | OOD Sensitivity | `phase_23_sensitivity/sensitivity_ood_analysis.py` | ✅ Complete (real model, real shifted sims) |
 | 24 | Extended Schedulers | `phase_24_extended_schedulers/scheduler_comparison.py` | ✅ Complete (real benchmark CSVs; SLURM/K8s/Yarn baselines **dropped** — no real implementations existed) |
-| 25 | Real Traces | `phase_25_real_traces/trace_preprocessing.py` | ⚠️ Scaffolding complete; **no real trace evaluated** — outputs labelled `synthetic_proxy_trace` |
+| 25 | Real Traces | `phase_25_real_traces/trace_preprocessing.py`, `02_data/real_trace_validation.py` | ✅ Complete (v3.2: two real PWA traces evaluated — LANL CM-5, SDSC SP2) |
 | 26 | Scaling Validation | `phase_26_scaling/scaling_benchmark.py` | ✅ Complete (real discrete-time simulation, real model inference timing) |
 | 27 | Fairness & SLA | `phase_27_fairness/fairness_sla_analysis.py` | ✅ Complete (real per-run/per-job data; schedulers without real data dropped) |
 | 28 | Manuscript | `phase_28_manuscript/manuscript.tex` | ✅ Draft compiles; numbers synced to regenerated results |
@@ -37,12 +37,29 @@
 
 ### Phase 24: Extended Scheduler Comparison
 - Compares the five schedulers with **real implementations** (FIFO, SJF, Priority, NN, Proactive) from the regenerated multi-scheduler benchmark.
-- SLURM-backfill / Kubernetes-QoS / Yarn-FIFO rows were **removed**: no real implementations existed and their previous numbers were fabricated constants. Implementing a real backfill baseline is future work (see README/roadmap).
+- SLURM-backfill / Kubernetes-QoS / Yarn-FIFO rows were **removed**: no real implementations existed and their previous numbers were fabricated constants. A **real EASY-backfill baseline was implemented in v3.2** (`04_scheduler/backfill_scheduler.py`; see the v3.2 Extensions section below).
 - Result: SJF 12.00 ts (needs known runtimes) < NN 15.69 ≈ Proactive 15.71 < Priority 16.34 < FIFO 16.65; FIFO dominates fairness (Gini 0.518) and tail latency (max 53.9 ts).
 
-### Phase 25: Trace Integration — **open item**
-- SWF parser and feature mapper work; the loader falls back **loudly** to a synthetic proxy when no real trace file exists (which is the current state).
-- Cross-trace error vs the proxy: MAE ≈ 18.3 ts. Real-trace validation requires downloading a trace (instructions in the script header and `02_data/load_real_traces.py`).
+### Phase 25: Trace Integration — **COMPLETE (v3.2)**
+- Two real Parallel Workloads Archive traces downloaded, committed
+  (`02_data/LANL-CM5-1994-4.1-cln.swf.gz`, `02_data/SDSC-SP2-1998-4.2-cln.swf.gz`)
+  and evaluated via `02_data/build_real_trace_datasets.py` + `02_data/real_trace_validation.py`.
+- Method: chronological replay of each recorded schedule reconstructs 8 honestly-derivable
+  cluster-state features at every arrival. Transfer of the synthetic model tested via a
+  rescaled 12-feature mapping with best-case affine calibration; retraining uses a
+  chronological 80/20 split with target log1p(wait minutes).
+- **SDSC SP2** (128 nodes, 1998, 42,117 evaluated arrivals; heavy-tailed batch queue,
+  p90 wait ~15 h): transfer R² = 0.072 (MAE 452 min); **retrained R²(log) = 0.494**,
+  MAE 622 min vs median baseline R² −0.694 / 684 min and rolling-mean R² 0.016 / 1009 min.
+  Cluster-state features explain about half the log-wait variance on a real batch
+  supercomputer once retrained.
+- **LANL CM-5** (1024 procs, 1994–96, 122,055 usable jobs; median wait ~4 s — largely
+  interactive): transfer R² ≈ −0.001 (MAE 41 min); retrained R²(log) = 0.101,
+  MAE 33.7 min vs median baseline R² −0.106 / 33.5 min. Weak-signal machine —
+  honest partial negative.
+- Conclusion: **zero-shot sim-to-real transfer ≈ 0 on both traces** (now quantified on
+  real data); retraining recovers strong signal where queueing dominates; signal strength
+  is machine-dependent. "Retrain per deployment" is now evidence-backed, not a caveat.
 
 ### Phase 26: Scaling Validation
 - Real discrete-time simulation at 32–256 GPUs under saturation (10,000 queued jobs): utilisation > 99.7% at all scales, batched inference 10–48 ms per decision, **scheduling overhead < 5%** of throughput.
@@ -55,7 +72,7 @@
 - The earlier claim "proactive ≥ FIFO on fairness" is **withdrawn**; the honest claim is a quantified trade-off with a partial mitigation.
 
 ### Phase 28: Manuscript
-- `manuscript.tex` compiles (inputenc fixed, all citations resolve, booktabs rules correct) and now reports the regenerated numbers above, including the fairness trade-off, OOD collapse, and the unvalidated real-trace transfer.
+- `manuscript.tex` compiles (inputenc fixed, all citations resolve, booktabs rules correct) and now reports the regenerated numbers above, including the fairness trade-off, OOD collapse, and (v3.2) the real-trace validation, backfill baselines, wait-budget frontier, and the uncertainty-guard negative result.
 
 ### Phase 29: Reproducibility
 - `run_all_experiments.sh` (root) and `run_all_experiments_v2.sh` (phases 22–27) run end-to-end on a fresh checkout: seeded, cwd-independent, UTF-8-safe on Windows.
@@ -66,12 +83,70 @@
 
 ---
 
+## v3.2 Extensions (July 2026)
+
+Four research extensions, all regenerated from artifacts on disk.
+
+### 1. Real-trace validation (closes Phase 25)
+- Two real PWA traces (LANL CM-5, SDSC SP2) replayed and evaluated
+  (`05_results/traces/real_trace_validation.csv`).
+- Zero-shot sim-to-real transfer ≈ 0 on both (LANL R² ≈ −0.001; SDSC R² = 0.072).
+- Retrained on-trace: **R²(log) = 0.494 on SDSC SP2** (vs median baseline −0.694) —
+  strong signal on a heavy-tailed batch machine; **0.101 on LANL CM-5** — weak-signal,
+  largely interactive machine (honest partial negative). Details in the Phase 25 section.
+
+### 2. Seven-scheduler benchmark with real backfill baselines
+- `04_scheduler/backfill_scheduler.py` adds EASY backfilling (hard reservation for the
+  head job, perfect runtime estimates = strongest-baseline setting) and a
+  PROACTIVE_BF hybrid (predicted-wait backfill order).
+- 20 paired runs on out-of-training seeds 1000+i
+  (`05_results/schedulers/multi_scheduler_benchmark.csv`), mean wait / max wait / Gini:
+  SJF 12.34/145.7/0.785 · NN 16.07/136.4/0.797 · PROACTIVE 16.10/127.3/0.791 ·
+  PRIORITY 16.53/131.7/0.743 · FIFO 17.22/54.7/0.516 · PROACTIVE_BF 24.91/55.5/0.365 ·
+  BACKFILL(EASY) 24.94/55.4/0.365. Utilisation 0.637 and throughput identical across all seven.
+- **Semantics caveat**: the benchmark's "FIFO" dispatches every fitting job each tick,
+  i.e. it is already unrestricted no-reservation backfilling. EASY's head-job reservation
+  costs ~45% mean wait but delivers the **best fairness in the whole study**
+  (Gini 0.365, max wait ~55 ts). The hybrid ties EASY — an honest null result.
+- PROACTIVE beats FIFO by 6.5% on these fresh seeds (vs 7.7% near-training — good
+  generalization).
+
+### 3. Bounded-fairness wait-budget sweep
+- `04_scheduler/fairness_budget_sweep.py`, 20 paired runs, seeds 5000+i, FIFO reference
+  mean 22.4 ts (`05_results/fairness/budget_sweep.csv`, `budget_pareto.png`).
+- Budget B (ts) → mean-wait gain vs FIFO / max wait / Gini:
+  B=0: −0.4%/63/0.49 · B=10: −0.5%/67/0.51 · B=20: −1.7%/64/0.53 · B=30: −0.1%/64/0.56 ·
+  B=40: +1.8%/67/0.60 · B=60: +7.1%/81/0.69 · B=80: +10.2%/96/0.74 ·
+  B=120: +12.6%/125/0.78 · B=∞ (pure proactive): +13.2%/136/0.79.
+- A smooth, tunable Pareto frontier: **B=60 keeps over half the mean-wait gain while
+  capping max wait at 81 ts** (vs 136 unbounded). Tiny budgets (0–30) are slightly
+  *worse* than FIFO (escalation churn without freedom) — reported honestly.
+
+### 4. Uncertainty-aware scheduling (quantile XGBoost)
+- `03_models/train_quantile_model.py` (q10/q50/q90 → `wait_model_quantile.pkl`),
+  `04_scheduler/uncertainty_scheduler_benchmark.py`; 10 paired runs/scenario, seeds 7000+i
+  (`05_results/uncertainty/uncertainty_ood_benchmark.csv`, `uncertainty_summary.png`).
+- Quantile holdout: q50 MAE 4.61 (point model 4.69); [q10,q90] empirical coverage **68%
+  vs 80% nominal — under-dispersed**, reported honestly. Spread trigger τ = p95 of
+  in-distribution relative spread.
+- In-distribution: PROACTIVE +6.5%, UCB(q90) +6.1%, GUARDED +6.3% — parity, no cost.
+- Overload (2× arrivals, 4 nodes): all smart policies +38.7 to +39.0% (caveat:
+  among-started-jobs under horizon censoring; smart policies also *started* more jobs,
+  131 vs 114).
+- Light-load small cluster (0.5× arrivals, 4 nodes): **all smart policies negative**
+  (−4.3 to −5.0% vs FIFO) and the spread guard fires on only 0.2% of ticks — the
+  under-dispersed intervals fail to detect this regime. **Honest negative result:
+  interval width is not a reliable OOD alarm here**; the drift-triggered FIFO fallback
+  (Phase 19 rolling-MAE) remains the deployment mechanism.
+
+---
+
 ## Quality Gates
 
 - [x] Phase 22: headline claims carry CIs and corrected p-values
 - [x] Phase 23: failure modes measured with the real model and discussed in the manuscript
 - [x] Phase 24: comparison uses only real scheduler implementations
-- [ ] Phase 25: cross-dataset R² on a **real** trace — *open; proxy only*
+- [x] Phase 25: cross-dataset R² on a **real** trace — zero-shot transfer R² ≈ 0 on both PWA traces; retrained R²(log) 0.494 (SDSC SP2) / 0.101 (LANL CM-5)
 - [x] Phase 26: overhead < 5% demonstrated at 256 GPUs
 - [x] Phase 27: fairness trade-off quantified (not claimed away); starvation analysed
 - [x] Phase 28: manuscript numbers match regenerated artifacts
@@ -82,14 +157,9 @@
 
 ## Next Steps
 
-1. **Real-trace validation (Phase 25 completion)** — download an SWF trace
-   (Parallel Workloads Archive) → `02_data/`, rerun `load_real_traces.py`,
-   `synthetic_vs_real_comparison.py`, and `trace_preprocessing.py`; retrain per
-   trace and update RESULTS.md.
-2. **Real backfill baseline (Phase 24 completion)** — implement conservative or
-   EASY backfilling in the simulator; it is the strongest practical competitor.
-3. **Compile & iterate the manuscript**:
+1. **Compile & iterate the manuscript**:
    ```bash
    cd phases_22_30/phase_28_manuscript && pdflatex manuscript.tex && pdflatex manuscript.tex
    ```
-4. **Tag a release** once real-trace validation lands.
+2. **Tag a release** (v3.2) — real-trace validation and the backfill baseline have
+   landed; the release blocker is cleared.

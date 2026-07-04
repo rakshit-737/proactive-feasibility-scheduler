@@ -26,7 +26,8 @@ This roadmap extends the proactive feasibility scheduler from core research (Pha
 ### Completed (✅)
 - Phase 22: ✅ Statistical bootstrap analysis (stats_bootstrap.py, CI plots)
 - Phase 23: ✅ OOD sensitivity analysis (real model on real shifted sims; ood_heatmap, failure modes)
-- Phase 24: ✅ Extended scheduler comparison (real implementations only — SLURM/K8s/Yarn baselines dropped, see COMPLETION_SUMMARY.md)
+- Phase 24: ✅ Extended scheduler comparison (real implementations only — SLURM/K8s/Yarn baselines dropped, see COMPLETION_SUMMARY.md; v3.2 adds a real EASY-backfill baseline in the 7-scheduler benchmark)
+- Phase 25: ✅ Real trace integration (v3.2: two real PWA traces evaluated — zero-shot transfer R² ≈ 0 on both; retrained R²(log) 0.494 on SDSC SP2, 0.101 on LANL CM-5; signal is machine-dependent)
 - Phase 26: ✅ Scaling validation (real simulation + real inference timing)
 - Phase 27: ✅ Fairness & SLA analysis (real per-run/per-job data)
 - Phase 28: ✅ Manuscript draft (numbers synced to regenerated artifacts)
@@ -34,7 +35,7 @@ This roadmap extends the proactive feasibility scheduler from core research (Pha
 - Phase 30: ✅ Deployment guide (../DEPLOYMENT.md)
 
 ### Open (⚠️)
-- **Phase 25**: scaffolding complete, but **no real trace evaluated yet** — the trace on disk is a synthetic proxy. Download a real SWF/Alibaba trace to close this out (instructions in trace_preprocessing.py).
+- None — all phases 22–30 are complete as of v3.2 (July 2026).
 
 ---
 
@@ -99,9 +100,9 @@ Phase 13 (Fair) ───┤       ↓
 
 ## Success Criteria
 
-- [ ] All phases produce publication-quality tables/plots
-- [ ] Phase 23 failure modes explicitly discussed in Phase 28 manuscript
-- [ ] Phase 29 reproducibility passes fresh environment test
+- [x] All phases produce publication-quality tables/plots
+- [x] Phase 23 failure modes explicitly discussed in Phase 28 manuscript
+- [x] Phase 29 reproducibility passes fresh environment test (verified on this machine, July 2026)
 - [ ] Phase 30 operations guide reviewed by HPC domain expert
 - [ ] DOI assigned to versioned release
 

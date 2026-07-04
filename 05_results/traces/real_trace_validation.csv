@@ -1,0 +1,9 @@
+trace,method,r2,mae_minutes,n_train,n_test,notes
+lanl,transfer_calibrated,-0.0007066100848580614,40.95100639207383,1000,121055,best-case transfer protocol; node-level features uniform-occupancy approximated (no placement in SWF); affine calib a=0.6208 b=10.38; r2/mae in raw minutes; 42.2% arrivals had clamped negative free
+lanl,retrained,0.10111597068966383,33.694972733033005,97644,24411,"XGBoost on 8 reconstructable features, target wait_log_minutes, chronological split; r2 in log space, mae back-transformed to minutes"
+lanl,baseline_median,-0.10563622446793852,33.489193396419644,97644,24411,constant train-median prediction (0.05 min); constant predictor => r2 <= 0 by construction
+lanl,baseline_rolling,-0.004814095463210322,60.82020576789153,97644,24411,"causal rolling mean of last 100 actual waits; log-space mean for r2, minute-space mean for mae"
+sdsc,transfer_calibrated,0.07218296334259944,451.68300037571544,1000,42117,best-case transfer protocol; node-level features uniform-occupancy approximated (no placement in SWF); affine calib a=17.81 b=-35.55; r2/mae in raw minutes
+sdsc,retrained,0.4942594144862178,622.5331234597755,34493,8624,"XGBoost on 8 reconstructable features, target wait_log_minutes, chronological split; r2 in log space, mae back-transformed to minutes"
+sdsc,baseline_median,-0.6935626203556449,684.2446718460112,34493,8624,constant train-median prediction (0.65 min); constant predictor => r2 <= 0 by construction
+sdsc,baseline_rolling,0.015671672721377594,1009.0028100649351,34493,8624,"causal rolling mean of last 100 actual waits; log-space mean for r2, minute-space mean for mae"

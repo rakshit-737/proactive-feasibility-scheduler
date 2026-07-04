@@ -4,3 +4,5 @@ catboost_info/
 .vscode/
 *.log
 *.VSIXPackage
+*.swf
+real_trace_dataset_*.csv

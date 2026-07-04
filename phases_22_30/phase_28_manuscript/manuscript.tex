@@ -36,7 +36,7 @@
 \maketitle
 
 \begin{abstract}
-Modern HPC and cloud clusters hosting GPU-intensive workloads face significant scheduling challenges: job wait times are unpredictable due to heterogeneous resource requests, cluster fragmentation, and queue dynamics. We propose \emph{Proactive}, an ML-based scheduling approach that predicts job wait time using XGBoost trained on cluster-state features, enabling proactive queue reordering to reduce mean wait time. On a seeded 40-run paired benchmark against FIFO, Proactive reduces mean wait time by 7.7\% (bootstrap 95\% CI [5.0\%, 10.3\%], paired $t$-test $p = 1.4\times10^{-6}$) at identical GPU utilisation. The gain is not free: tail latency (max wait $\sim$58 $\rightarrow$ $\sim$125 ts) and per-job fairness (Gini 0.53 $\rightarrow$ 0.80) worsen, and an anti-starvation variant recovers part of the fairness cost (Gini 0.69). The wait-time model reaches $R^2 \approx 0.84$ on a proper holdout, but degrades sharply out-of-distribution (mean $R^2 < 0$ across 72 domain-shift scenarios) and has not yet been validated on real traces (the LANL-style trace used is a synthetic proxy). We report these trade-offs and failure modes explicitly, together with a scaling analysis (scheduling overhead $< 5\%$) and a deployment guide with FIFO-fallback safeguards for HPC operators.
+Modern HPC and cloud clusters hosting GPU-intensive workloads face significant scheduling challenges: job wait times are unpredictable due to heterogeneous resource requests, cluster fragmentation, and queue dynamics. We propose \emph{Proactive}, an ML-based scheduling approach that predicts job wait time using XGBoost trained on cluster-state features, enabling proactive queue reordering to reduce mean wait time. On a seeded 40-run paired benchmark against FIFO, Proactive reduces mean wait time by 7.7\% (bootstrap 95\% CI [5.0\%, 10.3\%], paired $t$-test $p = 1.4\times10^{-6}$) at identical GPU utilisation. The gain is not free: tail latency (max wait $\sim$58 $\rightarrow$ $\sim$125 ts) and per-job fairness (Gini 0.53 $\rightarrow$ 0.80) worsen, and an anti-starvation variant recovers part of the fairness cost (Gini 0.69). The wait-time model reaches $R^2 \approx 0.84$ on a proper holdout, but degrades sharply out-of-distribution (mean $R^2 < 0$ across 72 domain-shift scenarios). We validate on two real Parallel Workloads Archive traces: zero-shot sim-to-real transfer fails ($R^2 \approx 0$ on both), while per-trace retraining recovers strong signal on batch workloads ($R^2$ on log-wait $= 0.494$ on SDSC SP2). We further evaluate EASY-backfill baselines, a bounded-fairness wait budget, and an uncertainty-aware variant, and report these trade-offs and failure modes explicitly, together with a scaling analysis (scheduling overhead $< 5\%$) and a deployment guide with FIFO-fallback safeguards for HPC operators.
 \end{abstract}
 
 \section{Introduction}
@@ -57,7 +57,7 @@ Existing schedulers (FIFO, SLURM backfill, Kubernetes QoS) use greedy heuristics
   \item \textbf{ML-Based Wait-Time Prediction}: XGBoost model trained on 12 non-leaky cluster-state features (queue pressure, GPU availability, fragmentation, etc.), reaching $R^2 \approx 0.84$ / MAE $\approx 4.7$ ts on a 20\% holdout (5-fold CV MAE $4.74 \pm 0.42$).
   \item \textbf{Proactive Scheduler}: Reorders the queue by predicted wait, achieving a 7.7\% mean wait-time reduction vs.\ FIFO (95\% CI [5.0\%, 10.3\%], $p = 1.4\times10^{-6}$) at unchanged GPU utilisation.
   \item \textbf{Honest Fairness Analysis}: Formal fairness metrics (Gini, Jain Index, SLA compliance) show the mean-wait gain \emph{costs} per-job equity (Gini 0.53 $\rightarrow$ 0.80); we quantify the trade-off and evaluate an anti-starvation mitigation (Gini 0.69).
-  \item \textbf{OOD and Proxy-Trace Diagnostics}: A 72-scenario domain-shift study shows prediction quality collapses out-of-distribution (mean $R^2 < 0$), and a synthetic LANL-schema proxy shows near-zero cross-dataset $R^2$ --- real-trace validation remains future work and is reported as such.
+  \item \textbf{OOD and Real-Trace Diagnostics}: A 72-scenario domain-shift study shows prediction quality collapses out-of-distribution (mean $R^2 < 0$). On two real Parallel Workloads Archive traces, zero-shot sim-to-real transfer fails ($R^2 \approx 0$), while per-trace retraining recovers $R^2$ on log-wait of 0.494 (SDSC SP2) and 0.101 (LANL CM-5) --- the signal is machine-dependent.
   \item \textbf{Scaling \& Operations}: Benchmarks at 32--256 GPU scales with $< 5\%$ scheduling overhead; deployment guide with FIFO-fallback safeguards for HPC operators.
 \end{enumerate}
 
@@ -191,6 +191,22 @@ freshly simulated shifted workloads:
         heuristic or FIFO is required for safety in shifted regimes.
 \end{itemize}
 
+\paragraph{Uncertainty-aware variant (negative result).}
+We additionally trained quantile XGBoost models (q10/q50/q90; q50 MAE 4.61 vs.\
+4.69 for the point model) and tested whether prediction-interval width can serve
+as an in-situ OOD alarm (10 paired runs per scenario, seeds $7000{+}i$). The
+intervals are under-dispersed: empirical $[q10, q90]$ coverage is 68\% against
+80\% nominal. In-distribution, an interval-based UCB policy (order by q90) and a
+spread-guarded policy match plain Proactive ($+6.1$\% to $+6.5$\% vs.\ FIFO ---
+parity at no cost). Under overload ($2\times$ arrivals, 4 nodes) all smart
+policies gain $+38.7$\% to $+39.0$\% among started jobs (a horizon-censored
+metric; they also \emph{started} more jobs, 131 vs.\ 114). But in a light-load
+small-cluster regime ($0.5\times$ arrivals, 4 nodes) \emph{every} smart policy
+is worse than FIFO ($-4.3$\% to $-5.0$\%) while the spread guard fires on only
+0.2\% of ticks: interval width fails to detect exactly the regime it was meant
+to catch. We therefore retain the drift-triggered FIFO fallback (rolling
+prediction MAE) as the deployment safeguard, not interval width.
+
 \subsubsection{Fairness \& SLA (Phase 27)}
 \begin{table}[h]
 \centering
@@ -225,17 +241,113 @@ anti-starvation variant recovers part of the equity loss (Gini 0.69, max wait
         over-provisioned clusters there is nothing to reorder.
 \end{itemize}
 
+\subsubsection{Backfill Baselines}
+We implemented an EASY-backfill baseline (hard reservation for the head-of-queue
+job, which is never delayed; runtime estimates are perfect, making this the
+strongest-baseline setting) and a hybrid, \textsc{Proactive-BF}, that orders
+backfill candidates by predicted wait. Table~\ref{tab:seven-sched} reports 20
+paired runs on out-of-training seeds ($1000{+}i$); GPU utilisation (0.637) and
+throughput are identical across all seven schedulers.
+
+\begin{table}[h]
+\centering
+\caption{Seven-scheduler benchmark (20 paired runs, out-of-training seeds).}
+\label{tab:seven-sched}
+\begin{tabular}{lrrr}
+\toprule
+Scheduler & Mean Wait (ts) & Max Wait (ts) & Gini \\
+\midrule
+SJF & 12.34 & 145.7 & 0.785 \\
+Neural Network & 16.07 & 136.4 & 0.797 \\
+Proactive & 16.10 & 127.3 & 0.791 \\
+Priority & 16.53 & 131.7 & 0.743 \\
+FIFO & 17.22 & 54.7 & 0.516 \\
+Proactive-BF & 24.91 & 55.5 & \textbf{0.365} \\
+EASY Backfill & 24.94 & \textbf{55.4} & \textbf{0.365} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Two semantic points are essential to read this table honestly. First, our
+``FIFO'' dispatches every fitting job at each tick, i.e.\ it is already
+\emph{unrestricted no-reservation backfilling}; EASY differs only by adding the
+head-job reservation. Second, that reservation is expensive on mean wait
+($\sim$45\% worse than FIFO) but buys the \emph{best fairness in the entire
+study} (Gini 0.365, max wait $\sim$55 ts) --- the reservation is a fairness
+mechanism, priced in mean wait. The hybrid \textsc{Proactive-BF} ties EASY on
+every metric: an honest null result --- predicted-wait backfill ordering adds
+nothing once the reservation constraint dominates. On these fresh seeds
+Proactive beats FIFO by 6.5\% (vs.\ 7.7\% near-training --- good
+generalization).
+
+\subsubsection{Bounded-Fairness Wait Budget}
+To bound the tail-latency cost of reordering, we add a hard per-job wait budget
+$B$: any job whose wait reaches $B$ escalates to the head of the queue. Over 20
+paired runs (seeds $5000{+}i$; FIFO reference mean wait 22.4 ts), sweeping $B$
+traces a smooth Pareto frontier between the pure-proactive gain and FIFO-like
+tails (Table~\ref{tab:budget}).
+
+\begin{table}[h]
+\centering
+\caption{Wait-budget sweep (gain vs.\ FIFO; 20 paired runs).}
+\label{tab:budget}
+\begin{tabular}{lrrr}
+\toprule
+Budget $B$ (ts) & Mean-wait gain & Max Wait (ts) & Gini \\
+\midrule
+0 & $-0.4\%$ & 63 & 0.49 \\
+40 & $+1.8\%$ & 67 & 0.60 \\
+60 & $+7.1\%$ & 81 & 0.69 \\
+80 & $+10.2\%$ & 96 & 0.74 \\
+$\infty$ (pure proactive) & $+13.2\%$ & 136 & 0.79 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+$B=60$ is a reasonable operating point: it keeps over half the mean-wait gain
+while capping max wait at 81 ts (vs.\ 136 unbounded). Notably, tiny budgets
+($B \le 30$) are slightly \emph{worse} than FIFO ($-0.1$\% to $-1.7$\%) ---
+constant escalation churn without reordering freedom --- so the knob must not
+be set blindly tight.
+
+\subsubsection{Real-Trace Validation}
+We evaluate on two real Parallel Workloads Archive traces: LANL CM-5 (1024
+processors, 1994--96, 122{,}055 usable jobs; median wait $\sim$4 s --- largely
+interactive) and SDSC SP2 (128 nodes, 1998, 42{,}117 evaluated arrivals;
+heavy-tailed batch queue, p90 wait $\sim$15 h). Chronological replay of each
+recorded schedule reconstructs eight honestly-derivable cluster-state features
+at every arrival; we test (i) \emph{transfer} of the synthetic-trained model
+via a rescaled 12-feature mapping with best-case affine calibration, and (ii)
+\emph{retraining} on the trace with a chronological 80/20 split, predicting
+$\log(1+\text{wait minutes})$.
+
+Zero-shot transfer fails on both machines: $R^2 \approx -0.001$ on LANL (MAE 41
+min) and $R^2 = 0.072$ on SDSC (MAE 452 min). Retraining recovers strong signal
+where queueing dominates: on SDSC SP2 the retrained model reaches $R^2$ on
+log-wait of \textbf{0.494} (MAE 622 min), against $-0.694$ (684 min) for a
+median baseline and $0.016$ (1009 min) for a rolling mean --- cluster-state
+features explain roughly half the log-wait variance on a real batch
+supercomputer. On LANL the retrained model reaches only $R^2 = 0.101$ (MAE 33.7
+min, vs.\ 33.5 min for the median baseline): a weak-signal, largely interactive
+machine, which we report as an honest partial negative. The conclusion is now
+evidence-backed rather than a caveat: sim-to-real transfer is $\approx 0$, the
+model must be retrained per deployment, and the achievable signal is
+machine-dependent --- strong on batch workloads, weak on interactive ones.
+
 \subsection{Threats to Validity}
 
 \subsubsection{Simulation-to-Reality Gap}
 Real cluster dynamics (node failures, complex job dependencies, preemption) are
-not modeled, and \emph{no real trace has been evaluated}: the LANL-style trace
-in the repository is a synthetic proxy generated from the training
-distribution. Cross-dataset $R^2$ against that proxy is already near zero
-($\approx 0.02$, MAE $\approx 15$ ts), so transfer to genuinely real traces is
-expected to be worse, not better. \textit{Mitigation}: obtain SWF traces from
-the Parallel Workloads Archive, retrain per trace, and re-evaluate (Phase 25
-scaffolding exists).
+not modeled. The sim-to-real question is now \emph{measured} rather than open:
+on two real Parallel Workloads Archive traces, zero-shot transfer of the
+synthetic-trained model fails ($R^2 \approx -0.001$ on LANL CM-5, $0.072$ on
+SDSC SP2), while per-trace retraining recovers $R^2$ on log-wait of 0.494 on
+SDSC SP2 but only 0.101 on the largely interactive LANL CM-5. The remaining
+threats are that prediction quality is machine-dependent and that we validate
+prediction, not closed-loop scheduling, on real traces (the recorded schedules
+cannot be counterfactually re-executed). \textit{Mitigation}: retrain per
+deployment from shadow-mode logs and gate promotion on holdout quality, as in
+the deployment guide.
 
 \subsubsection{OOD Failure Modes (Phase 23)}
 Prediction quality collapses under distribution shift (mean $R^2 < 0$ across 72
@@ -246,8 +358,9 @@ configure thresholds.
 \subsubsection{Fairness Cost}
 The mean-wait improvement worsens tail latency and per-job Gini; unmitigated,
 this is operationally unacceptable in shared clusters. \textit{Mitigation}:
-anti-starvation bumping recovers part of the equity loss; bounding maximum wait
-is future work.
+anti-starvation bumping recovers part of the equity loss, and the wait-budget
+knob $B$ (Table~\ref{tab:budget}) makes the trade-off explicitly tunable
+($B=60$ keeps over half the mean-wait gain with max wait capped at 81 ts).
 
 \section{Deployment Guide}
 
@@ -264,17 +377,22 @@ See \texttt{DEPLOYMENT.md} for production considerations:
 Proactive feasibility scheduling delivers a small but statistically robust
 mean wait-time reduction (7.7\%, CI [5.0\%, 10.3\%]) on contended GPU clusters
 at no utilisation cost, using a wait-time model that is cheap to train and
-explainable. The gain trades off against tail latency and per-job fairness,
-prediction quality does not survive distribution shift, and real-trace
-validation is still open --- we report each of these limitations with
+explainable. The gain trades off against tail latency and per-job fairness ---
+a trade-off the wait-budget knob makes tunable --- and prediction quality does
+not survive distribution shift: on two real Parallel Workloads Archive traces,
+zero-shot transfer fails ($R^2 \approx 0$) while per-trace retraining recovers
+strong signal on batch workloads ($R^2$ on log-wait 0.494 on SDSC SP2) but not
+on interactive ones (0.101 on LANL CM-5). We report each of these limitations
+--- including the EASY-backfill fairness advantage, the \textsc{Proactive-BF}
+null result, and the failure of interval width as an OOD alarm --- with
 quantitative evidence rather than claiming a Pareto improvement. The value of
 this work lies as much in its honest, fully reproducible evaluation harness
 (seeded pipeline, paired statistics, OOD diagnostics) as in the scheduler
 itself.
 
-\textbf{Future work}: real-trace validation and per-trace retraining,
-fairness-constrained reordering (bounded max wait), online learning under
-concept drift, and multi-objective optimization (latency + fairness + energy).
+\textbf{Future work}: closed-loop scheduling evaluation on real-trace replays,
+better-calibrated uncertainty for OOD detection, online learning under concept
+drift, and multi-objective optimization (latency + fairness + energy).
 
 \section*{Acknowledgments}
 Thanks to [funding, advisors, etc.].
