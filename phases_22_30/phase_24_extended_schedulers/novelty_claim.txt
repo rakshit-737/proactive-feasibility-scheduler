@@ -1,0 +1,96 @@
+======================================================================
+PHASE 24: EXTENDED SCHEDULER COMPARISON – POSITIONING STATEMENT
+======================================================================
+
+OBJECTIVE
+----------------------------------------------------------------------
+Position the proactive feasibility scheduler against the baselines
+implemented and benchmarked in this project. All figures below are
+computed from the real benchmark outputs (05_results/); no numbers
+are hardcoded. External systems (e.g., SLURM backfill, Kubernetes
+QoS) are NOT simulated here, so no claims are made about them.
+
+DATA SOURCES
+----------------------------------------------------------------------
+  • E:\Research Project\proactive-feasibility-scheduler-main\05_results\schedulers\multi_scheduler_benchmark.csv
+    (15-run multi-scheduler benchmark, per-scheduler means)
+  • 05_results/benchmark_statistical_results.csv
+    (40-run paired FIFO-vs-proactive benchmark)
+
+SCHEDULERS COMPARED
+----------------------------------------------------------------------
+  • Shortest Job First             (heuristic_baseline)
+    Reference: 04_scheduler/sjf_scheduler.py
+    Mean wait: 12.00 ts | Max wait: 143.5 ts | Gini: 0.782
+
+  • Neural Network (MLP)           (ml_baseline)
+    Reference: 04_scheduler/neural_network_scheduler.py (Phase 14)
+    Mean wait: 15.69 ts | Max wait: 134.2 ts | Gini: 0.796
+
+  • Proactive (XGBoost)            (proposed)
+    Reference: Phase 09 proactive feasibility scheduler
+    Mean wait: 15.71 ts | Max wait: 125.7 ts | Gini: 0.790
+
+  • Priority                       (heuristic_baseline)
+    Reference: 04_scheduler/priority_scheduler.py
+    Mean wait: 16.34 ts | Max wait: 127.7 ts | Gini: 0.739
+
+  • FIFO                           (baseline)
+    Reference: 04_scheduler/multi_scheduler_benchmark.py (arrival order)
+    Mean wait: 16.65 ts | Max wait: 53.9 ts | Gini: 0.518
+
+KEY FINDINGS
+----------------------------------------------------------------------
+
+1. MEAN WAIT vs. FIFO (multi-scheduler benchmark)
+   Proactive: 15.71 ts (FIFO: 16.65 ts)
+   Change: +5.64% (reduction in mean wait)
+
+   Paired 40-run FIFO-vs-proactive benchmark:
+   Mean wait 18.27 -> 16.70 ts (mean per-run improvement 7.71%)
+   Wait difference 95% CI: [1.01, 2.13] ts
+   Paired t-test: t = 5.68, p = 1.45e-06 (statistically significant at p < 0.05)
+
+2. RANKING BY MEAN-WAIT IMPROVEMENT vs. FIFO
+   1. Shortest Job First        +27.94%
+   2. Neural Network (MLP)       +5.76%
+   3. Proactive (XGBoost)        +5.64%
+   4. Priority                   +1.87%
+   5. FIFO                       +0.00%
+
+3. FAIRNESS (Gini coefficient of wait times, lower is fairer)
+   Proactive: 0.790 (FIFO: 0.518)
+   Proactive is 52.66% LESS fair than FIFO on this metric
+   (a wait-time/fairness trade-off of reordering the queue).
+
+4. THROUGHPUT & GPU UTILIZATION
+   Proactive throughput: 0.367 jobs/ts (FIFO: 0.367 jobs/ts, +0.00%)
+   Proactive GPU utilization: 63.6% (FIFO: 63.6%, +0.00%)
+
+POSITIONING vs. IMPLEMENTED BASELINES
+----------------------------------------------------------------------
+
+✗ Proactive does NOT beat Shortest Job First on mean-wait reduction vs. FIFO
+  - Proactive +5.64% vs. Shortest Job First +27.94%
+
+✗ Proactive does NOT beat Neural Network (MLP) on mean-wait reduction vs. FIFO
+  - Proactive +5.64% vs. Neural Network (MLP) +5.76%
+
+✓ Proactive achieves a larger mean-wait reduction vs. FIFO than Priority
+  - Proactive +5.64% vs. Priority +1.87%
+
+Model-quality note vs. the NN baseline (same feature space):
+  - Wait-prediction MAE: Proactive 17.39 vs. NN 17.61 (lower is the proactive model)
+  - XGBoost additionally offers faster inference and SHAP interpretability.
+
+======================================================================
+CONCLUSION
+======================================================================
+In the paired 40-run benchmark, the proactive scheduler reduces
+mean wait vs. FIFO by 7.71% on average (p = 1.45e-06).
+In the multi-scheduler benchmark it outperforms Priority on mean-wait reduction.
+However, it is outperformed on mean wait by Shortest Job First, Neural Network (MLP),
+and its wait-time Gini coefficient is higher (less fair) than FIFO's.
+These comparisons cover only the schedulers implemented in this
+project's simulator; claims about external production schedulers
+(SLURM, Kubernetes, Yarn) would require dedicated implementations.

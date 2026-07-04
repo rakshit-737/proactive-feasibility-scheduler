@@ -2,31 +2,40 @@
 Phase 24: Extended Scheduler Comparison
 ========================================
 
-Compare proactive scheduling against published baselines:
-  - SLURM backfill heuristics (greedy bin-packing)
-  - Kubernetes QoS (priority + preemption)
-  - Yarn FIFO (baseline for Hadoop/Spark clusters)
-  - Neural Network scheduler (ML-based from Phase 14)
-  - Original Proactive (Phase 09)
+Compare the proactive scheduler against the baselines actually implemented
+and benchmarked in this project (04_scheduler/multi_scheduler_benchmark.py):
+  - FIFO (arrival-order baseline)
+  - SJF (shortest-job-first heuristic)
+  - Priority (priority-score heuristic)
+  - Neural Network scheduler (MLP-based, Phase 14)
+  - Proactive (XGBoost wait-model ordering, Phase 09)
+
+All numbers are read from REAL benchmark outputs:
+  - 05_results/schedulers/multi_scheduler_benchmark.csv (15-run multi-scheduler
+    benchmark, per-scheduler means)
+  - 05_results/benchmark_statistical_results.csv (40-run paired FIFO-vs-proactive
+    benchmark, per-run rows) for the statistical significance test.
+No metric in the outputs is hardcoded; if the input CSVs are missing the
+script exits with instructions to regenerate them.
 
 Generates:
   - baseline_comparison.csv: side-by-side metrics across schedulers
   - scheduler_heatmap.png: wait time, fairness, throughput comparison
-  - novelty_claim.txt: quantitative positioning vs. published work
+  - novelty_claim.txt: quantitative positioning derived from the computed numbers
 """
 
 import os
 import pickle
-from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, Optional, Tuple
 
 import matplotlib
+
+matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
-
-matplotlib.use("Agg")
+from scipy import stats
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
@@ -35,50 +44,52 @@ OUTPUT_CSV = os.path.join(SCRIPT_DIR, "baseline_comparison.csv")
 OUTPUT_HEATMAP = os.path.join(SCRIPT_DIR, "scheduler_heatmap.png")
 OUTPUT_CLAIM = os.path.join(SCRIPT_DIR, "novelty_claim.txt")
 
-# Scheduler names and characteristics
+# Scheduler names and characteristics (keys match the 'scheduler' column of
+# 05_results/schedulers/multi_scheduler_benchmark.csv)
 SCHEDULERS = {
-    "fifo": {
+    "FIFO": {
         "name": "FIFO",
         "type": "baseline",
-        "reference": "Standard (Kubernetes default)",
+        "reference": "04_scheduler/multi_scheduler_benchmark.py (arrival order)",
     },
-    "slurm_backfill": {
-        "name": "SLURM Backfill",
-        "type": "published_baseline",
-        "reference": "SLURM documentation (backfill algorithm)",
+    "SJF": {
+        "name": "Shortest Job First",
+        "type": "heuristic_baseline",
+        "reference": "04_scheduler/sjf_scheduler.py",
     },
-    "kubernetes_qos": {
-        "name": "Kubernetes QoS",
-        "type": "published_baseline",
-        "reference": "Kubernetes scheduling policy (priority + preemption)",
+    "PRIORITY": {
+        "name": "Priority",
+        "type": "heuristic_baseline",
+        "reference": "04_scheduler/priority_scheduler.py",
     },
-    "yarn_fifo": {
-        "name": "Yarn FIFO",
-        "type": "published_baseline",
-        "reference": "Apache Yarn FIFO scheduler (Hadoop/Spark default)",
-    },
-    "neural_net": {
-        "name": "Neural Network",
+    "NN": {
+        "name": "Neural Network (MLP)",
         "type": "ml_baseline",
-        "reference": "Phase 14 NN scheduler",
+        "reference": "04_scheduler/neural_network_scheduler.py (Phase 14)",
     },
-    "proactive": {
+    "PROACTIVE": {
         "name": "Proactive (XGBoost)",
         "type": "proposed",
         "reference": "Phase 09 proactive feasibility scheduler",
     },
 }
 
-# Metrics to compare
+# Metrics available in the real multi-scheduler benchmark summary
 METRICS = [
-    "mean_wait_time",
-    "max_wait_time",
-    "p99_wait_time",
-    "throughput_jobs_per_hour",
-    "gpu_utilization_pct",
-    "gini_coefficient",
-    "starvation_count_pct",
+    "mean_wait",
+    "max_wait",
+    "fairness_gini",
+    "throughput",
+    "gpu_util",
 ]
+
+# Wait-prediction error column: the benchmark renamed 'mae' to 'pred_wait_mae'
+# (it is only defined for the predictor-driven schedulers); accept either.
+PRED_MAE_CANDIDATES = ("pred_wait_mae", "mae")
+
+MULTI_SCHEDULER_CSV = os.path.join(
+    PROJECT_ROOT, "05_results", "schedulers", "multi_scheduler_benchmark.csv"
+)
 
 BENCHMARK_DATA_CANDIDATES = [
     os.path.join(PROJECT_ROOT, "05_results", "benchmarks", "40_run_benchmark.pkl"),
@@ -86,28 +97,9 @@ BENCHMARK_DATA_CANDIDATES = [
     os.path.join(PROJECT_ROOT, "05_results", "benchmark_statistical_results.csv"),
 ]
 
-SCHEDULER_RESULTS_CANDIDATES = [
-    os.path.join(PROJECT_ROOT, "05_results", "schedulers", "scheduler_results.pkl"),
-    os.path.join(PROJECT_ROOT, "05_results", "scheduler_comparison.pkl"),
-]
 
-
-@dataclass
-class SchedulerResult:
-    """Result tuple for a single scheduler run."""
-
-    scheduler: str
-    mean_wait: float
-    max_wait: float
-    p99_wait: float
-    throughput: float
-    gpu_util: float
-    gini: float
-    starvation: float
-
-
-def _load_benchmark_data() -> Tuple[pd.DataFrame, str]:
-    """Load Phase 09 40-run benchmark (reference data)."""
+def _load_paired_benchmark() -> Tuple[Optional[pd.DataFrame], str]:
+    """Load the Phase 09 40-run paired FIFO-vs-proactive benchmark (real data)."""
     for path in BENCHMARK_DATA_CANDIDATES:
         if not os.path.exists(path):
             continue
@@ -123,165 +115,88 @@ def _load_benchmark_data() -> Tuple[pd.DataFrame, str]:
                     df = pd.DataFrame(raw)
             else:
                 df = pd.read_csv(path)
-            return df, path
+            if {"baseline_wait", "proactive_wait"}.issubset(df.columns):
+                return df, path
         except Exception:
             continue
-
-    # Fallback: synthesize reference benchmark data (Phase 09 context)
-    fallback = pd.DataFrame(
-        {
-            "baseline_wait": [18.27] * 40,
-            "proactive_wait": [16.72] * 40,
-            "baseline_throughput": [245] * 40,
-            "proactive_throughput": [263] * 40,
-            "baseline_util": [72.5] * 40,
-            "proactive_util": [75.3] * 40,
-        }
-    )
-    return fallback, "synthetic_fallback"
+    return None, "missing"
 
 
-def _load_scheduler_results() -> Dict[str, List[SchedulerResult]]:
+def _compute_paired_stats(bench_df: pd.DataFrame) -> Dict[str, float]:
     """
-    Load per-scheduler metrics if available; otherwise synthesize based on
-    known patterns from literature and Phase 14 experiments.
+    Compute FIFO-vs-proactive statistics from the per-run paired benchmark:
+    mean waits, mean per-run improvement, paired t-test, 95% CI on the wait
+    difference. Everything is computed from the loaded data.
     """
-    for path in SCHEDULER_RESULTS_CANDIDATES:
-        if not os.path.exists(path):
-            continue
-        try:
-            with open(path, "rb") as f:
-                raw = pickle.load(f)
-            if isinstance(raw, dict):
-                return raw
-        except Exception:
-            continue
+    baseline = bench_df["baseline_wait"].to_numpy(dtype=float)
+    proactive = bench_df["proactive_wait"].to_numpy(dtype=float)
+    diff = baseline - proactive
+    n = len(diff)
 
-    # Synthesize realistic scheduler behavior based on literature
-    synthetic = {}
+    t_stat, p_value = stats.ttest_rel(baseline, proactive)
+    se = diff.std(ddof=1) / np.sqrt(n)
+    t_crit = stats.t.ppf(0.975, n - 1)
 
-    # FIFO: baseline queue ordering (reference)
-    synthetic["fifo"] = [
-        SchedulerResult(
-            scheduler="fifo",
-            mean_wait=18.27,
-            max_wait=127.3,
-            p99_wait=95.2,
-            throughput=245.0,
-            gpu_util=72.5,
-            gini=0.42,
-            starvation=8.3,
-        )
-        for _ in range(40)
-    ]
+    if "improvement_pct" in bench_df.columns:
+        mean_improvement_pct = float(bench_df["improvement_pct"].mean())
+    else:
+        mean_improvement_pct = float(np.mean(diff / baseline * 100.0))
 
-    # SLURM Backfill: improves on FIFO by scheduling smaller jobs while waiting for large
-    # Expected: ~5-7% improvement over FIFO
-    synthetic["slurm_backfill"] = [
-        SchedulerResult(
-            scheduler="slurm_backfill",
-            mean_wait=17.15,
-            max_wait=121.5,
-            p99_wait=89.8,
-            throughput=252.0,
-            gpu_util=74.1,
-            gini=0.39,
-            starvation=7.2,
-        )
-        for _ in range(40)
-    ]
-
-    # Kubernetes QoS: priority + preemption; helps some but may cause starvation
-    # Expected: ~4-6% improvement, but fairness may suffer
-    synthetic["kubernetes_qos"] = [
-        SchedulerResult(
-            scheduler="kubernetes_qos",
-            mean_wait=17.65,
-            max_wait=124.2,
-            p99_wait=92.1,
-            throughput=249.0,
-            gpu_util=73.8,
-            gini=0.48,  # Worse Gini due to preemption
-            starvation=12.1,  # Higher starvation
-        )
-        for _ in range(40)
-    ]
-
-    # Yarn FIFO: similar to plain FIFO, minimal improvement
-    # Expected: essentially FIFO performance
-    synthetic["yarn_fifo"] = [
-        SchedulerResult(
-            scheduler="yarn_fifo",
-            mean_wait=18.35,
-            max_wait=128.1,
-            p99_wait=96.5,
-            throughput=244.0,
-            gpu_util=72.3,
-            gini=0.41,
-            starvation=8.5,
-        )
-        for _ in range(40)
-    ]
-
-    # Neural Network (Phase 14): ML-based but simpler than proactive
-    # Expected: ~5-6% improvement
-    synthetic["neural_net"] = [
-        SchedulerResult(
-            scheduler="neural_net",
-            mean_wait=17.28,
-            max_wait=119.7,
-            p99_wait=87.5,
-            throughput=255.0,
-            gpu_util=75.2,
-            gini=0.38,
-            starvation=6.8,
-        )
-        for _ in range(40)
-    ]
-
-    # Proactive (XGBoost): our method, expected 7.5% improvement
-    synthetic["proactive"] = [
-        SchedulerResult(
-            scheduler="proactive",
-            mean_wait=16.72,
-            max_wait=116.4,
-            p99_wait=84.2,
-            throughput=263.0,
-            gpu_util=75.8,
-            gini=0.37,
-            starvation=5.9,
-        )
-        for _ in range(40)
-    ]
-
-    return synthetic
+    return {
+        "n_runs": n,
+        "baseline_wait_mean": float(baseline.mean()),
+        "proactive_wait_mean": float(proactive.mean()),
+        "mean_wait_diff": float(diff.mean()),
+        "wait_diff_ci95_low": float(diff.mean() - t_crit * se),
+        "wait_diff_ci95_high": float(diff.mean() + t_crit * se),
+        "mean_improvement_pct": mean_improvement_pct,
+        "t_stat": float(t_stat),
+        "p_value": float(p_value),
+    }
 
 
-def _compute_improvements_vs_fifo(
-    synthetic: Dict[str, List[SchedulerResult]],
-) -> Dict[str, Dict[str, float]]:
+def _load_scheduler_results() -> pd.DataFrame:
     """
-    Compute mean improvements for each scheduler vs. FIFO baseline.
+    Load the real per-scheduler benchmark summary. There is no synthetic
+    fallback: if the CSV is missing, exit with instructions to regenerate it.
     """
-    fifo_results = synthetic["fifo"]
-    fifo_wait_mean = np.mean([r.mean_wait for r in fifo_results])
-    fifo_throughput_mean = np.mean([r.throughput for r in fifo_results])
-    fifo_util_mean = np.mean([r.gpu_util for r in fifo_results])
-    fifo_gini_mean = np.mean([r.gini for r in fifo_results])
+    if not os.path.exists(MULTI_SCHEDULER_CSV):
+        raise SystemExit(
+            "[Phase 24] ERROR: real benchmark results not found at\n"
+            f"  {MULTI_SCHEDULER_CSV}\n"
+            "Run `python 04_scheduler/multi_scheduler_benchmark.py` first to "
+            "generate them (hardcoded/fabricated results are not used)."
+        )
+
+    df = pd.read_csv(MULTI_SCHEDULER_CSV)
+    missing_cols = [c for c in ["scheduler"] + METRICS if c not in df.columns]
+    if missing_cols:
+        raise SystemExit(
+            f"[Phase 24] ERROR: {MULTI_SCHEDULER_CSV} is missing columns: {missing_cols}"
+        )
+    for required in ("FIFO", "PROACTIVE"):
+        if required not in set(df["scheduler"]):
+            raise SystemExit(
+                f"[Phase 24] ERROR: scheduler '{required}' not present in {MULTI_SCHEDULER_CSV}"
+            )
+    return df
+
+
+def _compute_improvements_vs_fifo(summary_df: pd.DataFrame) -> Dict[str, Dict[str, float]]:
+    """
+    Compute mean improvements for each scheduler vs. FIFO baseline
+    from the real benchmark summary.
+    """
+    fifo = summary_df[summary_df["scheduler"] == "FIFO"].iloc[0]
 
     improvements = {}
-    for sched_name, results in synthetic.items():
-        sched_wait = np.mean([r.mean_wait for r in results])
-        sched_throughput = np.mean([r.throughput for r in results])
-        sched_util = np.mean([r.gpu_util for r in results])
-        sched_gini = np.mean([r.gini for r in results])
+    for _, row in summary_df.iterrows():
+        wait_improvement_pct = (fifo["mean_wait"] - row["mean_wait"]) / fifo["mean_wait"] * 100.0
+        throughput_improvement_pct = (row["throughput"] - fifo["throughput"]) / fifo["throughput"] * 100.0
+        util_improvement_pct = (row["gpu_util"] - fifo["gpu_util"]) / fifo["gpu_util"] * 100.0
+        gini_improvement_pct = (fifo["fairness_gini"] - row["fairness_gini"]) / fifo["fairness_gini"] * 100.0
 
-        wait_improvement_pct = (fifo_wait_mean - sched_wait) / fifo_wait_mean * 100.0
-        throughput_improvement_pct = (sched_throughput - fifo_throughput_mean) / fifo_throughput_mean * 100.0
-        util_improvement_pct = (sched_util - fifo_util_mean) / fifo_util_mean * 100.0
-        gini_improvement_pct = (fifo_gini_mean - sched_gini) / fifo_gini_mean * 100.0
-
-        improvements[sched_name] = {
+        improvements[row["scheduler"]] = {
             "wait_improvement_pct": float(wait_improvement_pct),
             "throughput_improvement_pct": float(throughput_improvement_pct),
             "util_improvement_pct": float(util_improvement_pct),
@@ -291,40 +206,35 @@ def _compute_improvements_vs_fifo(
     return improvements
 
 
-def build_comparison_dataframe(
-    synthetic: Dict[str, List[SchedulerResult]],
-) -> pd.DataFrame:
+def build_comparison_dataframe(summary_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Build comprehensive comparison CSV with mean/CI for each scheduler.
+    Build the comparison CSV from the real per-scheduler benchmark summary.
     """
     rows = []
 
-    for sched_name, results in synthetic.items():
-        sched_info = SCHEDULERS[sched_name]
-        waits = [r.mean_wait for r in results]
-        maxwaits = [r.max_wait for r in results]
-        p99waits = [r.p99_wait for r in results]
-        throughs = [r.throughput for r in results]
-        utils = [r.gpu_util for r in results]
-        ginis = [r.gini for r in results]
-        starvations = [r.starvation for r in results]
+    pred_mae_col = next(
+        (c for c in PRED_MAE_CANDIDATES if c in summary_df.columns), None
+    )
 
+    for _, r in summary_df.iterrows():
+        sched_key = r["scheduler"]
+        sched_info = SCHEDULERS.get(
+            sched_key, {"name": sched_key, "type": "unknown", "reference": "n/a"}
+        )
+        # pred_wait_mae is only defined for predictor-driven schedulers
+        # (PROACTIVE, NN); others carry NaN.
+        pred_mae = float(r[pred_mae_col]) if pred_mae_col is not None else float("nan")
         row = {
-            "scheduler": sched_name,
+            "scheduler": sched_key,
             "scheduler_name": sched_info["name"],
             "scheduler_type": sched_info["type"],
             "reference": sched_info["reference"],
-            "mean_wait_mean": np.mean(waits),
-            "mean_wait_std": np.std(waits),
-            "max_wait_mean": np.mean(maxwaits),
-            "p99_wait_mean": np.mean(p99waits),
-            "throughput_mean": np.mean(throughs),
-            "throughput_std": np.std(throughs),
-            "gpu_util_mean": np.mean(utils),
-            "gpu_util_std": np.std(utils),
-            "gini_mean": np.mean(ginis),
-            "starvation_pct_mean": np.mean(starvations),
-            "n_runs": len(results),
+            "mean_wait": float(r["mean_wait"]),
+            "max_wait": float(r["max_wait"]),
+            "fairness_gini": float(r["fairness_gini"]),
+            "throughput_jobs_per_ts": float(r["throughput"]),
+            "gpu_util": float(r["gpu_util"]),
+            "predictor_mae": pred_mae,
         }
         rows.append(row)
 
@@ -335,18 +245,18 @@ def plot_comparison_heatmap(comparison_df: pd.DataFrame) -> None:
     """
     Create side-by-side heatmap comparing schedulers across normalized metrics.
     """
-    # Normalize each metric to [0, 1] scale (lower=better for wait/starvation, higher=better for throughput/util)
+    # Normalize each metric to [0, 1] scale (lower=better for wait/gini, higher=better for throughput/util)
     metrics_to_plot = [
-        "mean_wait_mean",
-        "throughput_mean",
-        "gpu_util_mean",
-        "gini_mean",
+        "mean_wait",
+        "throughput_jobs_per_ts",
+        "gpu_util",
+        "fairness_gini",
     ]
     normalize_invert = {
-        "mean_wait_mean": True,  # Lower is better
-        "throughput_mean": False,  # Higher is better
-        "gpu_util_mean": False,  # Higher is better
-        "gini_mean": True,  # Lower is better (more fair)
+        "mean_wait": True,  # Lower is better
+        "throughput_jobs_per_ts": False,  # Higher is better
+        "gpu_util": False,  # Higher is better
+        "fairness_gini": True,  # Lower is better (more fair)
     }
 
     data_for_heat = comparison_df[["scheduler_name"] + metrics_to_plot].set_index("scheduler_name")
@@ -355,6 +265,11 @@ def plot_comparison_heatmap(comparison_df: pd.DataFrame) -> None:
     for col in metrics_to_plot:
         col_min = data_for_heat[col].min()
         col_max = data_for_heat[col].max()
+        if col_max == col_min:
+            # Metric identical across schedulers (e.g., all jobs complete):
+            # neutral score instead of a 0/0 division
+            data_for_heat[col] = 0.5
+            continue
         data_for_heat[col] = (data_for_heat[col] - col_min) / (col_max - col_min)
 
         # Invert if needed
@@ -392,90 +307,150 @@ def plot_comparison_heatmap(comparison_df: pd.DataFrame) -> None:
     plt.close(fig)
 
 
-def write_novelty_claim(comparison_df: pd.DataFrame, improvements: Dict[str, Dict[str, float]]) -> None:
+def write_novelty_claim(
+    comparison_df: pd.DataFrame,
+    improvements: Dict[str, Dict[str, float]],
+    paired_stats: Optional[Dict[str, float]],
+) -> None:
     """
-    Write structured novelty claim comparing proactive to published baselines.
+    Write a positioning statement in which EVERY quantitative claim is derived
+    from the numbers computed above (real benchmark CSVs), including honest
+    negative findings where the proactive scheduler does not win.
     """
-    proactive_row = comparison_df[comparison_df["scheduler"] == "proactive"].iloc[0]
-    fifo_row = comparison_df[comparison_df["scheduler"] == "fifo"].iloc[0]
+    proactive_row = comparison_df[comparison_df["scheduler"] == "PROACTIVE"].iloc[0]
+    fifo_row = comparison_df[comparison_df["scheduler"] == "FIFO"].iloc[0]
 
-    with open(OUTPUT_CLAIM, "w") as f:
+    with open(OUTPUT_CLAIM, "w", encoding="utf-8") as f:
         f.write("=" * 70 + "\n")
-        f.write("PHASE 24: EXTENDED SCHEDULER COMPARISON – NOVELTY CLAIM\n")
+        f.write("PHASE 24: EXTENDED SCHEDULER COMPARISON – POSITIONING STATEMENT\n")
         f.write("=" * 70 + "\n\n")
 
         f.write("OBJECTIVE\n")
         f.write("-" * 70 + "\n")
         f.write(
-            "Establish that the proactive feasibility scheduler outperforms\n"
-            "published scheduling baselines rigorously, across multiple metrics,\n"
-            "and positions our work in the HPC/cluster scheduling landscape.\n\n"
+            "Position the proactive feasibility scheduler against the baselines\n"
+            "implemented and benchmarked in this project. All figures below are\n"
+            "computed from the real benchmark outputs (05_results/); no numbers\n"
+            "are hardcoded. External systems (e.g., SLURM backfill, Kubernetes\n"
+            "QoS) are NOT simulated here, so no claims are made about them.\n\n"
         )
+
+        f.write("DATA SOURCES\n")
+        f.write("-" * 70 + "\n")
+        f.write(f"  • {MULTI_SCHEDULER_CSV}\n")
+        f.write("    (15-run multi-scheduler benchmark, per-scheduler means)\n")
+        if paired_stats is not None:
+            f.write("  • 05_results/benchmark_statistical_results.csv\n")
+            f.write(f"    ({paired_stats['n_runs']}-run paired FIFO-vs-proactive benchmark)\n")
+        f.write("\n")
 
         f.write("SCHEDULERS COMPARED\n")
         f.write("-" * 70 + "\n")
-        for sched_key, sched_info in SCHEDULERS.items():
-            row = comparison_df[comparison_df["scheduler"] == sched_key].iloc[0]
-            f.write(f"  • {sched_info['name']:<30} ({sched_info['type']})\n")
-            f.write(f"    Reference: {sched_info['reference']}\n")
-            f.write(f"    Mean wait: {row['mean_wait_mean']:.2f}s (±{row['mean_wait_std']:.2f})\n\n")
+        for _, row in comparison_df.iterrows():
+            f.write(f"  • {row['scheduler_name']:<30} ({row['scheduler_type']})\n")
+            f.write(f"    Reference: {row['reference']}\n")
+            f.write(f"    Mean wait: {row['mean_wait']:.2f} ts | Max wait: {row['max_wait']:.1f} ts | Gini: {row['fairness_gini']:.3f}\n\n")
 
         f.write("KEY FINDINGS\n")
         f.write("-" * 70 + "\n")
 
-        proactive_wait_imp = improvements["proactive"]["wait_improvement_pct"]
-        f.write(f"\n1. WAIT TIME REDUCTION vs. FIFO (Baseline)\n")
-        f.write(f"   Proactive: {proactive_row['mean_wait_mean']:.2f}s (baseline: {fifo_row['mean_wait_mean']:.2f}s)\n")
-        f.write(f"   Improvement: {proactive_wait_imp:.2f}% | Statistically significant (p < 0.05)\n\n")
+        proactive_wait_imp = improvements["PROACTIVE"]["wait_improvement_pct"]
+        f.write("\n1. MEAN WAIT vs. FIFO (multi-scheduler benchmark)\n")
+        f.write(f"   Proactive: {proactive_row['mean_wait']:.2f} ts (FIFO: {fifo_row['mean_wait']:.2f} ts)\n")
+        f.write(f"   Change: {proactive_wait_imp:+.2f}% "
+                f"({'reduction' if proactive_wait_imp > 0 else 'increase'} in mean wait)\n")
 
-        f.write("2. RANKING BY WAIT IMPROVEMENT vs. FIFO\n")
+        if paired_stats is not None:
+            significant = paired_stats["p_value"] < 0.05
+            f.write(f"\n   Paired {paired_stats['n_runs']}-run FIFO-vs-proactive benchmark:\n")
+            f.write(f"   Mean wait {paired_stats['baseline_wait_mean']:.2f} -> "
+                    f"{paired_stats['proactive_wait_mean']:.2f} ts "
+                    f"(mean per-run improvement {paired_stats['mean_improvement_pct']:.2f}%)\n")
+            f.write(f"   Wait difference 95% CI: [{paired_stats['wait_diff_ci95_low']:.2f}, "
+                    f"{paired_stats['wait_diff_ci95_high']:.2f}] ts\n")
+            f.write(f"   Paired t-test: t = {paired_stats['t_stat']:.2f}, p = {paired_stats['p_value']:.2e} "
+                    f"({'statistically significant at p < 0.05' if significant else 'NOT statistically significant at p < 0.05'})\n\n")
+        else:
+            f.write("\n   (Paired 40-run benchmark data not found; no significance test performed.)\n\n")
+
+        f.write("2. RANKING BY MEAN-WAIT IMPROVEMENT vs. FIFO\n")
         sorted_by_wait = sorted(improvements.items(), key=lambda x: x[1]["wait_improvement_pct"], reverse=True)
         for rank, (sched_name, impr) in enumerate(sorted_by_wait, 1):
-            sched_label = SCHEDULERS[sched_name]["name"]
-            f.write(f"   {rank}. {sched_label:<25} +{impr['wait_improvement_pct']:6.2f}%\n")
+            sched_label = SCHEDULERS.get(sched_name, {"name": sched_name})["name"]
+            f.write(f"   {rank}. {sched_label:<25} {impr['wait_improvement_pct']:+6.2f}%\n")
 
-        f.write("\n3. FAIRNESS ASSESSMENT (Gini Coefficient, lower is fairer)\n")
-        proactive_gini = proactive_row["gini_mean"]
-        fifo_gini = fifo_row["gini_mean"]
-        f.write(f"   Proactive: {proactive_gini:.3f} (baseline: {fifo_gini:.3f})\n")
-        f.write(f"   Improvement: {improvements['proactive']['fairness_improvement_pct']:.2f}% fairer\n\n")
+        f.write("\n3. FAIRNESS (Gini coefficient of wait times, lower is fairer)\n")
+        proactive_gini = proactive_row["fairness_gini"]
+        fifo_gini = fifo_row["fairness_gini"]
+        fairness_imp = improvements["PROACTIVE"]["fairness_improvement_pct"]
+        f.write(f"   Proactive: {proactive_gini:.3f} (FIFO: {fifo_gini:.3f})\n")
+        if fairness_imp >= 0:
+            f.write(f"   Proactive is {fairness_imp:.2f}% fairer than FIFO on this metric.\n\n")
+        else:
+            f.write(f"   Proactive is {-fairness_imp:.2f}% LESS fair than FIFO on this metric\n")
+            f.write("   (a wait-time/fairness trade-off of reordering the queue).\n\n")
 
         f.write("4. THROUGHPUT & GPU UTILIZATION\n")
-        f.write(f"   Proactive throughput: {proactive_row['throughput_mean']:.1f} jobs/hr\n")
-        f.write(f"   Baseline throughput:  {fifo_row['throughput_mean']:.1f} jobs/hr\n")
-        f.write(f"   Improvement: {improvements['proactive']['throughput_improvement_pct']:.2f}%\n")
-        f.write(f"   GPU utilization: {proactive_row['gpu_util_mean']:.1f}% (baseline: {fifo_row['gpu_util_mean']:.1f}%)\n\n")
+        f.write(f"   Proactive throughput: {proactive_row['throughput_jobs_per_ts']:.3f} jobs/ts "
+                f"(FIFO: {fifo_row['throughput_jobs_per_ts']:.3f} jobs/ts, "
+                f"{improvements['PROACTIVE']['throughput_improvement_pct']:+.2f}%)\n")
+        f.write(f"   Proactive GPU utilization: {proactive_row['gpu_util'] * 100:.1f}% "
+                f"(FIFO: {fifo_row['gpu_util'] * 100:.1f}%, "
+                f"{improvements['PROACTIVE']['util_improvement_pct']:+.2f}%)\n\n")
 
-        f.write("NOVELTY POSITIONING\n")
+        f.write("POSITIONING vs. IMPLEMENTED BASELINES\n")
         f.write("-" * 70 + "\n")
-        f.write(
-            "\n✓ Proactive outperforms SLURM backfill (published baseline for HPC)\n"
-            "  - Wait reduction: +{:.2f}% vs. SLURM's +{:.2f}%\n".format(
-                proactive_wait_imp, improvements["slurm_backfill"]["wait_improvement_pct"]
-            )
-        )
-        f.write(
-            "\n✓ Proactive outperforms Kubernetes QoS (cloud baseline)\n"
-            "  - Superior fairness (Gini: {:.3f} vs. {:.3f})\n"
-            "  - Lower starvation risk\n".format(
-                proactive_row["gini_mean"], comparison_df[comparison_df["scheduler"] == "kubernetes_qos"].iloc[0]["gini_mean"]
-            )
-        )
-        f.write(
-            "\n✓ Proactive matches or exceeds Neural Network baseline\n"
-            "  - Simpler model (XGBoost vs. NN)\n"
-            "  - Faster inference\n"
-            "  - Better interpretability via SHAP\n"
-        )
+        beats_wait = []
+        loses_wait = []
+        for sched_name, impr in improvements.items():
+            if sched_name in ("PROACTIVE", "FIFO"):
+                continue  # FIFO-vs-proactive already covered in finding 1
+            sched_label = SCHEDULERS.get(sched_name, {"name": sched_name})["name"]
+            their_imp = impr["wait_improvement_pct"]
+            if proactive_wait_imp > their_imp:
+                beats_wait.append(sched_label)
+                f.write(f"\n✓ Proactive achieves a larger mean-wait reduction vs. FIFO than {sched_label}\n")
+            else:
+                loses_wait.append(sched_label)
+                f.write(f"\n✗ Proactive does NOT beat {sched_label} on mean-wait reduction vs. FIFO\n")
+            f.write(f"  - Proactive {proactive_wait_imp:+.2f}% vs. {sched_label} {their_imp:+.2f}%\n")
+
+        nn_rows = comparison_df[comparison_df["scheduler"] == "NN"]
+        if len(nn_rows):
+            nn_row = nn_rows.iloc[0]
+            f.write("\nModel-quality note vs. the NN baseline (same feature space):\n")
+            f.write(f"  - Wait-prediction MAE: Proactive {proactive_row['predictor_mae']:.2f} "
+                    f"vs. NN {nn_row['predictor_mae']:.2f} "
+                    f"({'lower' if proactive_row['predictor_mae'] < nn_row['predictor_mae'] else 'higher'} is the proactive model)\n")
+            f.write("  - XGBoost additionally offers faster inference and SHAP interpretability.\n")
 
         f.write("\n" + "=" * 70 + "\n")
         f.write("CONCLUSION\n")
         f.write("=" * 70 + "\n")
+        if paired_stats is not None and paired_stats["p_value"] < 0.05 and paired_stats["mean_improvement_pct"] > 0:
+            f.write(
+                f"In the paired {paired_stats['n_runs']}-run benchmark, the proactive scheduler reduces\n"
+                f"mean wait vs. FIFO by {paired_stats['mean_improvement_pct']:.2f}% on average "
+                f"(p = {paired_stats['p_value']:.2e}).\n"
+            )
+        if beats_wait:
+            f.write(
+                "In the multi-scheduler benchmark it outperforms "
+                + ", ".join(beats_wait)
+                + " on mean-wait reduction.\n"
+            )
+        if loses_wait:
+            f.write(
+                "However, it is outperformed on mean wait by "
+                + ", ".join(loses_wait)
+                + ",\nand its wait-time Gini coefficient is "
+                + ("higher (less fair) than FIFO's" if fairness_imp < 0 else "lower (fairer) than FIFO's")
+                + ".\n"
+            )
         f.write(
-            "The proactive feasibility scheduler demonstrates superior performance\n"
-            "across wait time, fairness, throughput, and utilization metrics\n"
-            "compared to published baselines. This justifies its novelty and\n"
-            "practical value for HPC and cloud cluster operations.\n"
+            "These comparisons cover only the schedulers implemented in this\n"
+            "project's simulator; claims about external production schedulers\n"
+            "(SLURM, Kubernetes, Yarn) would require dedicated implementations.\n"
         )
 
 
@@ -483,19 +458,20 @@ def main():
     """Execute Phase 24 analysis."""
     os.makedirs(SCRIPT_DIR, exist_ok=True)
 
-    print("[Phase 24] Loading reference data...")
-    benchmark_df, benchmark_source = _load_benchmark_data()
+    print("[Phase 24] Loading paired FIFO-vs-proactive benchmark...")
+    bench_df, benchmark_source = _load_paired_benchmark()
     print(f"  Benchmark source: {benchmark_source}")
+    paired_stats = _compute_paired_stats(bench_df) if bench_df is not None else None
 
-    print("[Phase 24] Loading scheduler results...")
-    synthetic = _load_scheduler_results()
-    print(f"  Schedulers: {list(synthetic.keys())}")
+    print("[Phase 24] Loading multi-scheduler benchmark results...")
+    summary_df = _load_scheduler_results()
+    print(f"  Schedulers: {list(summary_df['scheduler'])}")
 
     print("[Phase 24] Computing improvements vs. FIFO...")
-    improvements = _compute_improvements_vs_fifo(synthetic)
+    improvements = _compute_improvements_vs_fifo(summary_df)
 
     print("[Phase 24] Building comparison dataframe...")
-    comparison_df = build_comparison_dataframe(synthetic)
+    comparison_df = build_comparison_dataframe(summary_df)
     comparison_df.to_csv(OUTPUT_CSV, index=False)
     print(f"  Saved: {OUTPUT_CSV}")
 
@@ -503,14 +479,14 @@ def main():
     plot_comparison_heatmap(comparison_df)
     print(f"  Saved: {OUTPUT_HEATMAP}")
 
-    print("[Phase 24] Writing novelty claim...")
-    write_novelty_claim(comparison_df, improvements)
+    print("[Phase 24] Writing positioning statement...")
+    write_novelty_claim(comparison_df, improvements, paired_stats)
     print(f"  Saved: {OUTPUT_CLAIM}")
 
     print("\n" + "=" * 70)
     print("PHASE 24 SUMMARY")
     print("=" * 70)
-    print(comparison_df[["scheduler_name", "mean_wait_mean", "throughput_mean", "gini_mean"]])
+    print(comparison_df[["scheduler_name", "mean_wait", "throughput_jobs_per_ts", "fairness_gini"]])
     print(f"\nAll outputs saved to: {SCRIPT_DIR}")
 
 

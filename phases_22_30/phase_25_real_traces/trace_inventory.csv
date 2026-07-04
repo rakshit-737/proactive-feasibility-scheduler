@@ -1,0 +1,2 @@
+trace_name,source_type,n_samples,wait_time_mean,wait_time_std,gpu_request_mean,gpu_request_std
+synthetic_proxy_trace,synthetic_proxy,2000,20.5455,20.44441040256124,4.505,2.3057825822610267

@@ -1,0 +1,12 @@
+Phase 27: schedulers EXCLUDED from fairness/SLA analysis
+========================================================
+No real benchmark data exists in this repository for the
+following schedulers; rather than inventing numbers they are
+omitted from fairness_metrics.csv and sla_compliance.csv:
+
+  - slurm_backfill (SLURM Backfill)
+  - kubernetes_qos (Kubernetes QoS)
+  - yarn_fifo (Yarn FIFO)
+
+To include them, implement the schedulers in the simulation
+pipeline (see 04_scheduler/) and regenerate the benchmark CSVs.

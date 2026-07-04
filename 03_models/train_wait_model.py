@@ -4,8 +4,17 @@ from xgboost import XGBRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, r2_score
 import pickle
+import os
+import sys
 
-df = pd.read_csv("wait_dataset.csv")
+# Windows consoles may default to cp1252, which cannot render the bar chars below
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
+
+df = pd.read_csv(os.path.join(PROJECT_ROOT, "02_data", "wait_dataset.csv"))
 print(f"Dataset: {df.shape[0]} rows, {df.shape[1]-1} features")
 print(f"Features: {[c for c in df.columns if c != 'wait_time']}\n")
 
@@ -24,7 +33,7 @@ y_pred = model.predict(X_test)
 print(f"MAE:      {mean_absolute_error(y_test, y_pred):.2f} timesteps")
 print(f"R² Score: {r2_score(y_test, y_pred):.4f}")
 
-with open("wait_model.pkl", "wb") as f:
+with open(os.path.join(MODEL_DIR, "wait_model.pkl"), "wb") as f:
     pickle.dump(model, f)
 print("\nModel saved as wait_model.pkl")
 

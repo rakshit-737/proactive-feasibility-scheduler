@@ -1,0 +1,7 @@
+scheduler,scheduler_name,sla1_95pct_2x_geomean_runs,sla2_no_starvation_share,sla3_max_wait_le_150,n_measurable_slas,compliance_score
+fifo,FIFO,1.0,0.7977272727272727,1.0,3,0.9325757575757576
+proactive,Proactive (XGBoost),1.0,0.8345454545454546,1.0,3,0.9448484848484848
+proactive_starvation,Proactive + Anti-Starvation,,0.7254545454545455,1.0,2,0.8627272727272728
+sjf,SJF,,,1.0,1,1.0
+nn,Neural Network,,,1.0,1,1.0
+priority,Priority,,,1.0,1,1.0

@@ -1,10 +1,15 @@
+# ARCHIVED (v1 pipeline): kept for provenance; superseded by 03_models/train_model_withxg.py
+# and the v2 regression pipeline (03_models/train_improved_model.py).
+import os
+
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
 
 # Load dataset
-df = pd.read_csv("dataset.csv")
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+df = pd.read_csv(os.path.join(PROJECT_ROOT, "02_data", "dataset.csv"))
 
 X = df.drop("label", axis=1)
 y = df["label"]

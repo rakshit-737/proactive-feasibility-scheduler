@@ -1,0 +1,1756 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proactive Feasibility Scheduler — Complete Project Documentation</title>
+<style>
+/* ============ Design tokens (dataviz reference palette) ============ */
+:root {
+  --surface-1: #fcfcfb;        /* chart surface / cards */
+  --page: #f9f9f7;             /* page plane */
+  --ink-1: #0b0b0b;            /* primary ink */
+  --ink-2: #52514e;            /* secondary ink */
+  --ink-3: #898781;            /* muted (axis/labels) */
+  --grid: #e1e0d9;             /* hairline gridline */
+  --axis: #c3c2b7;             /* baseline / axis */
+  --border: rgba(11,11,11,0.10);
+  --series-1: #2a78d6;  --series-2: #1baf7a;  --series-3: #eda100;
+  --series-4: #008300;  --series-5: #4a3aa7;  --series-6: #e34948;
+  --series-7: #e87ba4;  --series-8: #eb6834;
+  --deemph: #c3c2b7;           /* de-emphasis gray for context series */
+  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  --good-text: #006300;
+  --pos: #2a78d6; --neg: #e34948; --neutral-mid: #f0efec;
+  --code-bg: #f1f0ec;
+  --shadow: 0 1px 3px rgba(11,11,11,0.06), 0 4px 14px rgba(11,11,11,0.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-1: #1a1a19; --page: #0d0d0d;
+    --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-3: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5; --series-2: #199e70; --series-3: #c98500;
+    --series-4: #008300; --series-5: #9085e9; --series-6: #e66767;
+    --series-7: #d55181; --series-8: #d95926;
+    --deemph: #52514e;
+    --good-text: #0ca30c;
+    --pos: #3987e5; --neg: #e66767; --neutral-mid: #383835;
+    --code-bg: #232322;
+    --shadow: none;
+  }
+}
+:root[data-theme="light"] {
+  --surface-1: #fcfcfb; --page: #f9f9f7;
+  --ink-1: #0b0b0b; --ink-2: #52514e; --ink-3: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+  --series-1: #2a78d6; --series-2: #1baf7a; --series-3: #eda100;
+  --series-4: #008300; --series-5: #4a3aa7; --series-6: #e34948;
+  --series-7: #e87ba4; --series-8: #eb6834;
+  --deemph: #c3c2b7; --good-text: #006300;
+  --pos: #2a78d6; --neg: #e34948; --neutral-mid: #f0efec;
+  --code-bg: #f1f0ec;
+  --shadow: 0 1px 3px rgba(11,11,11,0.06), 0 4px 14px rgba(11,11,11,0.04);
+}
+:root[data-theme="dark"] {
+  --surface-1: #1a1a19; --page: #0d0d0d;
+  --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-3: #898781;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+  --series-1: #3987e5; --series-2: #199e70; --series-3: #c98500;
+  --series-4: #008300; --series-5: #9085e9; --series-6: #e66767;
+  --series-7: #d55181; --series-8: #d95926;
+  --deemph: #52514e; --good-text: #0ca30c;
+  --pos: #3987e5; --neg: #e66767; --neutral-mid: #383835;
+  --code-bg: #232322;
+  --shadow: none;
+}
+
+/* ============ Base ============ */
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--page); color: var(--ink-1); overflow-x: clip;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--series-1); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, pre {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 0.875em; background: var(--code-bg); border-radius: 5px;
+}
+code { padding: 0.12em 0.38em; }
+pre { padding: 14px 16px; overflow-x: auto; line-height: 1.55; }
+pre code { background: none; padding: 0; }
+h1, h2, h3, h4 { line-height: 1.25; font-weight: 650; }
+h2 { font-size: 1.7rem; margin: 0 0 6px; letter-spacing: -0.01em; }
+h3 { font-size: 1.18rem; margin: 34px 0 10px; }
+h4 { font-size: 1.0rem; margin: 24px 0 8px; }
+p  { margin: 10px 0; color: var(--ink-2); }
+strong { color: var(--ink-1); }
+section > p, .card p { max-width: 78ch; }
+ul, ol { color: var(--ink-2); }
+li { margin: 4px 0; }
+hr { border: 0; border-top: 1px solid var(--grid); margin: 28px 0; }
+
+/* ============ Layout ============ */
+.topbar {
+  position: sticky; top: 0; z-index: 50;
+  display: flex; align-items: center; gap: 14px;
+  padding: 10px 22px; background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+}
+.topbar .brand { font-weight: 700; font-size: 0.98rem; }
+.topbar .brand small { color: var(--ink-3); font-weight: 400; margin-left: 8px; }
+.topbar .spacer { flex: 1; }
+#themeBtn {
+  border: 1px solid var(--border); background: var(--page); color: var(--ink-2);
+  padding: 5px 12px; border-radius: 7px; cursor: pointer; font: inherit; font-size: 0.82rem;
+}
+.layout { display: grid; grid-template-columns: 250px minmax(0,1fr); max-width: 1440px; margin: 0 auto; }
+nav.sidebar {
+  position: sticky; top: 49px; align-self: start;
+  height: calc(100vh - 49px); overflow-y: auto;
+  padding: 22px 8px 40px 18px; font-size: 0.86rem;
+}
+nav.sidebar .group { color: var(--ink-3); text-transform: uppercase; font-size: 0.68rem; letter-spacing: 0.08em; margin: 18px 0 4px; font-weight: 600; }
+nav.sidebar a { display: block; color: var(--ink-2); padding: 4px 10px; border-radius: 6px; border-left: 2px solid transparent; }
+nav.sidebar a:hover { background: var(--surface-1); text-decoration: none; }
+nav.sidebar a.active { color: var(--series-1); border-left-color: var(--series-1); background: var(--surface-1); }
+main { padding: 30px 40px 90px; min-width: 0; }
+section { margin: 0 0 58px; scroll-margin-top: 70px; }
+.kicker { color: var(--series-1); font-size: 0.74rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px; }
+.lede { font-size: 1.06rem; }
+
+.card {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 12px; padding: 20px 24px; box-shadow: var(--shadow);
+}
+.cards { display: grid; gap: 14px; }
+.cards.c2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.cards.c3 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+
+/* ============ Hero ============ */
+#hero { padding-top: 18px; }
+#hero h1 { font-size: 2.35rem; margin: 6px 0 10px; letter-spacing: -0.02em; }
+#hero .sub { font-size: 1.12rem; color: var(--ink-2); max-width: 72ch; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 12px; margin-top: 26px; }
+.kpi {
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 16px 12px; box-shadow: var(--shadow);
+}
+.kpi .label { font-size: 0.78rem; color: var(--ink-3); }
+.kpi .value { font-size: 1.85rem; font-weight: 700; margin: 2px 0 0; letter-spacing: -0.01em; }
+.kpi .delta { font-size: 0.78rem; color: var(--ink-3); }
+.kpi .delta.up   { color: var(--good-text); }
+.kpi .delta.down { color: var(--critical); }
+.hero-note { margin-top: 18px; }
+
+/* ============ Callouts & chips ============ */
+.callout { border-left: 3px solid var(--series-1); border-radius: 8px; background: var(--surface-1); padding: 13px 18px; margin: 16px 0; border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.callout.warn { border-left-color: var(--serious); }
+.callout.bad  { border-left-color: var(--critical); }
+.callout.good { border-left-color: var(--good); }
+.callout .t { font-weight: 650; color: var(--ink-1); margin-bottom: 2px; display:flex; align-items:center; gap:8px; }
+.chip { display: inline-block; font-size: 0.72rem; font-weight: 600; padding: 1px 9px; border-radius: 99px; border: 1px solid var(--border); color: var(--ink-2); vertical-align: 1px; }
+.chip.ok   { color: var(--good-text); border-color: var(--good); }
+.chip.warn { color: var(--serious); border-color: var(--serious); }
+.chip.bad  { color: var(--critical); border-color: var(--critical); }
+.chip.info { color: var(--series-1); border-color: var(--series-1); }
+
+/* ============ Tables ============ */
+.tablewrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1); }
+table { border-collapse: collapse; width: 100%; font-size: 0.875rem; }
+th, td { text-align: left; padding: 8px 14px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+th { color: var(--ink-3); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+tbody tr:last-child td { border-bottom: 0; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td code { white-space: nowrap; }
+.tablewrap + .tablewrap { margin-top: 14px; }
+caption { caption-side: top; text-align: left; padding: 10px 14px 4px; font-weight: 650; color: var(--ink-1); }
+
+/* ============ Figures / charts ============ */
+figure.chart { margin: 20px 0; background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px 12px; box-shadow: var(--shadow); }
+figure.chart .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+figure.chart .title { font-weight: 650; color: var(--ink-1); }
+figure.chart .subtitle { color: var(--ink-3); font-size: 0.83rem; }
+figure.chart .head .btn { margin-left: auto; }
+.btn {
+  border: 1px solid var(--border); background: var(--page); color: var(--ink-2);
+  padding: 3px 11px; border-radius: 7px; cursor: pointer; font: inherit; font-size: 0.78rem;
+}
+.btn:hover { color: var(--ink-1); }
+figure.chart svg { display: block; width: 100%; height: auto; margin-top: 8px; }
+figure.chart .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.8rem; color: var(--ink-2); margin: 8px 2px 2px; }
+figure.chart .legend .key { display: inline-flex; align-items: center; gap: 6px; }
+figure.chart .legend .swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+figure.chart .legend .line-key { width: 16px; height: 2.5px; border-radius: 2px; display: inline-block; }
+figure.chart figcaption { color: var(--ink-3); font-size: 0.8rem; padding: 8px 2px 4px; }
+figure.chart .tableview { display: none; margin-top: 10px; }
+figure.chart .tableview.open { display: block; }
+.axis-text { fill: var(--ink-3); font-size: 11.5px; }
+.dlabel { fill: var(--ink-2); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.dlabel.strong { fill: var(--ink-1); font-weight: 650; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.baseline { stroke: var(--axis); stroke-width: 1; }
+#tooltip {
+  position: fixed; z-index: 100; pointer-events: none; display: none;
+  background: var(--surface-1); color: var(--ink-1); border: 1px solid var(--border);
+  border-radius: 9px; box-shadow: 0 4px 18px rgba(0,0,0,0.18);
+  padding: 8px 12px; font-size: 0.82rem; max-width: 280px;
+}
+#tooltip .tt-title { color: var(--ink-3); font-size: 0.75rem; margin-bottom: 3px; }
+#tooltip .tt-row { display: flex; align-items: center; gap: 7px; }
+#tooltip .tt-key { width: 14px; height: 2.5px; border-radius: 2px; }
+#tooltip .tt-val { font-weight: 650; font-variant-numeric: tabular-nums; }
+#tooltip .tt-lbl { color: var(--ink-2); }
+
+/* ============ Diagrams ============ */
+.diagram { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 20px; overflow-x: auto; margin: 18px 0; }
+.diagram svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+.dg-box { fill: var(--page); stroke: var(--axis); rx: 8; }
+.dg-box-accent { fill: var(--series-1); opacity: 0.12; stroke: var(--series-1); rx: 8; }
+.dg-title { fill: var(--ink-1); font-size: 13px; font-weight: 650; }
+.dg-sub { fill: var(--ink-3); font-size: 10.5px; }
+.dg-arrow { stroke: var(--ink-3); stroke-width: 1.5; fill: none; marker-end: url(#arr); }
+.flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; counter-reset: step; margin: 14px 0; }
+.flow .step {
+  flex: 1 1 150px; min-width: 150px; background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 12px; font-size: 0.8rem; color: var(--ink-2); position: relative;
+}
+.flow .step b { display: block; color: var(--ink-1); font-size: 0.84rem; margin-bottom: 2px; }
+.flow .step::before {
+  counter-increment: step; content: counter(step);
+  position: absolute; top: -9px; left: 10px; background: var(--series-1); color: #fff;
+  font-size: 0.68rem; font-weight: 700; width: 18px; height: 18px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* ============ Directory tree ============ */
+.tree { font-family: ui-monospace, Consolas, monospace; font-size: 0.83rem; line-height: 1.75; color: var(--ink-2); background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 18px 22px; overflow-x: auto; white-space: pre; }
+.tree b { color: var(--ink-1); }
+.tree .dir { color: var(--series-1); font-weight: 600; }
+.tree .cm { color: var(--ink-3); }
+
+/* ============ Misc ============ */
+.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 16px; align-items: start; }
+.imggrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin: 14px 0; }
+.imggrid a { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface-1); }
+.imggrid img { width: 100%; display: block; }
+.imggrid .cap { font-size: 0.74rem; color: var(--ink-3); padding: 6px 10px; }
+footer { color: var(--ink-3); font-size: 0.8rem; border-top: 1px solid var(--grid); padding-top: 18px; margin-top: 30px; }
+.formula { font-family: ui-monospace, Consolas, monospace; font-size: 0.82em; color: var(--ink-1); background: var(--code-bg); padding: 1px 7px; border-radius: 5px; white-space: nowrap; }
+/* ============ Reading progress ============ */
+#progress { position: fixed; top: 0; left: 0; height: 3px; width: 0; z-index: 60;
+  background: linear-gradient(90deg, var(--series-1), var(--series-2)); }
+
+/* ============ Scroll reveal ============ */
+.reveal { opacity: 0; transform: translateY(14px); transition: opacity 0.55s ease, transform 0.55s ease; }
+.reveal.in { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .reveal { opacity: 1 !important; transform: none !important; transition: none !important; }
+  html { scroll-behavior: auto; }
+}
+
+/* ============ Hero decoration ============ */
+#hero { position: relative; }
+#hero::before {
+  content: ""; position: absolute; inset: -30px -40px auto -40px; height: 340px; z-index: -1;
+  background:
+    radial-gradient(420px 200px at 18% 0%, color-mix(in srgb, var(--series-1) 14%, transparent), transparent 70%),
+    radial-gradient(380px 220px at 78% 10%, color-mix(in srgb, var(--series-2) 10%, transparent), transparent 70%);
+  pointer-events: none;
+}
+
+/* ============ Sidebar filter ============ */
+#navFilter { width: calc(100% - 10px); margin: 2px 0 6px; padding: 6px 10px; font: inherit; font-size: 0.82rem;
+  color: var(--ink-1); background: var(--surface-1); border: 1px solid var(--border); border-radius: 7px; }
+#navFilter:focus { outline: 2px solid var(--series-1); outline-offset: 1px; }
+nav.sidebar a.hidden, nav.sidebar .group.hidden { display: none; }
+
+/* ============ Copy button on code blocks ============ */
+.prewrap { position: relative; }
+.copybtn { position: absolute; top: 8px; right: 8px; opacity: 0; transition: opacity 0.15s; }
+.prewrap:hover .copybtn, .copybtn:focus { opacity: 1; }
+
+/* ============ Back to top ============ */
+#toTop { position: fixed; right: 22px; bottom: 22px; z-index: 55; width: 40px; height: 40px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--surface-1); color: var(--ink-2); font-size: 1.05rem;
+  cursor: pointer; box-shadow: var(--shadow); display: none; }
+#toTop.show { display: block; }
+#toTop:hover { color: var(--series-1); }
+
+/* ============ Lightbox ============ */
+#lightbox { position: fixed; inset: 0; z-index: 90; display: none; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.78); cursor: zoom-out; padding: 30px; }
+#lightbox.open { display: flex; }
+#lightbox img { max-width: 95vw; max-height: 88vh; border-radius: 10px; background: #fff; }
+#lightbox .cap { position: absolute; bottom: 12px; left: 0; right: 0; text-align: center; color: #eee; font-size: 0.85rem; }
+.imggrid a { cursor: zoom-in; }
+
+/* ============ Live simulator ============ */
+.sim-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 14px 0; }
+.sim-controls .btn.primary { background: var(--series-1); color: #fff; border-color: transparent; font-weight: 600; }
+.sim-controls .btn { padding: 6px 14px; font-size: 0.85rem; }
+.sim-controls .speed { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.sim-controls .speed button { border: 0; background: var(--page); color: var(--ink-2); padding: 6px 11px; cursor: pointer; font: inherit; font-size: 0.8rem; }
+.sim-controls .speed button.on { background: var(--series-1); color: #fff; }
+.sim-controls .tick { margin-left: auto; color: var(--ink-3); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.sim-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+.sim-panel { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+.sim-panel h4 { margin: 0 0 2px; display: flex; align-items: center; gap: 8px; }
+.sim-panel .policy-note { color: var(--ink-3); font-size: 0.78rem; margin-bottom: 10px; }
+.sim-nodes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin: 10px 0; }
+.sim-node { border: 1px solid var(--grid); border-radius: 8px; padding: 5px; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
+.sim-gpu { height: 13px; border-radius: 3.5px; background: var(--page); border: 1px solid var(--grid); transition: background 0.18s; }
+.sim-queue { min-height: 30px; display: flex; gap: 5px; flex-wrap: wrap; align-items: center; margin: 8px 0 4px; }
+.sim-chip { font-size: 0.68rem; font-weight: 600; padding: 2px 8px; border-radius: 99px; color: #fff; font-variant-numeric: tabular-nums; }
+.sim-chip.more { background: transparent; color: var(--ink-3); border: 1px dashed var(--grid); }
+.sim-stats { display: flex; gap: 18px; border-top: 1px solid var(--grid); padding-top: 10px; margin-top: 8px; }
+.sim-stats .s { font-size: 0.75rem; color: var(--ink-3); }
+.sim-stats .s b { display: block; font-size: 1.25rem; color: var(--ink-1); font-variant-numeric: tabular-nums; }
+#simVerdict { margin-top: 14px; }
+.sim-lbl { font-size: 0.72rem; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 8px; }
+
+/* ============ Mobile drawer ============ */
+#navToggle { display: none; border: 1px solid var(--border); background: var(--page); color: var(--ink-2);
+  padding: 5px 11px; border-radius: 7px; cursor: pointer; font: inherit; font-size: 0.85rem; }
+#scrim { position: fixed; inset: 0; z-index: 44; background: rgba(0,0,0,0.45); display: none; }
+#scrim.open { display: block; }
+
+@media (max-width: 900px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  #navToggle { display: block; }
+  nav.sidebar { position: fixed; top: 0; left: 0; z-index: 45; height: 100vh; width: 270px; max-width: 82vw;
+    background: var(--page); border-right: 1px solid var(--border); transform: translateX(-102%);
+    transition: transform 0.25s ease; padding-top: 16px; display: block; }
+  nav.sidebar.open { transform: none; box-shadow: 0 0 40px rgba(0,0,0,0.3); }
+  main { padding: 22px 18px 70px; }
+  #hero h1 { font-size: 1.7rem; }
+  .sim-nodes { grid-template-columns: repeat(2, 1fr); }
+}
+@media print {
+  nav.sidebar, .topbar, .btn, #themeBtn, #toTop, #progress, .sim-controls, #navToggle, #scrim { display: none !important; }
+  .layout { grid-template-columns: 1fr; }
+  figure.chart, .card, .diagram { break-inside: avoid; }
+  .reveal { opacity: 1 !important; transform: none !important; }
+}
+</style>
+</head>
+<body>
+
+<div id="progress" aria-hidden="true"></div>
+<header class="topbar">
+  <button id="navToggle" type="button" aria-label="Open navigation">☰</button>
+  <span class="brand">Proactive Feasibility Scheduler <small>Complete Project Documentation · v3.1 · July 2026</small></span>
+  <span class="spacer"></span>
+  <button id="themeBtn" type="button">◐ Theme</button>
+</header>
+
+<div class="layout">
+<nav class="sidebar" id="toc">
+  <input id="navFilter" type="search" placeholder="Filter sections…" aria-label="Filter navigation">
+  <div class="group">Introduction</div>
+  <a href="#hero">At a glance</a>
+  <a href="#overview">What this project is</a>
+  <a href="#problem">The problem, from scratch</a>
+  <a href="#architecture">System architecture</a>
+  <div class="group">The system</div>
+  <a href="#simulator">The cluster simulator</a>
+  <a href="#features">The 12 features</a>
+  <a href="#model">The ML model</a>
+  <a href="#scheduler">The proactive scheduler</a>
+  <a href="#livedemo">▶ Watch it run, live</a>
+  <div class="group">Evidence</div>
+  <a href="#results">Headline results</a>
+  <a href="#tradeoffs">The trade-offs</a>
+  <a href="#robustness">Robustness &amp; drift</a>
+  <a href="#explainability">Explainability</a>
+  <a href="#roi">ROI estimate</a>
+  <div class="group">The repository</div>
+  <a href="#repo">Every file, explained</a>
+  <a href="#pipeline">Reproducibility pipeline</a>
+  <a href="#phases">The 30 research phases</a>
+  <a href="#audit">2026 audit &amp; repairs</a>
+  <div class="group">Outlook</div>
+  <a href="#limitations">Honest limitations</a>
+  <a href="#future">Future scope</a>
+  <a href="#glossary">Glossary</a>
+</nav>
+
+<main>
+
+<!-- ================================================================ -->
+<section id="hero">
+  <div class="kicker">Research project · GPU cluster scheduling · Machine learning</div>
+  <h1>Proactive Feasibility Scheduler</h1>
+  <p class="sub">A simulation-driven research project that trains a machine-learning model to <strong>predict how long each GPU job will wait</strong> in a cluster queue — then reorders the queue by those predictions to cut average waiting time. Every number on this page was regenerated by the project's seeded, one-command pipeline and is bit-for-bit reproducible.</p>
+
+  <div class="kpis">
+    <div class="kpi"><div class="label">Mean wait-time reduction vs FIFO</div><div class="value">7.7%</div><div class="delta up">95% CI [5.0%, 10.3%] · p = 1.4×10⁻⁶</div></div>
+    <div class="kpi"><div class="label">Wait-model quality (20% holdout)</div><div class="value">R² 0.84</div><div class="delta">MAE 4.69 ts · 5-fold CV 4.74 ± 0.42</div></div>
+    <div class="kpi"><div class="label">GPU utilisation change</div><div class="value">±0</div><div class="delta">≈64% for both schedulers</div></div>
+    <div class="kpi"><div class="label">Tail latency (max wait)</div><div class="value">2.2×</div><div class="delta down">worse: ~58 → ~125 ts</div></div>
+    <div class="kpi"><div class="label">Fairness (per-job Gini)</div><div class="value">0.53→0.80</div><div class="delta down">worse; mitigation recovers 0.69</div></div>
+    <div class="kpi"><div class="label">Real-trace validation</div><div class="value">Open</div><div class="delta">proxy-trace R² ≈ 0.02 — no transfer</div></div>
+  </div>
+
+  <div class="callout hero-note">
+    <div class="t">Why this documentation is different</div>
+    This page explains the project <em>from scratch</em> — the problem, the simulator, the features, the model, the scheduler, every file in the repository, the honest results including the failures, and where the research should go next. It reflects the July 2026 audit that found and fixed 37 verified defects (including fabricated results in four analysis scripts) and made the entire pipeline seeded and reproducible. <a href="#audit">See the audit section</a>.
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<section id="overview">
+  <div class="kicker">Introduction</div>
+  <h2>What this project is</h2>
+  <p class="lede">Shared GPU clusters — the machines that train neural networks in universities, labs, and clouds — make jobs wait in a queue when all GPUs are busy. The order in which the queue is served decides how long everyone waits. This project asks one precise question:</p>
+  <div class="callout good">
+    <div class="t">Research question</div>
+    If a machine-learning model can <strong>predict each queued job's waiting time</strong> from the live state of the cluster, can a scheduler that <strong>serves the shortest-predicted-wait jobs first</strong> beat the standard first-in-first-out (FIFO) policy — and at what cost?
+  </div>
+  <p>The project answers it end-to-end with five building blocks, each of which lives in its own numbered folder:</p>
+  <div class="cards c2" style="margin-top:14px">
+    <div class="card"><h4 style="margin-top:0">🖥️ 1 · A cluster simulator <span class="chip">01_simulation</span></h4><p>A small, transparent discrete-time simulator: 8 nodes × 4 GPUs, jobs arrive randomly needing 1–8 GPUs for 5–20 time-steps. It reproduces the essential physics of queueing — contention, fragmentation, waiting.</p></div>
+    <div class="card"><h4 style="margin-top:0">📊 2 · Datasets <span class="chip">02_data</span></h4><p>The simulator snapshots <strong>12 cluster-state features</strong> at each job's arrival and records how long that job actually waited — producing 2,200 labelled training examples per generation run (seeded, deterministic).</p></div>
+    <div class="card"><h4 style="margin-top:0">🧠 3 · Wait-time models <span class="chip">03_models</span></h4><p>An XGBoost regressor learns <em>arrival features → wait time</em> (holdout R² 0.84). Seven model families are compared; ablation, SHAP explainability, tuning, online learning and drift detection round out the model science.</p></div>
+    <div class="card"><h4 style="margin-top:0">⚖️ 4 · Schedulers <span class="chip">04_scheduler</span></h4><p>Five queue policies — FIFO, SJF, Priority, a neural-network reranker, and the <strong>Proactive</strong> (XGBoost) reranker — compete in paired, seeded benchmarks with full statistical treatment.</p></div>
+    <div class="card"><h4 style="margin-top:0">📈 5 · Results &amp; analyses <span class="chip">05_results · phases_22_30</span></h4><p>Forty-run paired benchmarks with bootstrap confidence intervals, fairness and starvation analysis, scaling studies, out-of-distribution stress tests, ROI estimates, and a LaTeX manuscript draft.</p></div>
+    <div class="card"><h4 style="margin-top:0">🔁 Reproducibility <span class="chip">run_all_experiments.sh</span></h4><p>One command regenerates everything — dataset → model → every table and figure — deterministically (seeded), on Windows, Linux, or macOS, locally or in Docker.</p></div>
+  </div>
+  <h3>The honest one-paragraph summary</h3>
+  <p>The proactive scheduler <strong>works, modestly</strong>: it cuts mean waiting time by <strong>7.7%</strong> versus FIFO with high statistical confidence, without hurting GPU utilisation. But the gain is a <strong>trade-off, not a free lunch</strong>: the longest-waiting jobs wait about twice as long (favouring easy-to-place jobs starves awkward ones), per-job fairness worsens, the model's accuracy collapses on workloads unlike its training distribution, and validation on <em>real</em> cluster traces remains open. The project's most distinctive strength is that it measures and reports all of this honestly — with a fully reproducible harness that anyone can rerun.</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="problem">
+  <div class="kicker">Background</div>
+  <h2>The problem, explained from scratch</h2>
+  <h3>What is a GPU cluster?</h3>
+  <p>A <strong>GPU cluster</strong> is a set of computers ("nodes"), each containing several graphics processing units. Deep-learning training jobs request some number of GPUs (here 1–8) for some duration. A central <strong>scheduler</strong> decides which queued job starts next whenever GPUs free up.</p>
+  <h3>Why jobs wait</h3>
+  <p>When demand exceeds free GPUs, jobs queue. Two effects make waiting times hard to predict:</p>
+  <ul>
+    <li><strong>Contention</strong> — many jobs competing for few GPUs. The queue drains only as fast as running jobs finish.</li>
+    <li><strong>Fragmentation</strong> — free GPUs scattered across nodes. 8 free GPUs spread 1-per-node cannot serve one 8-GPU job if placement is constrained, and even with flexible placement, uneven free capacity changes what can start <em>now</em>.</li>
+  </ul>
+  <h3>The classical schedulers (the baselines)</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Policy</th><th>Rule</th><th>Strength</th><th>Weakness</th></tr></thead>
+    <tbody>
+      <tr><td><strong>FIFO</strong></td><td>First come, first served</td><td>Simple, predictable, <em>fair</em> — nobody is skipped</td><td>A hard-to-place job at the head blocks everyone (head-of-line blocking)</td></tr>
+      <tr><td><strong>SJF</strong></td><td>Shortest job first</td><td>Provably minimises mean wait…</td><td>…but needs to <em>know each job's runtime in advance</em>, which real clusters don't; starves long jobs</td></tr>
+      <tr><td><strong>Priority + aging</strong></td><td>Order by priority score, boosted with waiting time</td><td>Expresses business importance; aging prevents starvation</td><td>Priorities are manual; doesn't model cluster state</td></tr>
+      <tr><td><strong>Backfill (SLURM-style)</strong></td><td>Let small jobs jump ahead if they don't delay the head job</td><td>Industry standard; big utilisation gains</td><td>Needs runtime estimates; not implemented here yet (<a href="#future">future scope</a>)</td></tr>
+    </tbody>
+  </table></div>
+  <h3>The idea being tested</h3>
+  <p>None of the classical policies <em>look at the cluster's live state</em>. This project's hypothesis: the pattern <em>"jobs like this, arriving into cluster states like this, tend to wait about this long"</em> is learnable. If so, sorting the queue by <strong>predicted</strong> wait approximates SJF's benefit <em>without needing runtime oracles</em> — the model only sees what the cluster already knows at arrival time.</p>
+  <div class="callout">
+    <div class="t">Key vocabulary used throughout</div>
+    <strong>ts (time-step)</strong> — the simulator's clock unit; all waits are measured in ts. ·
+    <strong>Wait time</strong> — job start time minus arrival time. ·
+    <strong>R²</strong> — fraction of wait-time variance the model explains (1.0 = perfect, 0 = no better than guessing the mean, &lt;0 = worse than that). ·
+    <strong>MAE</strong> — mean absolute error of predictions, in ts. ·
+    <strong>Gini</strong> — inequality of waits across jobs (0 = everyone waits equally, 1 = one job absorbs all waiting). See the <a href="#glossary">glossary</a> for more.
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<section id="architecture">
+  <div class="kicker">Design</div>
+  <h2>System architecture</h2>
+  <p>The whole project is a straight-line data flow: simulate → featurize → train → schedule → benchmark → analyse. Each arrow below is one or more scripts in the repository.</p>
+  <div class="diagram">
+  <svg viewBox="0 0 960 470" role="img" aria-label="Architecture diagram: simulator produces dataset, dataset trains model, model drives proactive scheduler, schedulers are benchmarked, results feed analyses and documentation">
+    <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink-3)"/></marker></defs>
+    <!-- Row 1 -->
+    <rect class="dg-box" x="20" y="30" width="200" height="86" rx="8"/>
+    <text class="dg-title" x="36" y="56">Discrete-time simulator</text>
+    <text class="dg-sub" x="36" y="74">8 nodes × 4 GPUs · 110 jobs/run</text>
+    <text class="dg-sub" x="36" y="90">greedy allocation · release · queue</text>
+    <text class="dg-sub" x="36" y="106">01_simulation/ · seeded</text>
+
+    <rect class="dg-box" x="290" y="30" width="200" height="86" rx="8"/>
+    <text class="dg-title" x="306" y="56">Feature snapshots</text>
+    <text class="dg-sub" x="306" y="74">12 cluster-state features at each</text>
+    <text class="dg-sub" x="306" y="90">job arrival + realised wait label</text>
+    <text class="dg-sub" x="306" y="106">02_data/ · 2,200 rows × 20 runs</text>
+
+    <rect class="dg-box" x="560" y="30" width="200" height="86" rx="8"/>
+    <text class="dg-title" x="576" y="56">Wait-time model</text>
+    <text class="dg-sub" x="576" y="74">XGBoost regressor · 300 trees</text>
+    <text class="dg-sub" x="576" y="90">holdout R² 0.84 · MAE 4.69 ts</text>
+    <text class="dg-sub" x="576" y="106">03_models/wait_model_v2.pkl</text>
+
+    <path class="dg-arrow" d="M220,73 L286,73"/>
+    <path class="dg-arrow" d="M490,73 L556,73"/>
+
+    <!-- Row 2 -->
+    <rect class="dg-box-accent" x="560" y="180" width="200" height="92" rx="8"/>
+    <text class="dg-title" x="576" y="206">Proactive scheduler</text>
+    <text class="dg-sub" x="576" y="224">every tick: predict wait for each</text>
+    <text class="dg-sub" x="576" y="240">queued job → sort ascending →</text>
+    <text class="dg-sub" x="576" y="256">dispatch all jobs that fit</text>
+
+    <rect class="dg-box" x="290" y="180" width="200" height="92" rx="8"/>
+    <text class="dg-title" x="306" y="206">Baseline schedulers</text>
+    <text class="dg-sub" x="306" y="224">FIFO · SJF · Priority+aging</text>
+    <text class="dg-sub" x="306" y="240">NN (MLP) reranker</text>
+    <text class="dg-sub" x="306" y="256">04_scheduler/</text>
+
+    <path class="dg-arrow" d="M660,116 L660,176"/>
+
+    <!-- Row 3: benchmark -->
+    <rect class="dg-box" x="290" y="330" width="470" height="90" rx="8"/>
+    <text class="dg-title" x="306" y="356">Paired, seeded benchmarks + statistics</text>
+    <text class="dg-sub" x="306" y="374">same job set through every scheduler · 40 paired runs · paired t-test,</text>
+    <text class="dg-sub" x="306" y="390">Wilcoxon, bootstrap CIs · fairness, scaling, OOD stress, drift, ROI</text>
+    <text class="dg-sub" x="306" y="406">04_scheduler/benchmark_statistical.py · phases_22_30/</text>
+
+    <path class="dg-arrow" d="M390,272 L390,326"/>
+    <path class="dg-arrow" d="M660,272 L660,326"/>
+
+    <!-- Results -->
+    <rect class="dg-box" x="20" y="330" width="200" height="90" rx="8"/>
+    <text class="dg-title" x="36" y="356">Artifacts</text>
+    <text class="dg-sub" x="36" y="374">CSV tables · PNG figures</text>
+    <text class="dg-sub" x="36" y="390">SHAP plots · manuscript.tex</text>
+    <text class="dg-sub" x="36" y="406">05_results/ · dashboard.py</text>
+    <path class="dg-arrow" d="M286,375 L224,375"/>
+  </svg>
+  </div>
+  <p>Two design choices matter most: <strong>(1) paired benchmarking</strong> — every scheduler sees the <em>identical</em> randomly-generated job set in each run, so differences come from policy, not luck; and <strong>(2) leak-free features</strong> — an earlier feature (<code>smaller_jobs_in_queue</code>) was removed because it encoded the FIFO queue's own ordering (82% importance = the model was reading the answer off the baseline scheduler); the 12 surviving features describe only the physical cluster state.</p>
+</section>
+<!-- ================================================================ -->
+<section id="simulator">
+  <div class="kicker">The system · 1</div>
+  <h2>The cluster simulator</h2>
+  <p>Everything rests on a deliberately small discrete-time simulator (~140 lines, no dependencies beyond NumPy). Its transparency is a feature: every result can be traced to mechanics you can read in one sitting.</p>
+  <div class="grid-2">
+    <div class="card">
+      <h4 style="margin-top:0">The world model</h4>
+      <ul>
+        <li><strong>Cluster</strong>: 8 nodes × 4 GPUs = 32 GPUs (scaling studies vary this 8→256 GPUs).</li>
+        <li><strong>Jobs</strong>: 110 per run; arrival uniform in ts 0–150; GPUs needed uniform 1–8; runtime uniform 5–20 ts.</li>
+        <li><strong>Clock</strong>: 300 discrete time-steps per run. Each tick: release finished jobs → enqueue arrivals → dispatch whatever fits.</li>
+        <li><strong>Allocation</strong>: greedy first-fit across nodes; a job may span nodes; failed partial allocations roll back.</li>
+        <li><strong>Determinism</strong>: seeded (global 42, per-run 42+i) — identical datasets and results on every machine.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4 style="margin-top:0">Dispatch loop (each time-step t)</h4>
+<pre><code>for job in running:            # 1. release
+    if job.end_time == t:
+        cluster.release(job)
+
+for job in arrivals_at(t):     # 2. arrivals
+    job.features = snapshot()  #    ← dataset rows
+    queue.append(job)
+
+order_queue()                  # 3. policy hook
+for job in queue:              # 4. dispatch ALL
+    if fits(job):              #    that fit
+        allocate(job, t)</code></pre>
+      <p style="font-size:0.85rem">Step 3 is the <em>only</em> thing that differs between schedulers — FIFO leaves the queue alone; Proactive sorts it by predicted wait.</p>
+    </div>
+  </div>
+  <p>The resulting workload is genuinely contended: the regenerated training dataset has mean wait <strong>16.4 ts</strong> (σ 16.2, max 73), and 25% of jobs start within 2 ts — a wide, skewed target worth predicting.</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="features">
+  <div class="kicker">The system · 2</div>
+  <h2>The 12 cluster-state features</h2>
+  <p>When a job arrives, the simulator photographs the cluster from that job's point of view. Each feature answers an operator's instinctive question. All are computable in any real scheduler at decision time — no future information, no oracle runtimes.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>#</th><th>Feature</th><th>Formula</th><th>The question it answers</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td><code>job_gpu</code></td><td class="num"><span class="formula">job.num_gpus</span></td><td>How big is this job? (Big jobs are hard to place.)</td></tr>
+      <tr><td>2</td><td><code>total_free</code></td><td class="num"><span class="formula">Σ free(node)</span></td><td>How much total capacity is free right now?</td></tr>
+      <tr><td>3</td><td><code>queue_length</code></td><td class="num"><span class="formula">len(queue)</span></td><td>How many jobs are already ahead?</td></tr>
+      <tr><td>4</td><td><code>running_jobs</code></td><td class="num"><span class="formula">len(running)</span></td><td>How busy is the cluster?</td></tr>
+      <tr><td>5</td><td><code>max_free_node</code></td><td class="num"><span class="formula">max(free per node)</span></td><td>What's the biggest contiguous slot?</td></tr>
+      <tr><td>6</td><td><code>variance_free</code></td><td class="num"><span class="formula">Var(free per node)</span></td><td>How uneven is free capacity?</td></tr>
+      <tr><td>7</td><td><code>can_fit_now</code></td><td class="num"><span class="formula">𝟙[total_free ≥ job_gpu]</span></td><td>Could it start immediately?</td></tr>
+      <tr><td>8</td><td><code>gpu_fit_ratio</code></td><td class="num"><span class="formula">min(total_free/job_gpu, 1)</span></td><td>What fraction of the demand is available?</td></tr>
+      <tr><td>9</td><td><code>fragmentation</code></td><td class="num"><span class="formula">Std(free per node)</span></td><td>How scattered is the free capacity?</td></tr>
+      <tr><td>10</td><td><code>queue_pressure</code></td><td class="num"><span class="formula">Σ queued GPUs / (total_free+1)</span></td><td>How much demand is stacked against supply?</td></tr>
+      <tr><td>11</td><td><code>node_availability</code></td><td class="num"><span class="formula">|{n: free(n) ≥ job_gpu}| / N</span></td><td>What share of nodes could host it alone?</td></tr>
+      <tr><td>12</td><td><code>avg_free_per_node</code></td><td class="num"><span class="formula">total_free / N</span></td><td>What's the average free capacity per node?</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="callout warn" style="margin-top:16px">
+    <div class="t">The leakage story (why there are 12 features, not 13)</div>
+    An earlier version included <code>smaller_jobs_in_queue</code> — the count of queued jobs smaller than this one. It carried <strong>82% of the model's importance</strong>… because under FIFO it directly encodes queue rank, which nearly <em>is</em> the wait time. That's data leakage: the model was reading the baseline scheduler's answer, not learning cluster physics. It was removed; the honest model is harder to fit and more transferable.
+  </div>
+
+  <figure class="chart" data-chart="featImportance">
+    <div class="head"><span class="title">What the model actually relies on</span><span class="subtitle">XGBoost gain-based feature importance, wait_model_v2 (regenerated)</span><button class="btn" data-toggle-table>Table view</button></div>
+    <div class="svgmount"></div>
+    <figcaption>Job size and queue state dominate; the six fragmentation/supply features contribute a long tail. Ablation (leave-one-feature-out) agrees: dropping <code>job_gpu</code> costs 0.20 R²; dropping <code>queue_pressure</code> or <code>queue_length</code> costs ~0.02–0.03 each; every other single feature is nearly redundant given the rest.</figcaption>
+    <div class="tableview"></div>
+  </figure>
+</section>
+
+<!-- ================================================================ -->
+<section id="model">
+  <div class="kicker">The system · 3</div>
+  <h2>The ML model: predicting wait time</h2>
+  <p>The production model (<code>03_models/wait_model_v2.pkl</code>) is an <strong>XGBoost regressor</strong> — 300 gradient-boosted trees, depth 6, learning rate 0.05, subsample 0.8 — trained on 1,760 examples and evaluated on a held-out 440. Gradient-boosted trees suit this problem: tabular features, non-linear interactions (job size × fragmentation), tiny training budget, millisecond inference.</p>
+
+  <h3>Evaluated honestly</h3>
+  <div class="cards c3">
+    <div class="card"><div class="kpi" style="border:0;padding:0;box-shadow:none"><div class="label">20% holdout</div><div class="value">R² 0.837</div><div class="delta">MAE 4.69 ts</div></div></div>
+    <div class="card"><div class="kpi" style="border:0;padding:0;box-shadow:none"><div class="label">5-fold cross-validation</div><div class="value">4.74 ts</div><div class="delta">MAE ± 0.42 across folds</div></div></div>
+    <div class="card"><div class="kpi" style="border:0;padding:0;box-shadow:none"><div class="label">After 729-fit grid search</div><div class="value">R² 0.850</div><div class="delta">MAE 4.57 ts (tuned)</div></div></div>
+  </div>
+  <div class="callout bad" style="margin-top:14px">
+    <div class="t">A number this project refuses to headline</div>
+    Evaluating on data the model was trained on ("in-sample") reads ~R² 0.96 and looks spectacular. The July 2026 audit found one comparison script accidentally doing exactly that — fitting on <em>all</em> data before splitting. It was fixed; the honest holdout numbers above are the only ones quoted anywhere in this repository. When you see R² ≈ 0.96 in older artifacts, that is what it was.
+  </div>
+
+  <figure class="chart" data-chart="modelComparison">
+    <div class="head"><span class="title">Seven model families, same task</span><span class="subtitle">MAE on identical 20% holdout (lower is better) · 05_results/model_comparison_table1.csv</span><button class="btn" data-toggle-table>Table view</button></div>
+    <div class="svgmount"></div>
+    <figcaption>All gradient-boosted tree libraries land within 0.1 ts of each other — the model family matters, the brand doesn't. Linear regression trails badly (the problem is non-linear). XGBoost <span style="color:var(--series-1);font-weight:600">(highlighted)</span> was kept for its maturity and SHAP support; LightGBM would have been equally defensible.</figcaption>
+    <div class="tableview"></div>
+  </figure>
+
+  <h3>Behaviour across load regimes</h3>
+  <p>Three synthetic contention profiles probe where the model is trustworthy (regenerated after the audit fixed a degenerate all-zero-wait profile):</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Profile</th><th class="num">Samples</th><th class="num">MAE (ts)</th><th class="num">R²</th><th>Reading</th></tr></thead>
+    <tbody>
+      <tr><td>Low contention</td><td class="num">2,200</td><td class="num">0.20</td><td class="num">0.80</td><td>Waits are tiny and mostly zero; small absolute errors</td></tr>
+      <tr><td>High contention</td><td class="num">2,200</td><td class="num">13.08</td><td class="num">0.91</td><td>Strong signal — congestion is predictable</td></tr>
+      <tr><td>Mixed / bursty</td><td class="num">2,200</td><td class="num">1.28</td><td class="num">0.67</td><td>Hardest regime: burst timing is the noise</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ================================================================ -->
+<section id="scheduler">
+  <div class="kicker">The system · 4</div>
+  <h2>The proactive scheduler</h2>
+  <p>The scheduler itself is almost embarrassingly simple — which is the point. All intelligence lives in the model; the policy is a sort.</p>
+  <div class="grid-2">
+    <div class="card">
+<h4 style="margin-top:0">Algorithm (each time-step)</h4>
+<pre><code>1. release finished jobs
+2. append newly-arrived jobs to queue
+3. for each queued job j:
+       ŵ(j) ← model.predict(features(j))
+4. queue.sort(key = ŵ)          # shortest
+                                # predicted
+                                # wait first
+5. for j in queue:              # dispatch ALL
+       if total_free ≥ j.gpus:  # that fit this
+           allocate(j)          # tick</code></pre>
+    </div>
+    <div class="card">
+      <h4 style="margin-top:0">Why it can beat FIFO</h4>
+      <p>Sorting by predicted wait is a learned approximation of "easiest to serve first". Jobs the cluster can absorb quickly stop blocking the queue; the average job waits less. Utilisation is untouched because step 5 dispatches <em>everything that fits</em> either way — only the <em>order</em> changes.</p>
+      <h4>Why it isn't free</h4>
+      <p>The same preference systematically defers big, awkward jobs — exactly the mechanism that doubles tail latency and worsens fairness (<a href="#tradeoffs">measured below</a>). An anti-starvation variant bumps any job waiting &gt; 3× the mean to the queue head.</p>
+    </div>
+  </div>
+  <div class="callout">
+    <div class="t">Audit note — the v1 bug that flattered nobody</div>
+    The original v1 script (<code>proactive_scheduler.py</code>) had a stray <code>break</code> that let the proactive variant start only <strong>one job per tick</strong> while FIFO started many — throttling the proactive side's throughput in that early experiment. v2 fixed the loop; the audit also repaired v1 for provenance. All headline numbers come from the correct dispatch-all logic.
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<section id="livedemo">
+  <div class="kicker">The system · 5</div>
+  <h2>Watch it run — live in your browser</h2>
+  <p>This is not a video. Below, <strong>two copies of the project's simulator</strong> run the <em>identical</em> randomly-generated job stream — the left queue served in arrival order (FIFO), the right queue re-sorted every tick by a wait-time model. Each colored chip is a job (same job = same color on both sides); each small cell is one GPU across the 8×4 cluster.</p>
+  <div class="callout">
+    <div class="t">The predictions are real</div>
+    The right panel runs a <strong>distilled 40-tree version of the actual XGBoost model</strong>, exported from the trained pipeline and evaluated natively in JavaScript on the same 12 features (distilled holdout: MAE 4.64 ts, R² 0.842 — statistically equivalent to the full 300-tree model's 4.69 / 0.837). Roughly 1 seed in 6 will show FIFO winning — exactly the 33-of-40 split the paired benchmark measured. Press <em>Run</em> and watch the mean-wait counters diverge.
+  </div>
+
+  <div class="sim-controls">
+    <button class="btn primary" id="simPlay" type="button">▶ Run</button>
+    <button class="btn" id="simStep" type="button">Step</button>
+    <button class="btn" id="simReset" type="button">↺ New workload</button>
+    <span class="speed" role="group" aria-label="Simulation speed">
+      <button type="button" data-sp="4">1×</button><button type="button" data-sp="10" class="on">2.5×</button><button type="button" data-sp="25">6×</button>
+    </span>
+    <span class="tick" id="simClock">t = 0 / 300</span>
+  </div>
+
+  <div class="sim-grid">
+    <div class="sim-panel" id="panelF">
+      <h4>FIFO <span class="chip">baseline</span></h4>
+      <div class="policy-note">Queue served strictly in arrival order.</div>
+      <div class="sim-lbl">Cluster — 8 nodes × 4 GPUs</div>
+      <div class="sim-nodes"></div>
+      <div class="sim-lbl">Queue (arrival order)</div>
+      <div class="sim-queue"></div>
+      <div class="sim-stats">
+        <span class="s">mean wait<b class="st-wait">–</b></span>
+        <span class="s">running<b class="st-run">0</b></span>
+        <span class="s">completed<b class="st-done">0</b></span>
+      </div>
+    </div>
+    <div class="sim-panel" id="panelP">
+      <h4>Proactive <span class="chip info">distilled XGBoost</span></h4>
+      <div class="policy-note">Queue re-sorted every tick by predicted wait (shortest first).</div>
+      <div class="sim-lbl">Cluster — 8 nodes × 4 GPUs</div>
+      <div class="sim-nodes"></div>
+      <div class="sim-lbl">Queue (predicted-wait order)</div>
+      <div class="sim-queue"></div>
+      <div class="sim-stats">
+        <span class="s">mean wait<b class="st-wait">–</b></span>
+        <span class="s">running<b class="st-run">0</b></span>
+        <span class="s">completed<b class="st-done">0</b></span>
+      </div>
+    </div>
+  </div>
+  <div class="callout good" id="simVerdict" hidden><div class="t">Result</div><span id="simVerdictText"></span></div>
+  <p style="font-size:0.85rem;color:var(--ink-3)">Mechanics identical to <code>04_scheduler/proactive_Schedule_v2.py</code>: release finished jobs → enqueue arrivals → (right side only) score &amp; sort → dispatch every job that fits. 110 jobs, 300 ticks, jobs need 1–8 GPUs for 5–20 ticks. Utilisation stays identical on both sides — only the <em>order</em> (and therefore who waits) changes.</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="results">
+  <div class="kicker">Evidence · 1</div>
+  <h2>Headline results</h2>
+
+  <h3>The 40-run paired benchmark</h3>
+  <p>Forty seeded runs; in each, the <em>same</em> 110 jobs go through FIFO and through Proactive. The paired design cancels workload luck — only the policy differs.</p>
+
+  <figure class="chart" data-chart="pairedRuns">
+    <div class="head"><span class="title">Per-run wait-time improvement, all 40 paired runs</span><span class="subtitle">(FIFO wait − Proactive wait) / FIFO wait · positive = Proactive better</span><button class="btn" data-toggle-table>Table view</button></div>
+    <div class="svgmount"></div>
+    <div class="legend"><span class="key"><span class="swatch" style="background:var(--pos)"></span>Proactive faster (33 runs)</span><span class="key"><span class="swatch" style="background:var(--neg)"></span>Proactive slower (7 runs)</span></div>
+    <figcaption>Mean improvement <strong>7.71%</strong> (σ 8.9); mean wait 18.27 → 16.70 ts; paired t-test p = 1.4×10⁻⁶, Wilcoxon p = 7.1×10⁻⁶; bootstrap 95% CI on the improvement <strong>[4.95%, 10.34%]</strong>. The effect is real but noisy — 7 of 40 runs go the other way, which is exactly what the OOD analysis predicts for unlucky workload draws.</figcaption>
+    <div class="tableview"></div>
+  </figure>
+
+  <h3>Five schedulers, head to head</h3>
+  <p>Twenty paired runs through five policies (Proactive highlighted; note what each column costs):</p>
+
+  <figure class="chart" data-chart="schedulerWait">
+    <div class="head"><span class="title">Mean wait — the prize</span><span class="subtitle">20-run mean, identical workloads · lower is better</span><button class="btn" data-toggle-table>Table view</button></div>
+    <div class="svgmount"></div>
+    <figcaption>SJF wins mean wait but needs true runtimes in advance (an oracle real clusters lack). Proactive matches the NN reranker and beats Priority and FIFO using only observable state.</figcaption>
+    <div class="tableview"></div>
+  </figure>
+
+  <div class="grid-2">
+  <figure class="chart" data-chart="schedulerTail">
+    <div class="head"><span class="title">Max wait — the tail cost</span><span class="subtitle">lower is better</span><button class="btn" data-toggle-table>Table view</button></div>
+    <div class="svgmount"></div>
+    <figcaption>Every reordering policy roughly doubles the worst-case wait vs FIFO.</figcaption>
+    <div class="tableview"></div>
+  </figure>
+  <figure class="chart" data-chart="schedulerGini">
+    <div class="head"><span class="title">Gini of waits — the fairness cost</span><span class="subtitle">0 = perfectly equal · lower is fairer</span><button class="btn" data-toggle-table>Table view</button></div>
+    <div class="svgmount"></div>
+    <figcaption>FIFO's arrival-order discipline is what fairness looks like; every smart policy pays.</figcaption>
+    <div class="tableview"></div>
+  </figure>
+  </div>
+
+  <p>Throughput (0.367 jobs/ts) and GPU utilisation (63.6%) are <strong>identical for all five schedulers</strong> — with this workload everything completes within the horizon; the policies differ only in <em>who</em> waits.</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="tradeoffs">
+  <div class="kicker">Evidence · 2</div>
+  <h2>The trade-offs, quantified</h2>
+  <p>The fairness analysis (20 runs, per-job records) makes the cost explicit and tests a mitigation — <em>anti-starvation bumping</em>: any job waiting more than 3× the current mean is forced to the queue head.</p>
+
+  <figure class="chart" data-chart="fairness">
+    <div class="head"><span class="title">Mean wait vs tail vs fairness, three policies</span><span class="subtitle">05_results/fairness/fairness_metrics.csv (regenerated)</span><button class="btn" data-toggle-table>Table view</button></div>
+    <div class="svgmount"></div>
+    <div class="legend"><span class="key"><span class="swatch" style="background:var(--deemph)"></span>FIFO</span><span class="key"><span class="swatch" style="background:var(--series-1)"></span>Proactive</span><span class="key"><span class="swatch" style="background:var(--series-2)"></span>Proactive + anti-starvation</span></div>
+    <figcaption>The guard recovers about half the fairness loss (Gini 0.80 → 0.69, max wait 125 → 87 ts) while keeping nearly all of the mean-wait gain (16.5 vs 16.5 ts) — but its forced promotions bump <em>other</em> jobs more often (starvation count rises). Choosing the operating point is an ops decision, not a modelling one; see <a href="#future">future scope</a> for the principled fix.</figcaption>
+    <div class="tableview"></div>
+  </figure>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th>Metric (20 runs)</th><th class="num">FIFO</th><th class="num">Proactive</th><th class="num">+ Anti-starvation</th></tr></thead>
+    <tbody>
+      <tr><td>Mean wait (ts)</td><td class="num">18.58</td><td class="num"><strong>16.54</strong></td><td class="num">16.46</td></tr>
+      <tr><td>Max wait (ts)</td><td class="num"><strong>57.9</strong></td><td class="num">124.8</td><td class="num">87.2</td></tr>
+      <tr><td>Per-job Gini</td><td class="num"><strong>0.526</strong></td><td class="num">0.796</td><td class="num">0.688</td></tr>
+      <tr><td>Starved jobs (wait &gt; 3× mean)</td><td class="num">22.3</td><td class="num"><strong>18.2</strong></td><td class="num">30.2</td></tr>
+      <tr><td>SLA compliance score (phase 27)</td><td class="num">0.933</td><td class="num"><strong>0.945</strong></td><td class="num">0.863</td></tr>
+      <tr><td>Run-level Jain index (40 runs)</td><td class="num">0.918</td><td class="num"><strong>0.922</strong></td><td class="num">—</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ================================================================ -->
+<section id="robustness">
+  <div class="kicker">Evidence · 3</div>
+  <h2>Robustness: scale, distribution shift, drift</h2>
+
+  <h3>Where the benefit lives: contention</h3>
+  <figure class="chart" data-chart="scaling">
+    <div class="head"><span class="title">Wait-time advantage vs cluster capacity</span><span class="subtitle">same 110-job workload, growing cluster · 05_results/scaling/scaling_analysis.csv</span><button class="btn" data-toggle-table>Table view</button></div>
+    <div class="svgmount"></div>
+    <figcaption>Proactive helps exactly where jobs queue: <strong>+14.4%</strong> on the starved 8-GPU cluster, +5.1% at 32 GPUs, and <strong>0%</strong> at 128–256 GPUs where nothing ever waits. On over-provisioned clusters there is nothing to reorder. A separate saturation stress test (phase 26; 10,000 queued jobs, 32–256 GPUs) confirms the mechanism stays cheap at scale: utilisation &gt; 99.7%, batched inference 10–48 ms per decision, scheduling overhead &lt; 5% of throughput.</figcaption>
+    <div class="tableview"></div>
+  </figure>
+
+  <h3>Out-of-distribution: where the model breaks</h3>
+  <p>Phase 23 retests the <em>trained</em> model on 72 freshly-simulated scenarios that shift arrival rate (0.5–2×), cluster size (4–32 nodes), and job-size mix. This is the project's most sobering — and most valuable — result:</p>
+
+  <figure class="chart" data-chart="oodHeat">
+    <div class="head"><span class="title">Prediction quality (R²) under domain shift</span><span class="subtitle">mean over 3 job-size distributions per cell · trained on 8-node, 1× arrivals</span><button class="btn" data-toggle-table>Table view</button></div>
+    <div class="svgmount"></div>
+    <div class="legend"><span class="key"><span class="swatch" style="background:var(--pos)"></span>R² &gt; 0 (usable)</span><span class="key"><span class="swatch" style="background:var(--neutral-mid);border:1px solid var(--border)"></span>≈ 0</span><span class="key"><span class="swatch" style="background:var(--neg)"></span>R² &lt; 0 (worse than guessing the mean)</span></div>
+    <figcaption>Mean OOD R² is <strong>−0.31</strong>; only configurations near the training regime (16–32 nodes ≈ larger versions of the training cluster's contention profile) stay positive. Small shifted clusters are catastrophically mispredicted. Scheduling improvement becomes erratic (−14%…+50%, mean per-job failure rate ≈ 32%). <strong>Operational conclusion: retrain per deployment, monitor drift, keep a FIFO fallback.</strong></figcaption>
+    <div class="tableview"></div>
+  </figure>
+
+  <h3>Drift detection &amp; online learning</h3>
+  <div class="cards c2">
+    <div class="card"><h4 style="margin-top:0">Concept-drift trigger <span class="chip info">phase 18</span></h4><p>A rolling-MAE monitor (window 50) streams 880 predictions with a distribution shift injected at 70%. The trigger (MAE &gt; 1.5× baseline) fires <strong>7 times</strong>, exactly in the drifted region — the retraining signal a production deployment would use.</p></div>
+    <div class="card"><h4 style="margin-top:0">Online retraining <span class="chip info">phase 17</span></h4><p>An SGD regressor updated incrementally on the drifted stream improves MAE 6.98 → 6.88 and R² 0.694 → 0.704 vs a frozen model — a modest but real recovery, and the mechanism that closes the loop with the drift trigger.</p></div>
+  </div>
+
+  <h3>The proxy-trace result (read carefully)</h3>
+  <div class="callout bad">
+    <div class="t">No real trace has been evaluated — and the repository now says so honestly</div>
+    <p style="margin:6px 0 0">The file <code>02_data/lanl_trace_sample.csv</code> was previously presented as a real LANL supercomputer trace. The 2026 audit <strong>proved it is synthetic</strong> — regenerating the loader's fallback path reproduces it row-for-row (it is the training distribution with waits scaled by 1.15). Scored against even this <em>schema-matched proxy</em>, the model transfers with <strong>R² ≈ 0.015</strong> (MAE ≈ 15 ts vs holdout 4.7). Transfer to genuinely real traces can only be harder. The loader now parses real SWF files correctly (an off-by-one in the field mapping was also fixed), falls back <em>loudly</em>, labels everything <code>synthetic_proxy_trace</code>, and documents where to download real traces. Closing this gap is <a href="#future">future-scope item #1</a>.</p>
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<section id="explainability">
+  <div class="kicker">Evidence · 4</div>
+  <h2>Explainability (SHAP)</h2>
+  <p>SHAP (SHapley Additive exPlanations) attributes each individual prediction to feature contributions — the difference between "the model said 12 ts" and "the model said 12 ts <em>because</em> the queue is long and only one node could host this job". The pipeline regenerates 16 SHAP figures into <code>05_results/shap/</code>:</p>
+  <ul>
+    <li><strong>Global summary</strong> (<code>shap_summary.png</code>) — feature impact ranked across 400 sampled predictions; agrees with the importance chart above (job size and queue state dominate).</li>
+    <li><strong>12 dependence plots</strong> — how each feature's value moves predictions, exposing the learned non-linearities (e.g., <code>queue_pressure</code> matters only once <code>can_fit_now</code> is 0).</li>
+    <li><strong>3 force plots</strong> — single-prediction anatomies, the artifact you'd show an operator asking "why was my job predicted to wait?"</li>
+  </ul>
+  <div class="imggrid">
+    <a href="../05_results/shap/shap_summary.png" target="_blank"><img src="../05_results/shap/shap_summary.png" alt="SHAP global summary plot" onerror="this.parentElement.style.display='none'"><div class="cap">Global summary — impact per feature</div></a>
+    <a href="../05_results/shap/shap_dependence_queue_pressure.png" target="_blank"><img src="../05_results/shap/shap_dependence_queue_pressure.png" alt="SHAP dependence plot for queue_pressure" onerror="this.parentElement.style.display='none'"><div class="cap">Dependence — queue_pressure</div></a>
+    <a href="../05_results/shap/shap_force_0.png" target="_blank"><img src="../05_results/shap/shap_force_0.png" alt="SHAP force plot for a single prediction" onerror="this.parentElement.style.display='none'"><div class="cap">Force plot — one prediction, explained</div></a>
+  </div>
+  <p style="font-size:0.85rem;color:var(--ink-3)">(Images resolve when this page is opened from <code>docs/</code> inside the repository.)</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="roi">
+  <div class="kicker">Evidence · 5</div>
+  <h2>ROI estimate — clearly labelled as an estimate</h2>
+  <p>Phase 19 converts the measured 7.7% mean-wait improvement into money under explicit assumptions (180,000 jobs/yr, 2.5 GPU-hr average job, $2.20/GPU-hr cloud rate, 0.35 kWh/GPU-hr at $0.14/kWh, $42k deployment cost):</p>
+  <div class="cards c3">
+    <div class="card"><div class="kpi" style="border:0;padding:0;box-shadow:none"><div class="label">GPU-hours saved / yr</div><div class="value">34.7k</div><div class="delta">of 450k baseline</div></div></div>
+    <div class="card"><div class="kpi" style="border:0;padding:0;box-shadow:none"><div class="label">Total annual savings</div><div class="value">$78k</div><div class="delta">cloud $76.4k + energy $1.7k</div></div></div>
+    <div class="card"><div class="kpi" style="border:0;padding:0;box-shadow:none"><div class="label">First-year ROI</div><div class="value">86%</div><div class="delta">vs $42k deployment cost</div></div></div>
+  </div>
+  <p style="margin-top:12px">The linear wait→GPU-hour conversion is generous (queued jobs don't burn GPUs; the true saving is in <em>time-to-result</em> and capacity deferral). Treat this as an order-of-magnitude illustration; <code>05_results/roi_analysis.py</code> recomputes it with your own rates.</p>
+</section>
+<!-- ================================================================ -->
+<section id="repo">
+  <div class="kicker">The repository · 1</div>
+  <h2>Every file, explained</h2>
+  <p>The repository is organised as a numbered pipeline — data flows from <code>01_</code> to <code>05_</code>, with later research phases in <code>phases_22_30/</code> and superseded experiments preserved in <code>07_archive/</code>.</p>
+
+<div class="tree">
+<b>proactive-feasibility-scheduler-main/</b>
+├── <span class="dir">01_simulation/</span>          <span class="cm">— the cluster simulator</span>
+├── <span class="dir">02_data/</span>                <span class="cm">— dataset generators + generated CSVs + trace loader</span>
+├── <span class="dir">03_models/</span>              <span class="cm">— training, comparison, ablation, SHAP, tuning, drift</span>
+├── <span class="dir">04_scheduler/</span>           <span class="cm">— five scheduling policies + benchmarks</span>
+├── <span class="dir">05_results/</span>             <span class="cm">— all generated tables (CSV) and figures (PNG)</span>
+├── <span class="dir">06_paper/</span>               <span class="cm">— reference papers (PDF)</span>
+├── <span class="dir">07_archive/</span>             <span class="cm">— superseded v1 experiments, kept for provenance</span>
+├── <span class="dir">phases_22_30/</span>           <span class="cm">— advanced validation & publication phases</span>
+├── <span class="dir">docs/</span>                   <span class="cm">— this documentation</span>
+├── dashboard.py            <span class="cm">— Streamlit results explorer</span>
+├── run_all_experiments.sh  <span class="cm">— one-command reproducibility pipeline</span>
+├── Dockerfile · requirements.txt · DEPLOYMENT.md
+└── README.md · RESULTS.md · METHODOLOGY.md · README_REPRODUCIBILITY.md
+</div>
+
+  <h3>01_simulation — the simulator</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>File</th><th>What it does</th><th>Outputs</th></tr></thead>
+    <tbody>
+      <tr><td><code>minimal_gpu_cluster.py</code></td><td>The original proof-of-concept FIFO simulator: Job/Cluster classes, greedy multi-node allocation with rollback, utilisation tracking. Everything else in the project descends from this file.</td><td>console metrics</td></tr>
+      <tr><td><code>dataset_minimal_gpu_cluster.py</code></td><td>Same simulator instrumented to snapshot 6 features per arrival and emit a binary "will it start within Δt?" <em>classification</em> dataset — the project's first ML formulation, later superseded by wait-time regression.</td><td><code>02_data/dataset.csv</code></td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>02_data — datasets &amp; traces</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>File</th><th>What it does</th><th>Outputs</th></tr></thead>
+    <tbody>
+      <tr><td><code>generate_improved_dataset.py</code></td><td><strong>The canonical generator</strong> (pipeline step 0): 20 seeded simulation runs, 12 leak-free features per arrival, continuous wait-time label.</td><td><code>improved_wait_dataset.csv</code> (2,200 × 13)</td></tr>
+      <tr><td><code>generate_load_profiles.py</code></td><td>Three contention profiles (low/high/mixed-bursty) + per-profile XGBoost evaluation; guards against zero-variance targets (audit fix).</td><td>3 profile CSVs + performance CSV</td></tr>
+      <tr><td><code>generate_large_dataset.py</code></td><td>Legacy generator for the v1 dataset; feature formulas aligned to canonical definitions by the audit.</td><td><code>wait_dataset.csv</code> (legacy)</td></tr>
+      <tr><td><code>load_real_traces.py</code></td><td>Standard Workload Format (SWF) parser for real HPC traces (field mapping fixed by audit) with a <em>loud, honestly-labelled</em> synthetic fallback when no trace file exists.</td><td><code>lanl_trace_sample.csv</code></td></tr>
+      <tr><td><code>synthetic_vs_real_comparison.py</code></td><td>Scores the trained model on the synthetic holdout vs the (proxy) trace — the sim-to-real gap measurement. Split-before-fit bug fixed by audit.</td><td><code>05_results/traces/*</code></td></tr>
+      <tr><td><em>CSVs</em></td><td><code>improved_wait_dataset.csv</code> (canonical training data) · <code>wait_dataset.csv</code>/<code>large_dataset.csv</code>/<code>dataset.csv</code> (legacy) · 3 load-profile CSVs · <code>lanl_trace_sample.csv</code> (synthetic proxy)</td><td>—</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>03_models — model science</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>File</th><th>What it does</th><th>Outputs</th></tr></thead>
+    <tbody>
+      <tr><td><code>train_improved_model.py</code></td><td><strong>Trains the production model</strong>: XGBoost on the 12 features, honest holdout + 5-fold CV, importance plot.</td><td><code>wait_model_v2.pkl</code> (model + feature list)</td></tr>
+      <tr><td><code>compare_multiple_models.py</code></td><td>Table 1: seven regressors (LR, RF, LightGBM, CatBoost, sklearn GB, MLP, XGBoost) on identical splits.</td><td><code>model_comparison_table1.csv</code></td></tr>
+      <tr><td><code>ablation_study.py</code></td><td>Leave-one-feature-out: retrains 13 times, ranks features by R² drop.</td><td><code>ablation_study_results.csv</code> + plot</td></tr>
+      <tr><td><code>explainability_shap.py</code></td><td>SHAP summary, 12 dependence plots, 3 force plots.</td><td><code>05_results/shap/</code> (16 PNGs)</td></tr>
+      <tr><td><code>tune_xgboost.py</code></td><td>GridSearchCV over 243 configs × 3 folds (729 fits); baseline vs tuned.</td><td><code>xgboost_tuning_results.csv</code></td></tr>
+      <tr><td><code>online_learning.py</code></td><td>Incremental SGD on a drifted stream vs frozen model.</td><td><code>online_learning_results.csv</code></td></tr>
+      <tr><td><code>concept_drift_detection.py</code></td><td>Rolling-MAE drift monitor with retraining triggers on an 880-sample stream.</td><td><code>concept_drift_results.csv</code> + plot</td></tr>
+      <tr><td><code>train_wait_model.py</code> · <code>train_model_withxg.py</code></td><td>Legacy v1 regression trainer and the early feasibility-classification comparison (LogReg/RF/XGB). Path bugs fixed by audit; kept as history.</td><td>legacy model / console</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>04_scheduler — policies &amp; benchmarks</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>File</th><th>What it does</th><th>Outputs</th></tr></thead>
+    <tbody>
+      <tr><td><code>proactive_Schedule_v2.py</code></td><td><strong>The headline experiment</strong>: 10 paired runs FIFO vs model-reordered queue, dispatch-all-that-fit semantics.</td><td>console</td></tr>
+      <tr><td><code>benchmark_statistical.py</code></td><td><strong>The statistical benchmark</strong>: 40 seeded paired runs, paired t-test, Wilcoxon, 95% CIs.</td><td><code>benchmark_statistical_{results,summary}.csv</code></td></tr>
+      <tr><td><code>multi_scheduler_benchmark.py</code></td><td>FIFO vs SJF vs Priority vs NN vs Proactive on identical workloads; wait/tail/Gini/throughput/utilisation (+ honest <code>pred_wait_mae</code> for the two predictor policies).</td><td><code>schedulers/multi_scheduler_benchmark.csv</code> + plot</td></tr>
+      <tr><td><code>fairness_analysis.py</code></td><td>FIFO vs Proactive vs anti-starvation variant: Gini, starvation counts, per-size breakdowns (per-size chart de-faked by audit).</td><td><code>fairness/*</code></td></tr>
+      <tr><td><code>scaling_analysis.py</code></td><td>Wait advantage + scheduling overhead at 8→256 GPUs.</td><td><code>scaling/scaling_analysis.csv</code> + plot</td></tr>
+      <tr><td><code>sensitivity_analysis.py</code></td><td>Model quality across 8 shifted scenarios (the precursor to phase 23).</td><td><code>sensitivity_analysis_results.csv</code></td></tr>
+      <tr><td><code>sjf_scheduler.py</code> · <code>priority_scheduler.py</code> · <code>neural_network_scheduler.py</code></td><td>Importable policy helpers (SJF sort, priority+aging, MLP reranker).</td><td>—</td></tr>
+      <tr><td><code>proactive_scheduler.py</code></td><td>v1 of the experiment (one-job-per-tick bug fixed by audit; superseded by v2, kept for provenance).</td><td>console</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>05_results — generated artifacts</h3>
+  <p>Everything here is <em>output</em> — regenerated by the pipeline, safe to delete. Organised by analysis: <code>models/</code> (ablation, drift, online learning), <code>schedulers/</code>, <code>fairness/</code>, <code>scaling/</code>, <code>shap/</code>, <code>traces/</code>, <code>roi/</code>, plus top-level headline figures. Two scripts live here: <code>benchmark_and_plot.py</code> (10-run benchmark + publication plots) and <code>roi_analysis.py</code> (cost-benefit; long-format parser fixed by audit).</p>
+
+  <h3>phases_22_30 — advanced validation &amp; publication</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Phase</th><th>File</th><th>What it does now (post-audit)</th></tr></thead>
+    <tbody>
+      <tr><td>22</td><td><code>stats_bootstrap.py</code></td><td>Bootstrap 95% CIs + BH-corrected paired tests on the real 40-run benchmark; zero-variance comparisons honestly reported "n/a".</td></tr>
+      <tr><td>23</td><td><code>sensitivity_ood_analysis.py</code></td><td>72-scenario OOD stress test — now scores the <em>real trained model</em> on <em>real shifted simulations</em> (previously a silent heuristic stand-in).</td></tr>
+      <tr><td>24</td><td><code>scheduler_comparison.py</code></td><td>Scheduler-landscape comparison from real benchmark CSVs (fabricated SLURM/K8s/Yarn constants removed); writes a data-derived novelty statement.</td></tr>
+      <tr><td>25</td><td><code>trace_preprocessing.py</code></td><td>Real-trace ingestion scaffold; falls back loudly to labelled synthetic proxies, with download instructions for LANL/Alibaba traces.</td></tr>
+      <tr><td>26</td><td><code>scaling_benchmark.py</code></td><td>Saturation stress test at 32–256 GPUs with <em>real</em> queue simulation and <em>real</em> model-inference timing (fabricated wait formula replaced).</td></tr>
+      <tr><td>27</td><td><code>fairness_sla_analysis.py</code></td><td>Gini/Jain/SLA computed from real per-run and per-job data; schedulers without real data dropped and listed.</td></tr>
+      <tr><td>28</td><td><code>manuscript.tex</code></td><td>LaTeX draft — compiles cleanly, all citations resolve, and every number matches the regenerated artifacts (including the trade-offs).</td></tr>
+      <tr><td>29</td><td><code>run_all_experiments_v2.sh</code></td><td>Phases 22–27 driver with logging; UTF-8-safe, path-correct.</td></tr>
+      <tr><td>30</td><td><code>../DEPLOYMENT.md</code></td><td>Operations runbook: preconditions, shadow→advisory→active rollout, monitoring thresholds, drift response, rollback.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Root files</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>File</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td><code>run_all_experiments.sh</code></td><td>The one-command pipeline (12 steps, ordering fixed by audit, exports <code>PYTHONUTF8=1</code>).</td></tr>
+      <tr><td><code>dashboard.py</code></td><td>Streamlit explorer: renders every result CSV as a table and browses SHAP images. <code>streamlit run dashboard.py</code>.</td></tr>
+      <tr><td><code>Dockerfile</code> · <code>requirements.txt</code></td><td>Container reproduction; pins verified working on Python 3.14 (audit re-pinned all versions and added missing seaborn/joblib).</td></tr>
+      <tr><td><code>README.md</code> · <code>RESULTS.md</code> · <code>METHODOLOGY.md</code> · <code>README_REPRODUCIBILITY.md</code> · <code>DEPLOYMENT.md</code></td><td>Project docs — all synced to the regenerated honest numbers.</td></tr>
+      <tr><td><code>07_archive/</code></td><td>v1 feasibility classifiers, v1 wait model, early sanity checks — headers now mark them ARCHIVED and name their successors; paths fixed so they still run.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ================================================================ -->
+<section id="pipeline">
+  <div class="kicker">The repository · 2</div>
+  <h2>Reproducibility pipeline</h2>
+  <p>One command rebuilds the entire evidence chain from a clean checkout — <code>bash run_all_experiments.sh</code>:</p>
+  <div class="flow">
+    <div class="step"><b>Generate + train</b>Seeded dataset (2,200 rows) → train wait_model_v2 (holdout + CV)</div>
+    <div class="step"><b>Ablation</b>13 retrains, feature ranking</div>
+    <div class="step"><b>Fairness</b>FIFO vs Proactive vs anti-starvation</div>
+    <div class="step"><b>5-scheduler benchmark</b>wait/tail/Gini/throughput</div>
+    <div class="step"><b>SHAP</b>16 explainability figures</div>
+    <div class="step"><b>Traces</b>SWF load (or labelled proxy) + transfer scoring</div>
+    <div class="step"><b>Scaling</b>8→256 GPUs advantage + overhead</div>
+    <div class="step"><b>Online + drift</b>incremental learning, drift triggers</div>
+    <div class="step"><b>40-run statistics</b>paired tests, CIs</div>
+    <div class="step"><b>ROI</b>cost-benefit from measured improvement</div>
+    <div class="step"><b>Table 1</b>7-model comparison</div>
+    <div class="step"><b>Dashboard-ready</b>all CSVs/PNGs in 05_results/</div>
+  </div>
+  <p>Then <code>bash phases_22_30/run_all_experiments_v2.sh</code> runs the phase 22–27 analyses against those artifacts. Both scripts are seeded, cwd-independent, and UTF-8-safe on Windows. Docker: <code>docker build -t proactive-scheduler . &amp;&amp; docker run --rm proactive-scheduler</code>.</p>
+  <div class="callout good">
+    <div class="t">Verified on this machine (July 2026)</div>
+    Full pipeline: <strong>12/12 steps, exit 0, zero tracebacks</strong> (Python 3.14.3, Windows 11). Phases 22–27: all pass. Two consecutive dataset generations produce byte-identical CSVs.
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<section id="phases">
+  <div class="kicker">The repository · 3</div>
+  <h2>The 30 research phases</h2>
+  <p>The project evolved through 30 tracked phases — from a toy simulator to a publication-grade package. Condensed status (details in <code>phases_22_30/PHASES_ROADMAP.md</code>):</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Phases</th><th>Theme</th><th>Delivered</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>01–05</td><td>Foundations</td><td>Simulator; feasibility classification (v1 ML formulation); first datasets</td><td><span class="chip ok">done</span></td></tr>
+      <tr><td>06–09</td><td>Pivot to regression</td><td>Wait-time prediction; leak removal; 12-feature schema; v2 model; proactive scheduler v1→v2</td><td><span class="chip ok">done</span></td></tr>
+      <tr><td>10–15</td><td>Model science</td><td>Multi-model Table 1; tuning; ablation; fairness analysis; 5-scheduler benchmark; SHAP</td><td><span class="chip ok">done</span></td></tr>
+      <tr><td>16–21</td><td>Robustness &amp; ops</td><td>Trace scaffolding; scaling; online learning; drift detection; ROI; dashboard + reproducibility kit</td><td><span class="chip ok">done</span></td></tr>
+      <tr><td>22</td><td>Statistical rigor</td><td>Bootstrap CIs, BH-corrected paired tests on the 40-run benchmark</td><td><span class="chip ok">done</span></td></tr>
+      <tr><td>23</td><td>OOD robustness</td><td>72-scenario domain-shift stress test of the real model</td><td><span class="chip ok">done</span></td></tr>
+      <tr><td>24</td><td>Scheduler landscape</td><td>Comparison vs real implementations (fabricated industry baselines removed)</td><td><span class="chip ok">done</span></td></tr>
+      <tr><td>25</td><td>Real traces</td><td>SWF parser + preprocessing scaffold; <strong>no real trace evaluated yet</strong></td><td><span class="chip warn">open</span></td></tr>
+      <tr><td>26</td><td>Scaling validation</td><td>Saturation stress test 32–256 GPUs, real inference timing</td><td><span class="chip ok">done</span></td></tr>
+      <tr><td>27</td><td>Fairness &amp; SLA</td><td>Gini/Jain/SLA from real distributions; trade-off quantified (not claimed away)</td><td><span class="chip ok">done</span></td></tr>
+      <tr><td>28</td><td>Manuscript</td><td>LaTeX draft, numbers synced to regenerated artifacts</td><td><span class="chip ok">draft</span></td></tr>
+      <tr><td>29</td><td>Reproducibility</td><td>Seeded one-command pipelines, Docker, verified pins</td><td><span class="chip ok">done</span></td></tr>
+      <tr><td>30</td><td>Deployment guide</td><td><code>DEPLOYMENT.md</code>: rollout modes, monitoring, fallback, rollback</td><td><span class="chip ok">done</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ================================================================ -->
+<section id="audit">
+  <div class="kicker">The repository · 4</div>
+  <h2>The July 2026 audit &amp; repairs</h2>
+  <p>Before this documentation was written, the entire repository was audited: every file read, every claim adversarially re-verified against the code and data by independent checks, every script executed. <strong>37 defects were confirmed and all 37 were fixed</strong>; 6 additional suspected issues were investigated and refuted. A pre-repair backup of the project exists alongside the repository folder.</p>
+  <div class="cards c2">
+    <div class="card">
+      <h4 style="margin-top:0">🔬 Scientific-integrity fixes (the ones that matter)</h4>
+      <ul style="font-size:0.9rem">
+        <li><strong>Fake "real" trace exposed &amp; relabelled</strong> — <code>lanl_trace_sample.csv</code> proven to be the synthetic fallback (row-for-row reproduction); all docs now say <em>synthetic proxy</em>, and the loader fails loudly.</li>
+        <li><strong>In-sample "holdout" fixed</strong> — a script fit on all data <em>before</em> splitting, inflating R² to 0.96; split-before-fit restores the honest 0.82–0.84.</li>
+        <li><strong>Fabricated results removed from four phase scripts</strong> — OOD analysis used a heuristic instead of the model; scheduler comparison, scaling, and fairness/SLA used hardcoded constants (zero-variance arrays, invented latencies). All four now compute from real data/simulations.</li>
+        <li><strong>Manuscript contradictions corrected</strong> — claims of improved fairness (Gini 0.37 vs 0.42) and confirmed sim-to-real generalization contradicted the project's own measurements; now reports the true trade-offs.</li>
+        <li><strong>v1 scheduler dispatch bug</strong> — a stray <code>break</code> limited proactive to one job/tick in the earliest experiment.</li>
+        <li><strong>Degenerate experiment repaired</strong> — the low-contention profile produced all-zero waits (trivial R² = 1.0); now has real variance plus a zero-variance guard.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4 style="margin-top:0">🔧 Engineering fixes</h4>
+      <ul style="font-size:0.9rem">
+        <li><strong>5 missing dependencies installed &amp; re-pinned</strong> (shap, lightgbm, catboost, streamlit, plotly — declared but absent; two pipeline steps could never run).</li>
+        <li><strong>Seeded end-to-end</strong> — dataset generation was unseeded, so every "reproduction" produced different data. Now deterministic (global 42, per-run 42+i).</li>
+        <li><strong>Windows Unicode crashes fixed</strong> — cp1252 console encoding crashed three scripts; pipelines export <code>PYTHONUTF8=1</code> and all writes specify UTF-8.</li>
+        <li><strong>Path bugs</strong> — eight scripts only worked from one working directory; all now resolve paths from their own location.</li>
+        <li><strong>Pipeline ordering</strong> — ROI ran <em>before</em> the benchmark that produces its input (and silently used a stale wide-format file its parser could never read). Reordered + parser fixed.</li>
+        <li><strong>SWF parser off-by-one</strong> — requested-processors read from the wrong SWF field (would have corrupted any future real-trace run).</li>
+        <li><strong>Docs de-linted</strong> — missing <code>docs/</code> and <code>DEPLOYMENT.md</code> created; stale numbers, dead paths, and unresolved LaTeX citations fixed.</li>
+      </ul>
+    </div>
+  </div>
+  <p style="margin-top:12px">Full verification: main pipeline 12/12 steps green · phases 22–27 green · 8 standalone scripts green · manuscript structurally valid (balanced environments, all citations resolve).</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="limitations">
+  <div class="kicker">Outlook · 1</div>
+  <h2>Honest limitations</h2>
+  <ol>
+    <li><strong>No real-workload validation.</strong> Everything is synthetic; the one "trace" is a proxy derived from the training distribution, and even it defeats the model (R² ≈ 0.02). This is the wall between the current results and any real-world claim.</li>
+    <li><strong>The simulator is minimal.</strong> Uniform job sizes/runtimes, single job class, no preemption, no node failures, no placement constraints (jobs span nodes freely), no runtime uncertainty. Real waits have heavier tails and richer structure.</li>
+    <li><strong>The effect is modest and noisy.</strong> 7.7% mean improvement with σ 8.9 — 7 of 40 runs went the other way. Statistically solid, operationally small.</li>
+    <li><strong>Fairness/tail costs are real.</strong> Unmitigated, max wait doubles; the anti-starvation patch recovers only part of it and adds its own churn.</li>
+    <li><strong>OOD fragility.</strong> Mean R² &lt; 0 across shifted regimes means the model, as-is, must not be deployed beyond its training distribution without retraining and a fallback.</li>
+    <li><strong>Baseline gap.</strong> No backfill (SLURM's actual policy) baseline yet — the comparison flatters proactive by omitting the strongest practical competitor.</li>
+    <li><strong>ROI is illustrative.</strong> Linear wait→cost conversion; assumption-heavy.</li>
+  </ol>
+</section>
+
+<!-- ================================================================ -->
+<section id="future">
+  <div class="kicker">Outlook · 2</div>
+  <h2>Future scope — a concrete research roadmap</h2>
+  <p>Ordered by scientific leverage per unit of effort. The first tier turns this from a strong coursework project into a publishable paper; the second makes the method competitive; the third is a research program.</p>
+
+  <h3>Tier 1 — Validity (do these first)</h3>
+  <div class="cards c2">
+    <div class="card"><h4 style="margin-top:0">1 · Validate on real traces <span class="chip bad">highest priority</span></h4>
+      <p>Download 2–3 real workloads — LANL CM-5 / SDSC-SP2 SWF traces from the <a href="https://www.cs.huji.ac.il/labs/parallel/workload/" target="_blank">Parallel Workloads Archive</a> and the <a href="https://github.com/alibaba/clusterdata" target="_blank">Alibaba GPU cluster trace</a>. Replay them through the simulator, <strong>retrain per trace</strong>, and report within-trace holdout + cross-trace transfer. The SWF parser and preprocessing scaffold are already in place (<code>02_data/load_real_traces.py</code>, phase 25). Every other claim in the project gains or loses credibility with this one experiment.</p></div>
+    <div class="card"><h4 style="margin-top:0">2 · Implement a real backfill baseline <span class="chip bad">highest priority</span></h4>
+      <p>EASY/conservative backfilling is what SLURM actually does and the strongest practical competitor. Implement it in the simulator (~100 lines: reserve start for queue head, let jobs that won't delay it jump ahead). If proactive can't beat or complement backfill, that's essential to know; if it can (e.g., <em>predicted-wait-aware backfill</em>), that's the paper's novelty.</p></div>
+    <div class="card"><h4 style="margin-top:0">3 · Bound the fairness cost principledly</h4>
+      <p>Replace the ad-hoc 3×-mean bump with a <strong>hard wait budget</strong>: reorder freely subject to no job's predicted start exceeding its FIFO-position start by more than B ts. Sweep B to trace the actual mean-wait ↔ tail-latency Pareto frontier — turning today's weakness into a tunable, publishable result.</p></div>
+    <div class="card"><h4 style="margin-top:0">4 · Richer, harder workloads</h4>
+      <p>Poisson + diurnal arrivals, heavy-tailed (log-normal) runtimes, mixed job classes, per-node placement constraints, preemption, node failures. The current uniform workload is the easiest possible case for a predictor; credibility requires the hard cases. All generators are seeded — extending them preserves reproducibility.</p></div>
+  </div>
+
+  <h3>Tier 2 — Method improvements</h3>
+  <div class="cards c2">
+    <div class="card"><h4 style="margin-top:0">5 · Uncertainty-aware scheduling</h4><p>Swap point predictions for <strong>quantile regression</strong> (XGBoost <code>reg:quantileerror</code>, or NGBoost/conformal intervals). Schedule on an upper-confidence wait; auto-fallback to FIFO when intervals blow out. This directly addresses the OOD fragility with the model's own uncertainty signal.</p></div>
+    <div class="card"><h4 style="margin-top:0">6 · Smarter scoring than "sort by ŵ"</h4><p>Sorting by predicted wait conflates "easy to place" with "should go first". Try <em>impact-aware</em> scores — ŵ × requested GPUs (delay-cost), aging-weighted ŵ, or expected-slowdown (ŵ / runtime estimate) — and compare against SJF given <em>predicted</em> (not oracle) runtimes for a fair fight.</p></div>
+    <div class="card"><h4 style="margin-top:0">7 · Close the online-learning loop</h4><p>Drift detection (7 correct triggers) and online retraining (MAE 6.98→6.88) exist as separate experiments. Wire them <em>into the scheduler</em>: drift trigger → FIFO fallback → incremental retrain → shadow-validate → re-promote. That's the production story DEPLOYMENT.md describes — implement and measure it.</p></div>
+    <div class="card"><h4 style="margin-top:0">8 · Engineering hardening</h4><p>Make it a git repo with CI (the audit found no version control). Extract the copy-pasted Job/Cluster/simulation code (10 near-duplicates) into a shared <code>simlib/</code> package with unit tests; add a config file for cluster/workload parameters; property-based tests for the allocator (allocation+rollback invariants).</p></div>
+  </div>
+
+  <h3>Tier 3 — Research program</h3>
+  <div class="cards c2">
+    <div class="card"><h4 style="margin-top:0">9 · Learned-policy comparison</h4><p>Position against reinforcement-learning schedulers (Decima-style graph-NN + policy gradient). Hypothesis worth testing: the XGBoost reranker gets most of the benefit at a fraction of the training cost and with far better explainability — a valuable negative/efficiency result either way.</p></div>
+    <div class="card"><h4 style="margin-top:0">10 · Multi-objective optimization</h4><p>Optimize wait + fairness + energy jointly (constrained optimization or scalarization sweeps); report Pareto fronts rather than single points. The fairness budget from item 3 is the natural first axis; carbon-aware scheduling (shift flexible jobs to low-carbon hours) is the third.</p></div>
+    <div class="card"><h4 style="margin-top:0">11 · Shadow deployment study</h4><p>Run the DEPLOYMENT.md shadow-mode protocol on a real (even small) SLURM cluster: log features + realized waits for a term, retrain, and report the real-data holdout R². This single number — the real-world analogue of 0.84 — would anchor the whole research line.</p></div>
+    <div class="card"><h4 style="margin-top:0">12 · Publication path</h4><p>With Tier 1 done: a workshop paper (JSSPP — the scheduling workshop whose literature this project already cites — or an SC/HPDC workshop) framed around the <em>honest trade-off study</em>: "what wait-prediction reordering buys, what it costs, and when it breaks". The reproducibility kit is already artifact-evaluation-grade.</p></div>
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<section id="glossary">
+  <div class="kicker">Reference</div>
+  <h2>Glossary</h2>
+  <div class="tablewrap"><table>
+    <tbody>
+      <tr><td><strong>Discrete-time simulation</strong></td><td>Time advances in integer steps; at each step the system releases finished jobs, admits arrivals, and dispatches what fits. Simple, transparent, and sufficient for queueing dynamics.</td></tr>
+      <tr><td><strong>FIFO</strong></td><td>First-In, First-Out — serve jobs strictly in arrival order. The fairness gold standard and the universal baseline.</td></tr>
+      <tr><td><strong>SJF</strong></td><td>Shortest-Job-First — provably optimal for mean wait, but requires knowing runtimes in advance and starves long jobs.</td></tr>
+      <tr><td><strong>Backfilling</strong></td><td>Letting small jobs jump the queue when they won't delay the reserved start of the job at the head. SLURM's production policy.</td></tr>
+      <tr><td><strong>XGBoost</strong></td><td>A gradient-boosted decision-tree library: builds hundreds of small trees, each correcting the previous ensemble's errors. State of the art for tabular data at this scale.</td></tr>
+      <tr><td><strong>R²</strong></td><td>Coefficient of determination — the fraction of target variance explained. 1 = perfect; 0 = no better than predicting the mean; negative = worse than that.</td></tr>
+      <tr><td><strong>MAE</strong></td><td>Mean Absolute Error — average |prediction − truth|, here in time-steps. Robust and directly interpretable.</td></tr>
+      <tr><td><strong>Holdout / cross-validation</strong></td><td>Evaluating on data the model never saw (a held-out 20%, or 5 rotating folds). The only honest measure of generalisation.</td></tr>
+      <tr><td><strong>Data leakage</strong></td><td>A feature that encodes the answer (here: queue rank under FIFO ≈ wait time). Produces spectacular, meaningless accuracy.</td></tr>
+      <tr><td><strong>Paired benchmark</strong></td><td>Both schedulers process the <em>same</em> job sets; differences per run are attributable to policy alone. Enables paired statistical tests.</td></tr>
+      <tr><td><strong>Paired t-test / Wilcoxon</strong></td><td>Significance tests on paired differences (parametric / rank-based). Small p ⇒ the improvement is unlikely to be luck.</td></tr>
+      <tr><td><strong>Bootstrap CI</strong></td><td>Confidence interval built by resampling the observed runs thousands of times — no normality assumption.</td></tr>
+      <tr><td><strong>Gini coefficient</strong></td><td>Inequality measure applied to waits: 0 = everyone waits equally; higher = waiting concentrated on few jobs.</td></tr>
+      <tr><td><strong>Jain's fairness index</strong></td><td>Alternative fairness measure (1 = perfectly fair, 1/n = one job takes everything).</td></tr>
+      <tr><td><strong>Starvation</strong></td><td>A job waiting far beyond typical (here: &gt; 3× mean wait). Reordering policies risk it structurally.</td></tr>
+      <tr><td><strong>OOD (out-of-distribution)</strong></td><td>Conditions unlike the training data (different arrival rates, cluster sizes, job mixes). Where ML models quietly fail.</td></tr>
+      <tr><td><strong>Concept drift</strong></td><td>The world changing under a deployed model. Detected here by rolling prediction error crossing a threshold.</td></tr>
+      <tr><td><strong>SHAP</strong></td><td>Game-theoretic attribution of each prediction to feature contributions — local and global explainability.</td></tr>
+      <tr><td><strong>SWF</strong></td><td>Standard Workload Format — the archive format for real HPC traces (one job per line, 18 fields).</td></tr>
+      <tr><td><strong>ts (time-step)</strong></td><td>The simulator's clock unit. All waits/runtimes are in ts; absolute wall-clock meaning depends on how a real deployment maps it.</td></tr>
+    </tbody>
+  </table></div>
+
+  <footer>
+    <p><strong>Proactive Feasibility Scheduler</strong> — complete project documentation · generated July 2026 after the full audit &amp; repair pass · all numbers regenerated by the seeded pipeline on Python 3.14 / Windows 11.<br>
+    Companion docs: <code>README.md</code> · <code>RESULTS.md</code> · <code>METHODOLOGY.md</code> · <code>DEPLOYMENT.md</code> · <code>README_REPRODUCIBILITY.md</code> · manuscript draft in <code>phases_22_30/phase_28_manuscript/</code>.</p>
+  </footer>
+</section>
+
+</main>
+</div>
+
+<div id="tooltip" role="status" aria-live="polite"></div>
+<button id="toTop" type="button" aria-label="Back to top" title="Back to top">↑</button>
+<div id="scrim"></div>
+<div id="lightbox" role="dialog" aria-label="Image viewer"><img alt=""><div class="cap"></div></div>
+
+<script>
+/* ================= Theme toggle ================= */
+(function () {
+  var btn = document.getElementById('themeBtn');
+  var stored = null;
+  try { stored = localStorage.getItem('pfs-theme'); } catch (e) {}
+  if (stored) document.documentElement.setAttribute('data-theme', stored);
+  btn.addEventListener('click', function () {
+    var cur = document.documentElement.getAttribute('data-theme');
+    var next = cur === 'dark' ? 'light'
+      : cur === 'light' ? 'dark'
+      : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'light' : 'dark');
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('pfs-theme', next); } catch (e) {}
+  });
+})();
+
+/* ================= Scroll-spy ================= */
+(function () {
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.sidebar a'));
+  var map = {};
+  links.forEach(function (a) { map[a.getAttribute('href').slice(1)] = a; });
+  var obs = new IntersectionObserver(function (entries) {
+    entries.forEach(function (en) {
+      if (en.isIntersecting) {
+        links.forEach(function (a) { a.classList.remove('active'); });
+        var a = map[en.target.id]; if (a) a.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  document.querySelectorAll('main section[id]').forEach(function (s) { obs.observe(s); });
+})();
+
+/* ================= Chart data (regenerated 2026-07) ================= */
+var DATA = {
+  featImportance: [
+    { label: 'job_gpu', v: 0.2609 }, { label: 'queue_length', v: 0.2234 },
+    { label: 'node_availability', v: 0.1685 }, { label: 'can_fit_now', v: 0.1217 },
+    { label: 'max_free_node', v: 0.0466 }, { label: 'avg_free_per_node', v: 0.0412 },
+    { label: 'queue_pressure', v: 0.0284 }, { label: 'gpu_fit_ratio', v: 0.0245 },
+    { label: 'variance_free', v: 0.0242 }, { label: 'fragmentation', v: 0.0237 },
+    { label: 'total_free', v: 0.0204 }, { label: 'running_jobs', v: 0.0165 }
+  ],
+  modelComparison: [
+    { label: 'LightGBM', v: 4.611 }, { label: 'CatBoost', v: 4.618 },
+    { label: 'XGBoost', v: 4.694, hot: true }, { label: 'Random Forest', v: 4.700 },
+    { label: 'MLP (neural net)', v: 4.712 }, { label: 'Gradient Boosting', v: 4.719 },
+    { label: 'Linear Regression', v: 6.318 }
+  ],
+  pairedRuns: [17.7, -1.0, -3.3, 14.8, 2.8, 9.1, 3.2, 9.8, 2.6, -2.6,
+               4.0, 20.3, 20.9, 7.6, 10.9, 10.9, 3.6, -8.0, 1.4, 16.0,
+               -11.6, 2.9, -0.7, 4.9, 8.6, 9.8, 21.7, 12.1, 6.8, 23.2,
+               16.5, 4.9, -14.6, 22.0, 11.7, 9.3, 10.4, 5.2, 13.9, 10.5],
+  schedulerWait: [
+    { label: 'SJF (needs runtime oracle)', v: 12.00 }, { label: 'NN reranker', v: 15.69 },
+    { label: 'Proactive', v: 15.71, hot: true }, { label: 'Priority + aging', v: 16.34 },
+    { label: 'FIFO', v: 16.65 }
+  ],
+  schedulerTail: [
+    { label: 'SJF', v: 143.5 }, { label: 'NN', v: 134.2 },
+    { label: 'Proactive', v: 125.7, hot: true }, { label: 'Priority', v: 127.7 },
+    { label: 'FIFO', v: 53.9 }
+  ],
+  schedulerGini: [
+    { label: 'SJF', v: 0.782 }, { label: 'NN', v: 0.796 },
+    { label: 'Proactive', v: 0.790, hot: true }, { label: 'Priority', v: 0.739 },
+    { label: 'FIFO', v: 0.518 }
+  ],
+  fairness: {
+    groups: ['Mean wait (ts)', 'Max wait (ts)', 'Gini × 100'],
+    series: [
+      { name: 'FIFO', color: 'var(--deemph)', values: [18.58, 57.9, 52.6] },
+      { name: 'Proactive', color: 'var(--series-1)', values: [16.54, 124.8, 79.6] },
+      { name: 'Proactive + anti-starvation', color: 'var(--series-2)', values: [16.46, 87.2, 68.8] }
+    ]
+  },
+  scaling: {
+    x: [8, 32, 128, 256],
+    y: [14.4, 5.1, 0.0, 0.0],
+    xlab: 'Total GPUs (same 110-job workload)', ylab: 'Wait-time advantage vs FIFO (%)'
+  },
+  oodHeat: {
+    rows: ['0.5×', '0.75×', '1.0×', '1.25×', '1.5×', '2.0×'],
+    cols: ['4 nodes', '8 nodes', '16 nodes', '32 nodes'],
+    rowTitle: 'Arrival rate (× training)',
+    grid: [[-0.62, -0.19, 0.32, 0.22], [-0.74, -0.29, 0.23, 0.16],
+           [-1.04, -0.29, 0.19, -0.05], [-1.50, -0.25, -0.02, 0.42],
+           [-1.43, -0.36, -0.13, 0.29], [-1.70, -0.54, -0.25, 0.11]]
+  }
+};
+
+/* ================= Tiny chart library (dataviz-spec marks) ================= */
+var NS = 'http://www.w3.org/2000/svg';
+var tooltip = document.getElementById('tooltip');
+function el(n, attrs, parent) {
+  var e = document.createElementNS(NS, n);
+  for (var k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function showTip(evt, title, rows) {
+  tooltip.textContent = '';
+  var t = document.createElement('div'); t.className = 'tt-title'; t.textContent = title; tooltip.appendChild(t);
+  rows.forEach(function (r) {
+    var d = document.createElement('div'); d.className = 'tt-row';
+    if (r.color) { var k = document.createElement('span'); k.className = 'tt-key'; k.style.background = r.color; d.appendChild(k); }
+    var v = document.createElement('span'); v.className = 'tt-val'; v.textContent = r.value; d.appendChild(v);
+    var l = document.createElement('span'); l.className = 'tt-lbl'; l.textContent = r.label || ''; d.appendChild(l);
+    tooltip.appendChild(d);
+  });
+  tooltip.style.display = 'block';
+  moveTip(evt);
+}
+function moveTip(evt) {
+  var pad = 14, w = tooltip.offsetWidth, h = tooltip.offsetHeight;
+  var x = evt.clientX + pad, y = evt.clientY + pad;
+  if (x + w > innerWidth - 8) x = evt.clientX - w - pad;
+  if (y + h > innerHeight - 8) y = evt.clientY - h - pad;
+  tooltip.style.left = x + 'px'; tooltip.style.top = y + 'px';
+}
+function hideTip() { tooltip.style.display = 'none'; }
+function fmt(v, d) { return Number(v).toFixed(d === undefined ? 1 : d); }
+function niceTicks(max, n) {
+  var raw = max / (n || 4), mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  var step = [1, 2, 2.5, 5, 10].map(function (m) { return m * mag; })
+    .filter(function (s) { return s >= raw; })[0] || 10 * mag;
+  var out = []; for (var t = 0; t <= max * 1.0001; t += step) out.push(+t.toFixed(6));
+  if (out[out.length - 1] < max) out.push(+(out[out.length - 1] + step).toFixed(6));
+  return out;
+}
+/* rounded-data-end bar path: vertical bar, rounded top only */
+function vBarPath(x, y, w, h, r) {
+  r = Math.min(r, w / 2, h);
+  return 'M' + x + ',' + (y + h) + ' L' + x + ',' + (y + r) +
+    ' Q' + x + ',' + y + ' ' + (x + r) + ',' + y +
+    ' L' + (x + w - r) + ',' + y +
+    ' Q' + (x + w) + ',' + y + ' ' + (x + w) + ',' + (y + r) +
+    ' L' + (x + w) + ',' + (y + h) + ' Z';
+}
+/* horizontal bar, rounded right end only */
+function hBarPath(x, y, w, h, r) {
+  r = Math.min(r, h / 2, w);
+  return 'M' + x + ',' + y + ' L' + (x + w - r) + ',' + y +
+    ' Q' + (x + w) + ',' + y + ' ' + (x + w) + ',' + (y + r) +
+    ' L' + (x + w) + ',' + (y + h - r) +
+    ' Q' + (x + w) + ',' + (y + h) + ' ' + (x + w - r) + ',' + (y + h) +
+    ' L' + x + ',' + (y + h) + ' Z';
+}
+function makeTable(mount, headers, rows) {
+  var wrap = document.createElement('div'); wrap.className = 'tablewrap';
+  var tb = document.createElement('table');
+  var thead = document.createElement('thead'); var trh = document.createElement('tr');
+  headers.forEach(function (h, i) { var th = document.createElement('th'); if (i > 0) th.className = 'num'; th.textContent = h; trh.appendChild(th); });
+  thead.appendChild(trh); tb.appendChild(thead);
+  var tbody = document.createElement('tbody');
+  rows.forEach(function (r) {
+    var tr = document.createElement('tr');
+    r.forEach(function (c, i) { var td = document.createElement('td'); if (i > 0) td.className = 'num'; td.textContent = c; tr.appendChild(td); });
+    tbody.appendChild(tr);
+  });
+  tb.appendChild(tbody); wrap.appendChild(tb); mount.appendChild(wrap);
+}
+
+/* -------- horizontal bar chart (single series; optional emphasis) -------- */
+function hBarChart(fig, data, opts) {
+  opts = opts || {};
+  var mount = fig.querySelector('.svgmount');
+  var W = 720, rowH = 30, padL = opts.padL || 170, padR = 76, padT = 8, padB = 26;
+  var H = padT + data.length * rowH + padB;
+  var svg = el('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img' }, mount);
+  var max = Math.max.apply(null, data.map(function (d) { return d.v; })) * 1.06;
+  var ticks = niceTicks(max, 4);
+  var x = function (v) { return padL + (v / ticks[ticks.length - 1]) * (W - padL - padR); };
+  ticks.forEach(function (t) {
+    el('line', { x1: x(t), y1: padT, x2: x(t), y2: H - padB, 'class': 'gridline' }, svg);
+    var tx = el('text', { x: x(t), y: H - padB + 15, 'text-anchor': 'middle', 'class': 'axis-text' }, svg);
+    tx.textContent = t;
+  });
+  el('line', { x1: padL, y1: padT, x2: padL, y2: H - padB, 'class': 'baseline' }, svg);
+  data.forEach(function (d, i) {
+    var y = padT + i * rowH + (rowH - 20) / 2;
+    var color = d.hot ? 'var(--series-1)' : (opts.mono ? 'var(--series-1)' : 'var(--deemph)');
+    if (opts.mono && d.hot === undefined) color = 'var(--series-1)';
+    var lbl = el('text', { x: padL - 8, y: y + 14, 'text-anchor': 'end', 'class': d.hot ? 'dlabel strong' : 'dlabel' }, svg);
+    lbl.textContent = d.label;
+    el('path', { d: hBarPath(padL, y, Math.max(x(d.v) - padL, 1.5), 20, 4), fill: color }, svg);
+    var val = el('text', { x: x(d.v) + 7, y: y + 14, 'class': d.hot ? 'dlabel strong' : 'dlabel' }, svg);
+    val.textContent = fmt(d.v, opts.dec);
+    var hit = el('rect', { x: 0, y: padT + i * rowH, width: W, height: rowH, fill: 'transparent', tabindex: 0 }, svg);
+    ['pointermove', 'focus'].forEach(function (ev) {
+      hit.addEventListener(ev, function (e) {
+        showTip(ev === 'focus' ? { clientX: 200, clientY: 200 } : e, d.label,
+          [{ value: fmt(d.v, opts.dec) + (opts.unit ? ' ' + opts.unit : ''), label: opts.metric || '', color: color }]);
+      });
+    });
+    ['pointerleave', 'blur'].forEach(function (ev) { hit.addEventListener(ev, hideTip); });
+  });
+  makeTable(fig.querySelector('.tableview'), [opts.cat || 'Item', (opts.metric || 'Value') + (opts.unit ? ' (' + opts.unit + ')' : '')],
+    data.map(function (d) { return [d.label, fmt(d.v, opts.dec)]; }));
+}
+
+/* -------- diverging per-run strip -------- */
+function divergingStrip(fig, values) {
+  var mount = fig.querySelector('.svgmount');
+  var W = 720, H = 210, padL = 46, padR = 10, padT = 10, padB = 24;
+  var svg = el('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img' }, mount);
+  var maxAbs = Math.max.apply(null, values.map(Math.abs)) * 1.1;
+  var y = function (v) { return padT + (1 - (v + maxAbs) / (2 * maxAbs)) * (H - padT - padB); };
+  [-20, -10, 0, 10, 20].forEach(function (t) {
+    if (Math.abs(t) > maxAbs) return;
+    el('line', { x1: padL, y1: y(t), x2: W - padR, y2: y(t), 'class': t === 0 ? 'baseline' : 'gridline' }, svg);
+    var tx = el('text', { x: padL - 6, y: y(t) + 4, 'text-anchor': 'end', 'class': 'axis-text' }, svg);
+    tx.textContent = t + '%';
+  });
+  var bw = (W - padL - padR) / values.length;
+  values.forEach(function (v, i) {
+    var xx = padL + i * bw + 2;
+    var barw = Math.min(bw - 2, 24) - 2;
+    var y0 = y(Math.max(v, 0)), y1 = y(Math.min(v, 0));
+    var color = v >= 0 ? 'var(--pos)' : 'var(--neg)';
+    el('path', { d: v >= 0 ? vBarPath(xx, y0, barw, Math.max(y(0) - y0, 1), 3)
+                           : 'M' + xx + ',' + y(0) + ' h' + barw + ' v' + Math.max(y1 - y(0) - 3, 0) +
+                             ' q0,3 -3,3 h-' + (barw - 6) + ' q-3,0 -3,-3 Z',
+        fill: color }, svg);
+    var hit = el('rect', { x: padL + i * bw, y: padT, width: bw, height: H - padT - padB, fill: 'transparent', tabindex: 0 }, svg);
+    ['pointermove', 'focus'].forEach(function (ev) {
+      hit.addEventListener(ev, function (e) {
+        showTip(ev === 'focus' ? { clientX: 200, clientY: 200 } : e, 'Run ' + (i + 1),
+          [{ value: (v >= 0 ? '+' : '') + fmt(v) + '%', label: 'wait-time improvement', color: color }]);
+      });
+    });
+    ['pointerleave', 'blur'].forEach(function (ev) { hit.addEventListener(ev, hideTip); });
+  });
+  makeTable(fig.querySelector('.tableview'), ['Run', 'Improvement (%)'],
+    values.map(function (v, i) { return ['Run ' + (i + 1), fmt(v)]; }));
+}
+
+/* -------- grouped bar chart -------- */
+function groupedBars(fig, cfg) {
+  var mount = fig.querySelector('.svgmount');
+  var W = 720, H = 280, padL = 52, padR = 12, padT = 12, padB = 40;
+  var svg = el('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img' }, mount);
+  var max = 0;
+  cfg.series.forEach(function (s) { s.values.forEach(function (v) { if (v > max) max = v; }); });
+  var ticks = niceTicks(max * 1.08, 4);
+  var top = ticks[ticks.length - 1];
+  var y = function (v) { return padT + (1 - v / top) * (H - padT - padB); };
+  ticks.forEach(function (t) {
+    el('line', { x1: padL, y1: y(t), x2: W - padR, y2: y(t), 'class': t === 0 ? 'baseline' : 'gridline' }, svg);
+    var tx = el('text', { x: padL - 6, y: y(t) + 4, 'text-anchor': 'end', 'class': 'axis-text' }, svg);
+    tx.textContent = t;
+  });
+  var gW = (W - padL - padR) / cfg.groups.length;
+  var n = cfg.series.length, bw = Math.min(24, (gW - 30) / n - 2);
+  cfg.groups.forEach(function (g, gi) {
+    var cx = padL + gi * gW + gW / 2;
+    var lbl = el('text', { x: cx, y: H - padB + 18, 'text-anchor': 'middle', 'class': 'axis-text' }, svg);
+    lbl.textContent = g;
+    cfg.series.forEach(function (s, si) {
+      var v = s.values[gi];
+      var xx = cx - (n * (bw + 2)) / 2 + si * (bw + 2) + 1;
+      el('path', { d: vBarPath(xx, y(v), bw, Math.max(y(0) - y(v), 1.5), 4), fill: s.color }, svg);
+      var val = el('text', { x: xx + bw / 2, y: y(v) - 5, 'text-anchor': 'middle', 'class': 'dlabel' }, svg);
+      val.textContent = fmt(v, v >= 100 ? 0 : 1);
+      var hit = el('rect', { x: xx - 1, y: padT, width: bw + 4, height: H - padT - padB, fill: 'transparent', tabindex: 0 }, svg);
+      ['pointermove', 'focus'].forEach(function (ev) {
+        hit.addEventListener(ev, function (e) {
+          showTip(ev === 'focus' ? { clientX: 200, clientY: 200 } : e, g,
+            cfg.series.map(function (ss) { return { value: fmt(ss.values[gi], 1), label: ss.name, color: ss.color }; }));
+        });
+      });
+      ['pointerleave', 'blur'].forEach(function (ev) { hit.addEventListener(ev, hideTip); });
+    });
+  });
+  makeTable(fig.querySelector('.tableview'), ['Metric'].concat(cfg.series.map(function (s) { return s.name; })),
+    cfg.groups.map(function (g, gi) { return [g].concat(cfg.series.map(function (s) { return fmt(s.values[gi], 1); })); }));
+}
+
+/* -------- line chart -------- */
+function lineChart(fig, cfg) {
+  var mount = fig.querySelector('.svgmount');
+  var W = 720, H = 280, padL = 56, padR = 26, padT = 14, padB = 46;
+  var svg = el('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img' }, mount);
+  var maxY = Math.max.apply(null, cfg.y) * 1.15 || 1;
+  var ticks = niceTicks(maxY, 4);
+  var top = ticks[ticks.length - 1];
+  var xs = cfg.x.map(function (v, i) { return padL + (i / (cfg.x.length - 1)) * (W - padL - padR); });
+  var y = function (v) { return padT + (1 - v / top) * (H - padT - padB); };
+  ticks.forEach(function (t) {
+    el('line', { x1: padL, y1: y(t), x2: W - padR, y2: y(t), 'class': t === 0 ? 'baseline' : 'gridline' }, svg);
+    var tx = el('text', { x: padL - 7, y: y(t) + 4, 'text-anchor': 'end', 'class': 'axis-text' }, svg);
+    tx.textContent = t + '%';
+  });
+  cfg.x.forEach(function (xv, i) {
+    var tx = el('text', { x: xs[i], y: H - padB + 17, 'text-anchor': 'middle', 'class': 'axis-text' }, svg);
+    tx.textContent = xv;
+  });
+  var xt = el('text', { x: (padL + W - padR) / 2, y: H - 8, 'text-anchor': 'middle', 'class': 'axis-text' }, svg);
+  xt.textContent = cfg.xlab;
+  var path = cfg.y.map(function (v, i) { return (i ? 'L' : 'M') + xs[i] + ',' + y(v); }).join(' ');
+  el('path', { d: path, fill: 'none', stroke: 'var(--series-1)', 'stroke-width': 2.5, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
+  cfg.y.forEach(function (v, i) {
+    el('circle', { cx: xs[i], cy: y(v), r: 5.5, fill: 'var(--series-1)', stroke: 'var(--surface-1)', 'stroke-width': 2 }, svg);
+    var val = el('text', { x: xs[i], y: y(v) - 11, 'text-anchor': 'middle', 'class': 'dlabel strong' }, svg);
+    val.textContent = fmt(v, 1) + '%';
+    var hit = el('rect', { x: xs[i] - 24, y: padT, width: 48, height: H - padT - padB, fill: 'transparent', tabindex: 0 }, svg);
+    ['pointermove', 'focus'].forEach(function (ev) {
+      hit.addEventListener(ev, function (e) {
+        showTip(ev === 'focus' ? { clientX: 200, clientY: 200 } : e, cfg.x[i] + ' GPUs',
+          [{ value: fmt(v, 1) + '%', label: 'wait advantage', color: 'var(--series-1)' }]);
+      });
+    });
+    ['pointerleave', 'blur'].forEach(function (ev) { hit.addEventListener(ev, hideTip); });
+  });
+  makeTable(fig.querySelector('.tableview'), ['GPUs', 'Advantage (%)'],
+    cfg.x.map(function (xv, i) { return [xv, fmt(cfg.y[i], 1)]; }));
+}
+
+/* -------- diverging heatmap -------- */
+function heatmap(fig, cfg) {
+  var mount = fig.querySelector('.svgmount');
+  var W = 720, padL = 120, padR = 14, padT = 34, padB = 16, rowH = 44;
+  var H = padT + cfg.rows.length * rowH + padB;
+  var svg = el('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img' }, mount);
+  var cw = (W - padL - padR) / cfg.cols.length;
+  var maxAbs = 1.7;
+  function cellColor(v) {
+    /* diverging: neg -> red, ~0 -> neutral, pos -> blue; alpha scales with magnitude */
+    var t = Math.max(-1, Math.min(1, v / maxAbs));
+    if (Math.abs(t) < 0.06) return 'var(--neutral-mid)';
+    return t > 0 ? 'rgba(42,120,214,' + (0.15 + 0.75 * t) + ')' : 'rgba(217,72,72,' + (0.15 + 0.75 * -t) + ')';
+  }
+  cfg.cols.forEach(function (c, ci) {
+    var tx = el('text', { x: padL + ci * cw + cw / 2, y: padT - 12, 'text-anchor': 'middle', 'class': 'axis-text' }, svg);
+    tx.textContent = c;
+  });
+  cfg.rows.forEach(function (r, ri) {
+    var tx = el('text', { x: padL - 10, y: padT + ri * rowH + rowH / 2 + 4, 'text-anchor': 'end', 'class': 'axis-text' }, svg);
+    tx.textContent = cfg.rowTitle.split(' ')[0] + ' ' + r;
+    cfg.cols.forEach(function (c, ci) {
+      var v = cfg.grid[ri][ci];
+      var color = cellColor(v);
+      el('rect', { x: padL + ci * cw + 1, y: padT + ri * rowH + 1, width: cw - 2, height: rowH - 2, rx: 6, fill: color }, svg);
+      var dark = Math.abs(v / maxAbs) > 0.55;
+      var val = el('text', { x: padL + ci * cw + cw / 2, y: padT + ri * rowH + rowH / 2 + 4.5, 'text-anchor': 'middle',
+        style: 'font-size:12px;font-variant-numeric:tabular-nums;font-weight:600;fill:' + (dark ? '#fff' : 'var(--ink-1)') }, svg);
+      val.textContent = (v > 0 ? '+' : '') + v.toFixed(2);
+      var hit = el('rect', { x: padL + ci * cw, y: padT + ri * rowH, width: cw, height: rowH, fill: 'transparent', tabindex: 0 }, svg);
+      ['pointermove', 'focus'].forEach(function (ev) {
+        hit.addEventListener(ev, function (e) {
+          showTip(ev === 'focus' ? { clientX: 200, clientY: 200 } : e, r + ' arrivals · ' + c,
+            [{ value: 'R² ' + (v > 0 ? '+' : '') + v.toFixed(2), label: v > 0 ? 'usable' : 'worse than mean-guessing', color: cellColor(v) }]);
+        });
+      });
+      ['pointerleave', 'blur'].forEach(function (ev) { hit.addEventListener(ev, hideTip); });
+    });
+  });
+  makeTable(fig.querySelector('.tableview'), ['Arrival rate'].concat(cfg.cols),
+    cfg.rows.map(function (r, ri) { return [r].concat(cfg.grid[ri].map(function (v) { return v.toFixed(2); })); }));
+}
+
+/* ================= Mount all charts ================= */
+document.querySelectorAll('figure.chart').forEach(function (fig) {
+  var kind = fig.getAttribute('data-chart');
+  try {
+    if (kind === 'featImportance') hBarChart(fig, DATA.featImportance, { mono: true, dec: 3, metric: 'importance', cat: 'Feature', padL: 150 });
+    if (kind === 'modelComparison') hBarChart(fig, DATA.modelComparison, { dec: 2, unit: 'ts', metric: 'holdout MAE', cat: 'Model', padL: 170 });
+    if (kind === 'pairedRuns') divergingStrip(fig, DATA.pairedRuns);
+    if (kind === 'schedulerWait') hBarChart(fig, DATA.schedulerWait, { dec: 2, unit: 'ts', metric: 'mean wait', cat: 'Scheduler', padL: 200 });
+    if (kind === 'schedulerTail') hBarChart(fig, DATA.schedulerTail, { dec: 1, unit: 'ts', metric: 'max wait', cat: 'Scheduler', padL: 110 });
+    if (kind === 'schedulerGini') hBarChart(fig, DATA.schedulerGini, { dec: 3, metric: 'Gini', cat: 'Scheduler', padL: 110 });
+    if (kind === 'fairness') groupedBars(fig, DATA.fairness);
+    if (kind === 'scaling') lineChart(fig, DATA.scaling);
+    if (kind === 'oodHeat') heatmap(fig, DATA.oodHeat);
+  } catch (err) { /* chart failure must never break the document */ }
+  var btn = fig.querySelector('[data-toggle-table]');
+  if (btn) btn.addEventListener('click', function () {
+    var tv = fig.querySelector('.tableview');
+    tv.classList.toggle('open');
+    btn.textContent = tv.classList.contains('open') ? 'Hide table' : 'Table view';
+  });
+});
+
+/* ================= Distilled wait-time model (exported from the trained pipeline) ================= */
+var MODEL = {"base":0.5,"features":["job_gpu","total_free","queue_length","running_jobs","max_free_node","variance_free","can_fit_now","gpu_fit_ratio","fragmentation","queue_pressure","node_availability","avg_free_per_node"],"trees":[[2,9,[2,4,[7,0.999998987,[0,7,0.721250057,1.45674419],[9,0.545454562,-0.0894736871,0.454736829]],[0,5,[0,3,0.375545442,1.49567807],[0,7,2.59563851,3.43371439]]],[0,5,[0,3,[0,2,0.379285753,1.60896242],[2,18,2.91848683,6.01159143]],[2,14,[0,6,3.55395365,5.57413101],[2,20,7.35750008,8.89627171]]]],[2,12,[2,6,[6,1,[0,6,0.709979832,1.61435664],[9,0.454545468,-0.0734574869,0.456662327]],[0,5,[0,3,0.467566371,1.67378533],[2,9,2.80614638,3.86394978]]],[0,4,[0,3,[0,2,0.397664189,1.55564487],[2,16,1.92664838,3.90344977]],[2,20,[0,6,4.11109829,5.94868612],7.23816109]]],[2,13,[0,6,[2,6,[7,0.749999881,0.616101861,0.0139337573],[0,4,0.624237657,1.90414155]],[2,5,[2,2,0.0982145593,1.39217532],[2,8,2.25583363,3.58319163]]],[0,4,[0,3,[0,2,0.345028222,1.37036455],[2,23,2.38009739,4.97463131]],[2,20,[0,5,3.05781221,4.79852962],6.12588501]]],[2,11,[2,4,[9,0.545454562,[7,0.142857119,0.500131726,-0.0680390298],[0,7,0.284943551,0.959762335]],[0,5,[0,3,0.145601615,0.885417163],[2,9,1.68614066,2.35961938]]],[0,4,[0,3,[0,2,0.23546584,0.973994493],[2,16,1.16074705,2.8885963]],[0,6,[2,19,2.61106062,4.12893009],[2,14,3.50521755,4.63512802]]]],[2,12,[6,1,[0,6,[0,2,0.115130626,0.839208841],[2,6,0.88076973,2.19826174]],[0,4,[1,4,-0.298560143,0.122145467],[2,3,-0.0166858342,1.1603694]]],[0,5,[0,3,[10,0.125,1.00918519,0.230879307],[2,17,1.43660676,2.48779821]],[2,16,[0,8,2.51344943,3.51577997],[2,24,3.7154963,5.475492]]]],[2,10,[2,3,[9,0.454545468,[1,3,0.0439457372,-0.0694030747],[0,3,-0.103174664,0.266472042]],[0,5,[0,2,-0.0942691043,0.472339302],[0,8,1.0399636,1.75705206]]],[0,4,[0,2,[1,1,0.30722481,-0.02433029],[2,23,0.844371259,3.31050086]],[0,7,[2,18,1.64244568,2.80256391],[2,22,2.80051827,4.82757187]]]],[2,9,[2,3,[7,0.499999762,[0,7,0.0430429652,0.409807831],[7,0.666666448,-0.228562191,-0.02989888]],[0,7,[0,3,0.0496165492,0.526029825],[2,5,0.922193289,1.33465433]]],[0,4,[0,2,[2,13,-0.141214564,0.172706872],[2,17,0.498447657,1.41526878]],[2,16,[0,6,0.956138611,1.94673622],[2,24,2.36626887,3.83476281]]]],[2,11,[2,5,[2,2,[9,3.20000005,-0.0177272726,-0.227020532],[0,7,0.0979731455,0.595046997]],[0,5,[0,3,0.0615383424,0.473011822],[9,50,0.835238397,1.71392739]]],[0,5,[0,3,[0,2,0.06748005,0.496066779],[2,23,0.86905539,2.5324049]],[2,14,[0,7,0.882338166,1.67278409],[3,7,2.59315848,1.92929101]]]],[2,7,[0,7,[7,0.749999881,[7,0.49999994,0.129385471,0.679684043],[9,6.5,-0.000850618351,-0.357903481]],[2,2,[5,3.609375,-0.0272599086,0.178990766],[7,0.571428478,0.519828916,0.940889716]]],[0,6,[0,3,[6,1,0.420175105,-0.0418173783],[9,114,0.714706779,2.35140491]],[9,9.5,[2,15,0.545461059,1.42090309],[2,11,1.22788823,1.87209165]]]],[2,17,[0,6,[7,0.666666567,[3,10,0.42023313,-0.1932666],[9,16.625,0.0421162769,-0.489737213]],[2,8,[9,2.25,0.039522171,0.517028809],[9,6,0.0971035883,1.18766499]]],[0,3,[1,1,[0,2,0.00652545458,2.05963182],[3,6,0.992010295,-0.222861886]],[2,24,[3,5,-0.258461267,1.35143852],2.38472843]]],[2,16,[7,0.799999833,[2,5,[9,3.375,-0.110053852,0.121968791],[0,5,0.289713442,0.772769928]],[9,16.625,[2,8,-0.0187354703,0.303288937],[0,2,-0.176873833,-1.20413685]]],[0,3,[9,78,[3,6,0.664861262,-0.0557086691],[0,2,-0.00766949588,1.36907804]],[2,22,[0,5,0.594051778,1.2180866],[3,7,2.31178093,0.691583812]]]],[2,13,[7,0.714285612,[2,7,[7,0.571428478,0.056670595,0.718386889],[9,33.5,0.577144504,0.353039652]],[9,8.75,[2,7,0.00653824536,0.296254784],[9,14.333333,-0.423734874,-0.116501808]]],[10,0.125,[2,17,[9,86,0.696497798,-0.134164333],[3,7,1.24511755,0.867439449]],[2,23,[9,28,0.196720734,-0.579590321],[5,0.6875,0.36726898,2.82974267]]]],[0,7,[2,17,[9,96,[7,0.428571373,0.24421227,-0.0068443655],[0,3,-0.153696001,-1.51507652]],[1,14,[0,2,0.081246987,0.678889453],-1.41110444]],[2,11,[9,52,[5,0.109375,-0.0631714985,0.367680997],[2,10,2.15926695,-0.23602891]],[9,5.80000019,[1,12,-1.17670691,0.351398051],[2,24,1.01492977,2.15883017]]]],[0,5,[2,6,[9,2.11111116,[9,0.545454562,-0.0602310821,0.219360873],[9,11.166667,-0.216337755,-0.0609144866]],[0,2,[2,21,-0.0558719598,-0.356393039],[8,0.5,0.338066697,0.0328045525]]],[2,11,[9,52,[9,2.11111116,-0.0631579459,0.247768298],[3,9,0.480968922,2.18625546]],[8,1.41421354,[0,8,0.62268424,1.02810419],[8,1.5,-1.0099144,0.512574255]]]],[0,3,[3,8,[0,2,[2,13,-0.103422903,0.0735127181],[2,6,-0.035069041,0.199999765]],[1,2,[3,10,-0.0350305997,-0.319827914],[0,2,-0.128946215,-0.544673204]]],[2,7,[2,2,[1,8,-0.13316904,-0.0121662645],[0,8,0.0751093253,0.41303736]],[2,24,[6,1,0.444872409,0.177853107],[1,9,0.953600764,2.19460273]]]],[0,4,[2,17,[9,74,[9,65,-0.0211731382,0.41121304],[3,7,-0.983362913,-0.159462973]],[2,20,[7,0.333333284,0.952659309,0.126428872],[3,6,0.880817652,-0.61489749]]],[2,11,[9,50,[8,0.330718905,-0.128063232,0.146640599],[9,58,0.757860661,0.0709232762]],[0,8,[3,9,0.461120158,-0.241721809],[8,1.32287562,0.865332603,-0.0393574908]]]],[0,8,[9,110,[0,4,[7,0.333333284,0.0754867345,-0.0549230538],[9,11,0.015190741,0.246758625]],[0,2,-0.300977826,[9,137,0.825708449,1.4608978]]],[9,7.5,[4,3,[9,3.20000005,-0.62281245,-0.0328319445],[4,4,0.655542135,-0.081406787]],[5,0.234375,[9,46,0.135447726,0.867146015],[1,8,0.974278867,2.4342711]]]],[0,8,[2,16,[9,62.5,[9,33.5,0.0353581831,-0.13973695],[0,5,0.00447508926,0.597174227]],[9,8.39999962,[5,1.234375,0.659437239,-1.08438468],[9,137,0.294006974,1.23080611]]],[9,46,[5,1.75,[5,1,0.258149832,0.790800989],[9,2.81818175,0.160248429,-0.555617929]],[9,52.5,[9,52,0.983683348,2.25028706],[3,10,0.339443564,1.83989859]]]],[0,7,[9,137,[9,93,[0,4,-0.0225674994,0.105464958],[3,9,-0.11857859,-0.813790679]],[2,25,1.74084699,[0,4,-0.37083438,0.635773361]]],[9,72,[2,17,[9,58,0.176417306,-0.340805531],[9,50,0.350893199,1.37147701]],[2,18,[9,80,0.217005283,1.47045243],[1,1,-0.529909015,1.66478372]]]],[2,16,[2,6,[9,27.5,[9,25.5,-0.0476577058,0.411142915],[9,32.5,-0.335377693,0.138165787]],[5,2.1875,[7,0.499999881,0.11987333,-0.0351014845],[2,14,0.706017196,-0.452220619]]],[0,3,[3,6,[10,0.25,-0.211877316,0.862210929],[9,78,-0.320954293,0.22152622]],[9,8.39999962,[3,5,-1.4413799,0.101293147],[3,9,0.415604085,-0.24182868]]]],[2,23,[2,7,[9,40.5,[3,12,-0.0279736985,-0.368651479],[3,7,0.116724022,-0.825645268]],[9,128,[2,20,0.095860973,-0.174118787],1.66077375]],[3,7,[0,6,[2,26,1.7150799,-0.55118978],[5,1.109375,0.78470546,-0.160627395]],[2,24,-0.908499479,[1,1,-0.233689234,0.592562377]]]],[0,7,[9,110,[9,93,[6,1,0.0732921734,-0.0619418472],[0,4,-0.0655574203,-0.906439662]],[0,2,-0.353029013,[2,25,0.914155483,0.0589947999]]],[9,4.125,[9,3.91666675,[9,0.266666681,-0.141296014,0.085172303],[1,1,0.0819654763,-0.696853399]],[5,0.25,[3,8,-0.0828784183,0.408722192],[9,15.1428576,0.289404511,0.795088172]]]],[9,50.5,[2,23,[2,21,[1,7,-0.0348176695,0.0564848334],[9,28,-0.169940561,-2.31923485]],[0,6,[2,25,1.68449295,0.0566606149],[0,7,-0.545711696,0.581452012]]],[0,6,[2,11,[9,54.5,0.354729831,-0.762185037],[9,137,0.0395660326,0.676410973]],[9,54.5,[0,7,-0.235808149,1.57841492],[1,1,0.244492799,0.995101213]]]],[2,23,[2,5,[3,10,[7,0.199999958,0.051265642,-0.048098322],[5,1.734375,-0.2850959,0.502744794]],[1,16,[1,11,0.0612450279,-0.15693666],[10,0.125,1.25404596,-0.14632684]]],[3,7,[2,24,1.14262843,[1,9,0.157184049,0.976174235]],[2,24,[3,8,-1.85646427,-0.252161652],[2,26,-0.228808656,0.350353211]]]],[1,7,[6,1,[9,50.5,[9,32.5,0.0415564775,-0.162828907],[9,54.5,0.644525528,0.0560842678]],[10,0.125,[1,5,-0.667659223,-0.147604227],[2,22,-0.0351846628,-0.996550202]]],[9,12.5,[5,1.1875,[2,7,-0.0198630802,0.615189791],[9,10.6000004,0.0290237982,-0.437683731]],[10,0.25,[2,24,1.06496179,-0.0749842972],[5,1.1875,0.335354984,-0.631998658]]]],[0,4,[3,10,[3,9,[9,54.5,0.015251874,-0.152844727],[2,11,-0.178313181,0.372702986]],[2,10,[9,20.5,-0.30419454,-0.0536327846],[2,17,-0.842846215,-0.0931024402]]],[9,50.5,[1,1,[2,3,0.138074741,-0.252202034],[9,12.5,0.00618465338,0.178756535]],[3,10,[3,7,0.492099375,0.121126629],[2,14,1.58403254,0.485949636]]]],[9,110,[9,89,[9,76,[9,72.5,-0.00154330034,-0.45485124],[0,4,-0.0952039585,0.617411315]],[3,10,[0,8,-0.216382205,-0.881571174],[0,6,-0.606176317,0.951886415]]],[0,2,-0.293682724,[3,8,[0,5,0.66546917,0.0526578538],[3,9,1.29166877,0.251832396]]]],[9,110,[9,89,[9,76,[2,24,0.00713970466,0.384182543],[3,6,1.19491124,0.253020912]],[2,20,[0,7,-0.241648719,0.65931046],[0,6,-0.243113101,-1.20087779]]],[2,25,[9,128,[2,19,0.72721678,-0.20147948],[2,22,1.4051168,0.388986886]],[0,4,[9,137,0.0167802442,-0.418035239],[0,5,0.465590984,-0.218895555]]]],[0,2,[2,14,[2,7,[2,6,-0.0768012628,0.00467127562],[1,6,-0.16494225,-0.292675763]],[2,18,[3,9,0.122664057,-0.144845814],[5,0.984375,-0.198854998,0.0597120635]]],[2,2,[3,7,[7,0.499999762,0.335713804,-0.0407426059],[2,1,-0.0776903927,-0.268583894]],[3,11,[3,4,0.411556482,0.063404806],[0,6,-0.420118183,0.0280497167]]]],[0,8,[2,13,[9,32,[9,28.5,-0.0159714408,0.307852626],[7,0.24999994,-0.0703414232,-1.05454111]],[9,4.125,1.25705576,[8,1.47902,0.0665640533,-0.599169552]]],[2,16,[9,74,[9,60,0.17226401,-0.55454731],[3,10,0.509303808,1.33763468]],[1,9,[9,44,-0.431421191,0.0529653355],[2,19,0.0607863255,0.704063892]]]],[0,8,[9,62.5,[9,61,[2,20,0.00347491144,-0.167247087],[0,6,-0.996215403,0.364603639]],[7,0.24999997,[4,1,0.0861562788,1.49770951],[9,70,0.684006393,-1.55455995]]],[3,10,[2,3,[9,7.125,-0.259754419,0.497417688],[5,0.234375,-0.0379823782,0.307118773]],[3,11,[2,5,0.123945355,1.41055012],[4,1,-0.143894345,0.355066121]]]],[9,39,[9,32,[1,1,[0,5,0.0163828228,-0.306989372],[7,0.499999762,0.115645677,-0.00129724934]],[0,3,[9,33.5,0.722065628,0.00807373691],[3,6,-2.04236054,-0.244410872]]],[1,2,[0,3,[9,41.3333321,0.365041226,-0.104498982],[2,19,0.158305183,-0.112553008]],[0,8,1.75138199,0.23890321]]],[3,7,[9,48.5,[9,28.5,[9,11.25,0.00310030952,0.151684061],[2,14,-0.09368065,-1.41634488]],[9,72.5,[9,50,1.20255876,0.376415879],[9,110,-0.22301124,0.300730884]]],[2,23,[2,16,[9,96,-0.0441037714,-0.708563149],[5,1.6875,0.0596333556,0.686439216]],[2,24,[3,8,-1.58143568,-0.54991293],[1,1,-0.133963838,0.294061214]]]],[9,110,[2,20,[5,0.75,[7,0.499999911,0.023839891,-0.116058365],[9,11.5,0.017929282,0.336062968]],[1,9,[9,13,-1.27690423,-0.206906304],[0,2,-0.0288902,0.906302154]]],[0,2,[2,19,-0.369175017,[9,137,0.0408837982,-0.128907725]],[2,25,[9,128,0.286978006,0.728759468],[0,4,-0.394549608,-0.00892186072]]]],[0,2,[9,40,[9,17.3999996,[9,1.20000005,0.0132153369,-0.102434412],[9,18,0.483408898,0.0508252122]],[2,13,[9,61,-0.133022666,-0.437399298],[9,81,0.0180881228,-0.147193924]]],[9,50.5,[9,22.5,[9,20.5,0.0162410084,0.543873906],[10,0.125,-0.0377409123,-1.30130959]],[9,53,[9,52,0.270708621,0.996281147],[1,1,0.0346481912,0.329326987]]]],[9,89,[3,12,[9,88,[1,7,-0.021854315,0.0292283036],[0,2,-0.263714522,0.839616179]],[1,2,[0,2,-0.0968703404,-0.567664504],0.0780398846]],[9,110,[0,2,[9,96,-0.133717746,0.221317351],[0,7,-0.599857807,-0.0463953316]],[0,2,[9,114,-0.307210773,-0.108326882],[0,3,0.703222334,0.236389041]]]],[9,89,[9,26,[9,23,[3,8,0.0338917673,-0.0957827792],[9,23.666666,-0.78780055,-0.25876525]],[5,1,[9,29.666666,0.365187526,0.0378153771],-1.75955343]],[2,15,[0,4,[0,2,0.0750603527,-0.663663149],1.27349746],[9,100,[0,4,-0.119516097,-0.630328357],[2,19,0.304881483,-0.156673193]]]],[1,1,[0,5,[2,17,[3,6,0.680244088,-0.0378262252],[9,92,0.817412734,0.0584309772]],[3,8,[2,5,0.218523011,-0.338472813],[0,6,-0.296126246,0.122006662]]],[9,59,[2,20,[9,47,0.0263864528,0.416819602],[3,6,0.430389285,-0.366542667]],[0,3,[0,2,-0.0720057264,-0.608927369],[2,26,1.22008479,0.0177715309]]]],[9,0.454545468,[7,0.142857119,[0,8,[0,2,0.0193291139,-0.148589149],0.772866428],[6,1,[3,8,-0.357752353,0.0347555727],[0,5,-0.0220805537,-0.096145533]]],[1,15,[1,11,[5,2.109375,0.00842441246,0.289834559],[9,6.66666651,-0.220967293,0.505326927]],[3,5,[0,2,-0.112581395,0.901470304],[1,17,-0.20627825,0.777953446]]]],[0,8,[1,7,[3,6,[2,10,-0.0185825806,-0.454175502],[2,16,-0.0400467031,0.0665575564]],[5,1.1875,[2,7,-0.036236871,0.399647921],[5,1.484375,-0.249070868,0.0258923993]]],[2,16,[2,6,[1,9,-0.0919702575,0.172391355],[5,1.6875,0.32115078,-0.134786725]],[2,27,[1,6,-0.202220514,-0.635921717],0.426326364]]]],"holdout":{"mae":4.64,"r2":0.842}};
+function mlPredict(x) {
+  var s = MODEL.base;
+  for (var i = 0; i < MODEL.trees.length; i++) {
+    var n = MODEL.trees[i];
+    while (Array.isArray(n)) n = x[n[0]] < n[1] ? n[2] : n[3];
+    s += n;
+  }
+  return s;
+}
+
+/* ================= Live cluster simulator ================= */
+(function () {
+  var NODES = 8, GPUS = 4, JOBS = 110, HORIZON = 300, ARR_WIN = 150;
+  var HUES = ['#2a78d6', '#1baf7a', '#eda100', '#008300', '#4a3aa7', '#e34948', '#e87ba4', '#eb6834'];
+  function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; var t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  function randint(r, a, b) { return a + Math.floor(r() * (b - a + 1)); }
+  function genJobs(seed) {
+    var r = mulberry32(seed), out = [];
+    for (var i = 0; i < JOBS; i++) out.push({ id: i, arr: randint(r, 0, ARR_WIN), g: randint(r, 1, 8), rt: randint(r, 5, 20) });
+    out.sort(function (a, b) { return a.arr - b.arr || a.id - b.id; });
+    return out;
+  }
+  function newState(jobs) {
+    return { cells: Array.from({ length: NODES }, function () { return [null, null, null, null]; }),
+      jobs: jobs.map(function (j) { return { id: j.id, arr: j.arr, g: j.g, rt: j.rt, start: -1, end: -1 }; }),
+      queue: [], running: [], done: 0, waitSum: 0, started: 0 };
+  }
+  function freePerNode(st) { return st.cells.map(function (c) { return c.filter(function (x) { return x === null; }).length; }); }
+  function features(job, st) {
+    var f = freePerNode(st), total = 0, maxf = 0, i;
+    for (i = 0; i < f.length; i++) { total += f[i]; if (f[i] > maxf) maxf = f[i]; }
+    var mean = total / NODES, v = 0;
+    for (i = 0; i < f.length; i++) v += (f[i] - mean) * (f[i] - mean);
+    v /= NODES;
+    var qg = 0; for (i = 0; i < st.queue.length; i++) qg += st.queue[i].g;
+    var na = 0; for (i = 0; i < f.length; i++) if (f[i] >= job.g) na++;
+    return [job.g, total, st.queue.length, st.running.length, maxf, v,
+      total >= job.g ? 1 : 0, Math.min(total / (job.g + 1e-6), 1), Math.sqrt(v),
+      qg / (total + 1), na / NODES, mean];
+  }
+  function allocate(st, job, t) {
+    var need = job.g, n, c;
+    for (n = 0; n < NODES && need > 0; n++)
+      for (c = 0; c < GPUS && need > 0; c++)
+        if (st.cells[n][c] === null) { st.cells[n][c] = job.id; need--; }
+    job.start = t; job.end = t + job.rt;
+    st.running.push(job); st.waitSum += (t - job.arr); st.started++;
+  }
+  function tick(st, t, smart) {
+    var i, n, c;
+    for (i = st.running.length - 1; i >= 0; i--) {
+      var j = st.running[i];
+      if (j.end === t) {
+        for (n = 0; n < NODES; n++) for (c = 0; c < GPUS; c++) if (st.cells[n][c] === j.id) st.cells[n][c] = null;
+        st.running.splice(i, 1); st.done++;
+      }
+    }
+    for (i = 0; i < st.jobs.length; i++) if (st.jobs[i].arr === t) st.queue.push(st.jobs[i]);
+    if (smart && st.queue.length > 1) {
+      var scored = st.queue.map(function (j) { return { j: j, w: mlPredict(features(j, st)) }; });
+      scored.sort(function (a, b) { return a.w - b.w || a.j.arr - b.j.arr || a.j.id - b.j.id; });
+      st.queue = scored.map(function (s) { return s.j; });
+    }
+    for (i = 0; i < st.queue.length;) {
+      var job = st.queue[i], free = 0;
+      for (n = 0; n < NODES; n++) for (c = 0; c < GPUS; c++) if (st.cells[n][c] === null) free++;
+      if (free >= job.g) { st.queue.splice(i, 1); allocate(st, job, t); } else i++;
+    }
+  }
+  /* ---- DOM ---- */
+  var panels = { F: document.getElementById('panelF'), P: document.getElementById('panelP') };
+  if (!panels.F || !panels.P) return;
+  var grids = {}, k;
+  for (k in panels) {
+    var host = panels[k].querySelector('.sim-nodes');
+    grids[k] = [];
+    for (var n2 = 0; n2 < NODES; n2++) {
+      var nd = document.createElement('div'); nd.className = 'sim-node';
+      var cells = [];
+      for (var c2 = 0; c2 < GPUS; c2++) { var g = document.createElement('div'); g.className = 'sim-gpu'; nd.appendChild(g); cells.push(g); }
+      host.appendChild(nd); grids[k].push(cells);
+    }
+  }
+  function hue(id) { return HUES[id % HUES.length]; }
+  function render(key, st, smart) {
+    var p = panels[key], n, c;
+    for (n = 0; n < NODES; n++) for (c = 0; c < GPUS; c++) {
+      var occ = st.cells[n][c];
+      var cell = grids[key][n][c];
+      if (occ === null) { cell.style.background = ''; cell.style.borderColor = ''; }
+      else { cell.style.background = hue(occ); cell.style.borderColor = 'transparent'; }
+    }
+    var q = p.querySelector('.sim-queue'); q.textContent = '';
+    var show = st.queue.slice(0, 9);
+    show.forEach(function (j) {
+      var ch = document.createElement('span'); ch.className = 'sim-chip';
+      ch.style.background = hue(j.id); ch.textContent = 'J' + j.id + '·' + j.g + 'g';
+      q.appendChild(ch);
+    });
+    if (st.queue.length > 9) { var m = document.createElement('span'); m.className = 'sim-chip more'; m.textContent = '+' + (st.queue.length - 9) + ' more'; q.appendChild(m); }
+    if (!st.queue.length) { var e = document.createElement('span'); e.className = 'sim-chip more'; e.textContent = 'empty'; q.appendChild(e); }
+    p.querySelector('.st-wait').textContent = st.started ? (st.waitSum / st.started).toFixed(1) : '–';
+    p.querySelector('.st-run').textContent = st.running.length;
+    p.querySelector('.st-done').textContent = st.done;
+  }
+  /* ---- loop ---- */
+  var seed, F, Pr, t, timer = null, tps = 10;
+  var clock = document.getElementById('simClock');
+  var playBtn = document.getElementById('simPlay');
+  var verdict = document.getElementById('simVerdict'), verdictText = document.getElementById('simVerdictText');
+  function reset(newSeed) {
+    if (timer) { clearInterval(timer); timer = null; }
+    seed = newSeed === undefined ? Math.floor(Math.random() * 1e9) : newSeed;
+    var jobs = genJobs(seed);
+    F = newState(jobs); Pr = newState(jobs); t = 0;
+    verdict.hidden = true; playBtn.textContent = '\u25B6 Run';
+    clock.textContent = 't = 0 / ' + HORIZON;
+    render('F', F); render('P', Pr, true);
+  }
+  function finished() { return t >= HORIZON || (F.done === JOBS && Pr.done === JOBS); }
+  function step() {
+    if (finished()) { stop(); return; }
+    tick(F, t, false); tick(Pr, t, true); t++;
+    clock.textContent = 't = ' + t + ' / ' + HORIZON;
+    render('F', F); render('P', Pr, true);
+    if (finished()) {
+      stop();
+      var fw = F.waitSum / Math.max(F.started, 1), pw = Pr.waitSum / Math.max(Pr.started, 1);
+      var imp = (fw - pw) / fw * 100;
+      verdict.hidden = false;
+      verdict.className = 'callout ' + (imp >= 0 ? 'good' : 'warn');
+      verdictText.textContent = 'Workload #' + seed + ': FIFO mean wait ' + fw.toFixed(2) + ' ts vs Proactive ' + pw.toFixed(2) + ' ts \u2014 ' +
+        (imp >= 0 ? imp.toFixed(1) + '% faster with proactive ordering.' : Math.abs(imp).toFixed(1) + '% slower on this draw (about 1 in 6 workloads goes this way \u2014 matching the 40-run benchmark, where 7 of 40 runs favoured FIFO).') +
+        ' Both sides completed ' + F.done + '/' + JOBS + ' and ' + Pr.done + '/' + JOBS + ' jobs.';
+    }
+  }
+  function play() { if (timer || finished()) return; playBtn.textContent = '\u23F8 Pause'; timer = setInterval(step, 1000 / tps); }
+  function stop() { if (timer) { clearInterval(timer); timer = null; } playBtn.textContent = '\u25B6 Run'; }
+  playBtn.addEventListener('click', function () { timer ? stop() : play(); });
+  document.getElementById('simStep').addEventListener('click', function () { stop(); step(); });
+  document.getElementById('simReset').addEventListener('click', function () { reset(); });
+  document.querySelectorAll('.sim-controls .speed button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('.sim-controls .speed button').forEach(function (x) { x.classList.remove('on'); });
+      b.classList.add('on'); tps = +b.getAttribute('data-sp');
+      if (timer) { clearInterval(timer); timer = setInterval(step, 1000 / tps); }
+    });
+  });
+  reset(42);
+})();
+
+/* ================= Reading progress + back-to-top ================= */
+(function () {
+  var bar = document.getElementById('progress'), top = document.getElementById('toTop');
+  function onScroll() {
+    var h = document.documentElement;
+    var max = h.scrollHeight - h.clientHeight;
+    bar.style.width = (max > 0 ? (h.scrollTop / max) * 100 : 0) + '%';
+    top.classList.toggle('show', h.scrollTop > 900);
+  }
+  addEventListener('scroll', onScroll, { passive: true }); onScroll();
+  top.addEventListener('click', function () { scrollTo({ top: 0, behavior: 'smooth' }); });
+})();
+
+/* ================= Scroll reveal ================= */
+(function () {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  var targets = document.querySelectorAll('.card, figure.chart, .callout, .diagram, .kpi, .sim-panel');
+  targets.forEach(function (el) { el.classList.add('reveal'); });
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (en) { if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); } });
+  }, { rootMargin: '0px 0px -8% 0px' });
+  targets.forEach(function (el) { io.observe(el); });
+})();
+
+/* ================= Copy buttons ================= */
+document.querySelectorAll('pre').forEach(function (pre) {
+  var wrap = document.createElement('div'); wrap.className = 'prewrap';
+  pre.parentNode.insertBefore(wrap, pre); wrap.appendChild(pre);
+  var b = document.createElement('button'); b.className = 'btn copybtn'; b.type = 'button'; b.textContent = 'Copy';
+  wrap.appendChild(b);
+  b.addEventListener('click', function () {
+    (navigator.clipboard ? navigator.clipboard.writeText(pre.textContent) : Promise.reject())
+      .then(function () { b.textContent = 'Copied ✓'; setTimeout(function () { b.textContent = 'Copy'; }, 1400); })
+      .catch(function () { b.textContent = 'Select + Ctrl-C'; setTimeout(function () { b.textContent = 'Copy'; }, 1800); });
+  });
+});
+
+/* ================= Lightbox ================= */
+(function () {
+  var lb = document.getElementById('lightbox'), img = lb.querySelector('img'), cap = lb.querySelector('.cap');
+  document.querySelectorAll('.imggrid a').forEach(function (a) {
+    a.addEventListener('click', function (e) {
+      var th = a.querySelector('img'); if (!th || !th.complete || !th.naturalWidth) return; /* broken images keep default nav */
+      e.preventDefault();
+      img.src = a.getAttribute('href'); img.alt = th.alt || '';
+      var c = a.querySelector('.cap'); cap.textContent = c ? c.textContent : '';
+      lb.classList.add('open');
+    });
+  });
+  function close() { lb.classList.remove('open'); img.src = ''; }
+  lb.addEventListener('click', close);
+  addEventListener('keydown', function (e) { if (e.key === 'Escape') { close(); closeDrawer(); } });
+  /* ---- mobile drawer ---- */
+  var nav = document.getElementById('toc'), scrim = document.getElementById('scrim'), tgl = document.getElementById('navToggle');
+  function closeDrawer() { nav.classList.remove('open'); scrim.classList.remove('open'); }
+  window.closeDrawer = closeDrawer;
+  tgl.addEventListener('click', function () { nav.classList.toggle('open'); scrim.classList.toggle('open', nav.classList.contains('open')); });
+  scrim.addEventListener('click', closeDrawer);
+  nav.querySelectorAll('a').forEach(function (a) { a.addEventListener('click', closeDrawer); });
+})();
+
+/* ================= Sidebar filter ================= */
+(function () {
+  var input = document.getElementById('navFilter'); if (!input) return;
+  var nav = document.getElementById('toc');
+  var items = Array.prototype.slice.call(nav.children).filter(function (el) { return el.tagName === 'A' || el.classList.contains('group'); });
+  input.addEventListener('input', function () {
+    var q = input.value.trim().toLowerCase();
+    var lastGroup = null;
+    items.forEach(function (el) {
+      if (el.classList.contains('group')) { lastGroup = el; el.classList.add('hidden'); return; }
+      var show = !q || el.textContent.toLowerCase().indexOf(q) !== -1;
+      el.classList.toggle('hidden', !show);
+      if (show && lastGroup) lastGroup.classList.remove('hidden');
+    });
+    if (!q) items.forEach(function (el) { el.classList.remove('hidden'); });
+  });
+})();
+</script>
+</body>
+</html>

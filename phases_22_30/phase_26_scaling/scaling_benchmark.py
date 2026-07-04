@@ -13,7 +13,10 @@ Generates:
   - scaling_law_fit.txt: O(n) analysis and projected cost
 """
 
+import heapq
 import os
+import pickle
+import time
 from typing import Dict, List
 
 import matplotlib
@@ -46,58 +49,71 @@ JOBS_PER_SECOND = 1.0
 
 def simulate_cluster_workload(config: Dict, n_runs: int = 20) -> List[Dict]:
     """
-    Simulate workload on scaled cluster.
+    Simulate workload on scaled cluster with a discrete-time queue:
+    jobs arrive over time, wait in a FIFO queue, start when enough GPUs
+    are free, and release their GPUs on completion.
+    Wait time is the REAL queue wait: start_step - arrival_step.
     Returns list of run results with metrics.
     """
     results = []
-    rng = np.random.default_rng(42)
+    total_gpus = config["total_gpus"]
+    n_jobs = int(JOBS_PER_SECOND * SIMULATION_DURATION)
 
     for run_id in range(n_runs):
-        # Generate synthetic workload
-        total_gpus = config["total_gpus"]
-        n_jobs = int(JOBS_PER_SECOND * SIMULATION_DURATION)
+        # Per-run seed: runs differ, whole set is reproducible
+        rng = np.random.default_rng(42 + run_id)
 
-        # Job characteristics
+        # Job characteristics (job j arrives at step j / JOBS_PER_SECOND)
         job_gpus = rng.integers(1, 9, n_jobs)
         job_runtimes = rng.integers(10, 200, n_jobs)
+        arrival_times = [int(j / JOBS_PER_SECOND) for j in range(n_jobs)]
 
-        # Queue simulation: track wait times
+        # Queue simulation: track real wait times
         wait_times = []
-        running_jobs = []
-        queue = list(range(n_jobs))  # Job IDs in queue
-        time_step = 0
+        queue = []            # arrived jobs waiting for GPUs (FIFO order)
+        running = []          # min-heap of (end_step, job_id)
+        free_gpus = total_gpus
+        next_job = 0
         completed_jobs = 0
+        used_gpu_steps = []   # GPUs in use at each timestep
+        queue_len_steps = []  # queue length at each timestep
 
         for step in range(SIMULATION_DURATION):
-            # Allocate jobs greedily
-            allocated = []
-            free_gpus = total_gpus - sum(job_gpus[j] for j in running_jobs if j < len(job_gpus))
+            # Release completed jobs
+            while running and running[0][0] <= step:
+                _, j = heapq.heappop(running)
+                free_gpus += job_gpus[j]
+                completed_jobs += 1
 
-            for i, job_id in enumerate(queue):
-                if job_id < len(job_gpus) and job_gpus[job_id] <= free_gpus:
-                    allocated.append(job_id)
-                    free_gpus -= job_gpus[job_id]
-                    running_jobs.append(job_id)
+            # New arrivals join the queue
+            while next_job < n_jobs and arrival_times[next_job] <= step:
+                queue.append(next_job)
+                next_job += 1
 
-            # Remove allocated from queue
-            queue = [j for j in queue if j not in allocated]
-
-            # Remove completed jobs
-            new_running = []
-            for j in running_jobs:
-                if j < len(job_runtimes):
-                    if step - (len([x for x in running_jobs if x < j]) * 10 + 100) >= job_runtimes[j]:
-                        wait_times.append(step - (len([x for x in running_jobs if x < j]) * 10 + 100))
-                        completed_jobs += 1
+            # Allocate jobs greedily in FIFO order (skip jobs that don't fit)
+            if free_gpus > 0 and queue:
+                skipped = []
+                idx = 0
+                n_queued = len(queue)
+                while idx < n_queued and free_gpus > 0:
+                    job_id = queue[idx]
+                    if job_gpus[job_id] <= free_gpus:
+                        free_gpus -= job_gpus[job_id]
+                        heapq.heappush(running, (step + int(job_runtimes[job_id]), job_id))
+                        wait_times.append(step - arrival_times[job_id])
                     else:
-                        new_running.append(j)
-            running_jobs = new_running
+                        skipped.append(job_id)
+                    idx += 1
+                queue[:idx] = skipped  # scanned prefix minus allocated jobs
+
+            used_gpu_steps.append(total_gpus - free_gpus)
+            queue_len_steps.append(len(queue))
 
         # Compute metrics
         mean_wait = np.mean(wait_times) if wait_times else 0.0
         max_wait = np.max(wait_times) if wait_times else 0.0
         throughput = completed_jobs / (SIMULATION_DURATION / 100.0)  # jobs per 100 timesteps
-        gpu_util = 100.0 * (total_gpus - np.mean([free_gpus] * len(wait_times))) / total_gpus if wait_times else 50.0
+        gpu_util = 100.0 * np.mean(used_gpu_steps) / total_gpus  # time-averaged utilization
 
         results.append(
             {
@@ -106,31 +122,48 @@ def simulate_cluster_workload(config: Dict, n_runs: int = 20) -> List[Dict]:
                 "max_wait": float(max_wait),
                 "throughput": float(throughput),
                 "gpu_utilization": float(gpu_util),
+                "mean_queue_len": float(np.mean(queue_len_steps)),
             }
         )
 
     return results
 
 
-def measure_inference_overhead(config: Dict) -> Dict:
-    """
-    Estimate inference latency for proactive scheduler at given scale.
-    Model: latency = a + b * log(total_gpus) + c * feature_dim
-    """
-    total_gpus = config["total_gpus"]
-    n_features = 12  # From synthetic features
+def load_wait_model():
+    """Load the trained wait-time model bundle (03_models/wait_model_v2.pkl)."""
+    model_path = os.path.join(PROJECT_ROOT, "03_models", "wait_model_v2.pkl")
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(
+            f"Trained model not found at {model_path}; "
+            "run 03_models/train_improved_model.py first."
+        )
+    with open(model_path, "rb") as f:
+        bundle = pickle.load(f)
+    return bundle["model"], bundle["features"]
 
-    # Empirical coefficients (from profiling Phase 09)
-    base_latency = 0.5  # ms
-    scale_coeff = 0.02  # ms per log(gpus)
-    feature_coeff = 0.1  # ms per feature
 
-    # XGBoost prediction latency scales as O(log(gpus)) for reasonable tree depths
-    predicted_latency = base_latency + scale_coeff * np.log(max(total_gpus, 1)) + feature_coeff * n_features
+def measure_inference_overhead(config: Dict, mean_queue_len: float, model, features) -> Dict:
+    """
+    Measure REAL inference latency of the trained wait-time model at the
+    given scale: one scheduling decision scores every queued job, so the
+    predict batch size is the mean queue length observed in this scale's
+    simulation. Latency is wall-clock time averaged over repeated calls.
+    """
+    batch_size = max(1, int(round(mean_queue_len)))
+    rng = np.random.default_rng(42)
+    x = pd.DataFrame(rng.random((batch_size, len(features))), columns=features)
+
+    model.predict(x)  # warm-up call (excluded from timing)
+    n_trials = 30
+    start = time.perf_counter()
+    for _ in range(n_trials):
+        model.predict(x)
+    measured_latency = (time.perf_counter() - start) * 1000.0 / n_trials  # ms
 
     return {
-        "predicted_inference_latency_ms": float(predicted_latency),
-        "throughput_overhead_pct": float(min(10.0, predicted_latency * 100.0 / 1000.0)),  # Assume 1s decision window
+        "measured_inference_latency_ms": float(measured_latency),
+        "inference_batch_size": batch_size,
+        "throughput_overhead_pct": float(min(10.0, measured_latency * 100.0 / 1000.0)),  # Assume 1s decision window
     }
 
 
@@ -162,19 +195,21 @@ def fit_scaling_law(scaling_results: pd.DataFrame) -> Dict:
 def build_scaling_dataframe(scaling_configs: List[Dict]) -> pd.DataFrame:
     """Build comprehensive scaling benchmark results."""
     rows = []
+    model, features = load_wait_model()
 
     for config in scaling_configs:
         print(f"  Simulating {config['cluster_name']} cluster ({config['total_gpus']} GPUs)...")
         run_results = simulate_cluster_workload(config, n_runs=N_RUNS)
-
-        print(f"    Measuring inference overhead...")
-        overhead = measure_inference_overhead(config)
 
         # Aggregate run results
         mean_wait = np.mean([r["mean_wait"] for r in run_results])
         max_wait = np.mean([r["max_wait"] for r in run_results])
         throughput = np.mean([r["throughput"] for r in run_results])
         gpu_util = np.mean([r["gpu_utilization"] for r in run_results])
+        mean_queue_len = np.mean([r["mean_queue_len"] for r in run_results])
+
+        print(f"    Measuring inference overhead...")
+        overhead = measure_inference_overhead(config, mean_queue_len, model, features)
 
         row = {
             "cluster_name": config["cluster_name"],
@@ -184,7 +219,9 @@ def build_scaling_dataframe(scaling_configs: List[Dict]) -> pd.DataFrame:
             "max_wait_time": float(max_wait),
             "throughput_jobs_per_100ts": float(throughput),
             "gpu_utilization_pct": float(gpu_util),
-            "inference_latency_ms": overhead["predicted_inference_latency_ms"],
+            "mean_queue_length": float(mean_queue_len),
+            "inference_latency_ms": overhead["measured_inference_latency_ms"],
+            "inference_batch_size": overhead["inference_batch_size"],
             "throughput_overhead_pct": overhead["throughput_overhead_pct"],
             "n_runs": N_RUNS,
         }
@@ -252,7 +289,7 @@ def write_scaling_analysis(scaling_df: pd.DataFrame) -> None:
     """Write detailed scaling analysis and projections."""
     scaling_law = fit_scaling_law(scaling_df)
 
-    with open(OUTPUT_FIT, "w") as f:
+    with open(OUTPUT_FIT, "w", encoding="utf-8") as f:
         f.write("=" * 70 + "\n")
         f.write("PHASE 26: SCALING VALIDATION ANALYSIS\n")
         f.write("=" * 70 + "\n\n")

@@ -1,11 +1,28 @@
+"""
+Phase 23 OOD robustness analysis.
+
+Evaluates the trained wait-time predictor (03_models/wait_model_v2.pkl) across
+72 domain-shift scenarios (6 arrival-rate multipliers x 4 cluster sizes x
+3 runtime distributions). Every scenario is a REAL discrete-time simulation
+(same Job/Cluster/FIFO mechanics and feature definitions as
+02_data/generate_improved_dataset.py); the reported R2/MAPE are computed by
+scoring the actual trained model on (features, observed wait) pairs collected
+from those simulations, and improvement_pct is measured by re-running each
+scenario with the model-guided proactive queue ordering vs FIFO.
+
+There is NO heuristic fallback: if the model file is missing the script fails
+loudly rather than silently substituting synthetic predictions.
+"""
+
 import os
 import pickle
+import random
 
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from sklearn.metrics import mean_absolute_percentage_error, r2_score
+from sklearn.metrics import r2_score
 
 matplotlib.use("Agg")
 
@@ -16,17 +33,17 @@ OUTPUT_CSV = os.path.join(SCRIPT_DIR, "ood_failure_modes.csv")
 OUTPUT_HEATMAP = os.path.join(SCRIPT_DIR, "ood_heatmap.png")
 
 ARRIVAL_MULTIPLIERS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
-CLUSTER_SIZES = [4, 8, 16, 32]
+CLUSTER_SIZES = [4, 8, 16, 32]  # total GPUs; nodes = size / GPUS_PER_NODE
 JOB_DISTRIBUTIONS = ["short_heavy", "balanced", "long_heavy"]
-JOB_DIST_SEED_OFFSET = {"short_heavy": 11, "balanced": 23, "long_heavy": 37}
-DIST_SHIFT_TARGET = {"short_heavy": -0.6, "balanced": 0.0, "long_heavy": 1.3}
-DIST_PENALTY_IMPROVEMENT = {"short_heavy": 0.4, "balanced": 0.0, "long_heavy": 1.2}
 HIGH_RISK_IMPROVEMENT_THRESHOLD = -2.0
-GPUS_PER_NODE = 4.0
-BASELINE_ARRIVAL_RATE = 1.0
-REFERENCE_CLUSTER_SIZE = 8.0
-FALLBACK_R2_THRESHOLD = -0.5
-FALLBACK_MAPE_THRESHOLD = 120.0
+GPUS_PER_NODE = 4
+
+# Training configuration (generate_improved_dataset.py): 110 jobs arriving in
+# [0, SIM_TIME // 2] on 8 nodes x 4 GPUs, runtimes uniform 5-20.
+SIM_TIME = 300
+BASE_NUM_JOBS = 110
+RUNS_PER_SCENARIO = 3
+BASE_SEED = 42
 
 FEATURE_COLUMNS = [
     "job_gpu",
@@ -47,12 +64,7 @@ BASELINE_KEYS = ["baseline_wait", "fifo_avg_wait", "fifo_wait", "fifo_mean_wait"
 PROACTIVE_KEYS = ["proactive_wait", "proactive_avg_wait", "proactive_wait_time", "proactive_mean_wait"]
 IMPROVEMENT_KEYS = ["improvement_pct", "improvement_percent", "pct_improvement"]
 
-MODEL_CANDIDATES = [
-    os.path.join(PROJECT_ROOT, "05_results", "models", "model_xgboost.pkl"),
-    os.path.join(PROJECT_ROOT, "05_results", "models", "xgboost_scheduler_model.pkl"),
-    os.path.join(PROJECT_ROOT, "03_models", "wait_model_v2.pkl"),
-    os.path.join(PROJECT_ROOT, "03_models", "wait_model.pkl"),
-]
+MODEL_PATH = os.path.join(PROJECT_ROOT, "03_models", "wait_model_v2.pkl")
 
 DATA_CANDIDATES = [
     os.path.join(PROJECT_ROOT, "05_results", "benchmarks", "40_run_benchmark.pkl"),
@@ -61,46 +73,25 @@ DATA_CANDIDATES = [
 ]
 
 
-class FallbackHeuristicModel:
-    def predict(self, x):
-        if isinstance(x, pd.DataFrame):
-            df = x
-        else:
-            df = pd.DataFrame(x, columns=FEATURE_COLUMNS)
-        pred = (
-            0.85 * df["queue_length"]
-            + 0.55 * df["job_gpu"]
-            + 0.45 * df["running_jobs"]
-            + 10.0 * df["queue_pressure"]
-            - 0.35 * df["total_free"]
-            + 2.5 * (1.0 - df["node_availability"])
-            + 0.15 * df["variance_free"]
-        )
-        return np.clip(pred.to_numpy(dtype=float), 0.0, None)
-
-
 # Load Phase 21 model
 def load_proactive_model():
-    """Load trained XGBoost model from Phase 21."""
-    for path in MODEL_CANDIDATES:
-        if not os.path.exists(path):
-            continue
-        try:
-            with open(path, "rb") as f:
-                payload = pickle.load(f)
-        except Exception:
-            continue
-
-        if isinstance(payload, dict) and "model" in payload:
-            model = payload["model"]
-            features = payload.get("features", FEATURE_COLUMNS)
-            return model, list(features), path
-
-        if hasattr(payload, "predict"):
-            guessed = list(getattr(payload, "feature_names_in_", FEATURE_COLUMNS))
-            return payload, guessed, path
-
-    return FallbackHeuristicModel(), FEATURE_COLUMNS, "synthetic_fallback"
+    """Load the trained XGBoost model. Fails loudly if the artifact is missing."""
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(
+            f"Trained model not found at {MODEL_PATH}. "
+            "Run 03_models/train_improved_model.py first; Phase 23 refuses to "
+            "substitute a heuristic for the real model."
+        )
+    with open(MODEL_PATH, "rb") as f:
+        bundle = pickle.load(f)
+    model = bundle["model"]
+    features = list(bundle.get("features", FEATURE_COLUMNS))
+    if features != FEATURE_COLUMNS:
+        raise ValueError(
+            f"Model feature schema {features} does not match the canonical "
+            f"12-feature schema {FEATURE_COLUMNS}."
+        )
+    return model, features, MODEL_PATH
 
 
 def _first_present(df, keys):
@@ -112,7 +103,7 @@ def _first_present(df, keys):
 
 # Load Phase 09 benchmark data (training distribution reference)
 def load_baseline_data():
-    """Load 40-run benchmark data to establish baseline metrics."""
+    """Load 40-run benchmark data to establish the in-distribution baseline."""
     for path in DATA_CANDIDATES:
         if not os.path.exists(path):
             continue
@@ -147,15 +138,91 @@ def load_baseline_data():
         if not out.empty:
             return out, path
 
-    fallback = pd.DataFrame(
-        {
-            # Fallback mirrors the reported Phase 22 40-run means when benchmark artifacts are absent.
-            "baseline_wait": np.full(40, 18.27),
-            "proactive_wait": np.full(40, 16.72),
-            "improvement_pct": np.full(40, 7.50),
-        }
+    raise FileNotFoundError(
+        "No benchmark artifact found among: "
+        + ", ".join(DATA_CANDIDATES)
+        + ". Run the Phase 09 benchmark (05_results/benchmark_and_plot.py) first; "
+        "Phase 23 refuses to fabricate baseline numbers."
     )
-    return fallback, "synthetic_fallback"
+
+
+# Simulation core — identical mechanics/formulas to generate_improved_dataset.py
+class Job:
+    def __init__(self, job_id, arrival_time, num_gpus, runtime):
+        self.job_id = job_id
+        self.arrival_time = arrival_time
+        self.num_gpus = num_gpus
+        self.runtime = runtime
+        self.start_time = None
+        self.end_time = None
+        self.allocated_nodes = []
+        self.feature_snapshot = None
+
+
+class Cluster:
+    def __init__(self, num_nodes, gpus_per_node):
+        self.num_nodes = num_nodes
+        self.gpus_per_node = gpus_per_node
+        self.nodes = [gpus_per_node] * num_nodes
+
+    def total_free_gpus(self):
+        return sum(self.nodes)
+
+    def allocate(self, job, current_time):
+        required = job.num_gpus
+        allocation = []
+        for i in range(self.num_nodes):
+            if required <= 0:
+                break
+            available = self.nodes[i]
+            if available > 0:
+                used = min(available, required)
+                self.nodes[i] -= used
+                allocation.append((i, used))
+                required -= used
+        if required == 0:
+            job.start_time = current_time
+            job.end_time = current_time + job.runtime
+            job.allocated_nodes = allocation
+            return True
+        else:
+            for node_id, used in allocation:
+                self.nodes[node_id] += used
+            return False
+
+    def release(self, job):
+        for node_id, used in job.allocated_nodes:
+            self.nodes[node_id] += used
+
+
+def extract_features(job, cluster, queue, running_jobs):
+    """Canonical 12-feature schema — must match generate_improved_dataset.py EXACTLY."""
+    total_free = cluster.total_free_gpus()
+    max_free_node = max(cluster.nodes)
+    variance_free = np.var(cluster.nodes)
+
+    can_fit_now = int(total_free >= job.num_gpus)
+    gpu_fit_ratio = min(total_free / (job.num_gpus + 1e-6), 1.0)
+    fragmentation = float(np.std(cluster.nodes))
+    total_queued_gpus = sum(q.num_gpus for q in queue)
+    queue_pressure = total_queued_gpus / (total_free + 1)
+    node_availability = sum(1 for n in cluster.nodes if n >= job.num_gpus) / cluster.num_nodes
+    avg_free_per_node = total_free / cluster.num_nodes
+
+    return {
+        "job_gpu": job.num_gpus,
+        "total_free": total_free,
+        "queue_length": len(queue),
+        "running_jobs": len(running_jobs),
+        "max_free_node": max_free_node,
+        "variance_free": variance_free,
+        "can_fit_now": can_fit_now,
+        "gpu_fit_ratio": gpu_fit_ratio,
+        "fragmentation": fragmentation,
+        "queue_pressure": queue_pressure,
+        "node_availability": node_availability,
+        "avg_free_per_node": avg_free_per_node,
+    }
 
 
 # Generate OOD scenarios
@@ -186,174 +253,180 @@ def generate_ood_scenarios():
     return scenarios
 
 
-def _sample_runtime(rng, job_dist_type, size):
-    short = rng.integers(2, 8, size).astype(float)
-    medium = rng.integers(8, 18, size).astype(float)
-    long = rng.integers(18, 40, size).astype(float)
-
+def _sample_runtime(job_dist_type):
+    """Shifted runtime profiles; 'balanced' matches the training distribution (5-20)."""
+    r = random.random()
     if job_dist_type == "short_heavy":
-        mix = rng.choice([0, 1, 2], p=[0.72, 0.23, 0.05], size=size)
-        out = short.copy()
-        out[mix == 1] = medium[mix == 1]
-        out[mix == 2] = long[mix == 2]
-        return out
+        if r < 0.72:
+            return random.randint(2, 8)
+        if r < 0.95:
+            return random.randint(8, 18)
+        return random.randint(18, 40)
     if job_dist_type == "long_heavy":
-        mix = rng.choice([0, 1, 2], p=[0.12, 0.33, 0.55], size=size)
-        out = short.copy()
-        out[mix == 1] = medium[mix == 1]
-        out[mix == 2] = long[mix == 2]
-        return out
-    return rng.integers(4, 24, size=size).astype(float)
+        if r < 0.12:
+            return random.randint(2, 8)
+        if r < 0.45:
+            return random.randint(8, 18)
+        return random.randint(18, 40)
+    return random.randint(5, 20)
 
 
-def _generate_shifted_data(params, sample_size=700):
-    rng = np.random.default_rng(
-        int(
-            (params["arrival_rate_multiplier"] * 1000)
-            + params["cluster_size"] * 10
-            + JOB_DIST_SEED_OFFSET[params["job_dist_type"]]
-        )
-    )
-
-    arrival = params["arrival_rate_multiplier"]
-    cluster_size = float(params["cluster_size"])
-    pressure = arrival * (16.0 / cluster_size)
-
-    job_gpu = rng.integers(1, 9, size=sample_size).astype(float)
-    # Under heavier pressure, free GPUs decrease and become more variable.
-    total_free = np.clip(
-        rng.normal(
-            loc=cluster_size / (1.0 + 0.35 * pressure),
-            scale=max(1.0, cluster_size * 0.18),
-            size=sample_size,
-        ),
-        0.0,
-        cluster_size,
-    )
-    queue_length = rng.poisson(lam=np.clip(3.0 + 5.0 * pressure, 1.0, 35.0), size=sample_size).astype(float)
-    running_jobs = rng.poisson(lam=np.clip(2.0 + 3.0 * pressure, 1.0, 22.0), size=sample_size).astype(float)
-    runtime = _sample_runtime(rng, params["job_dist_type"], sample_size)
-
-    # Synthetic topology assumes 4 GPUs per node, aligned with earlier scheduler simulation defaults.
-    node_count = max(1.0, cluster_size / GPUS_PER_NODE)
-    max_free_node = np.clip(total_free / node_count + rng.normal(0.0, 0.8, sample_size), 0.0, 4.0)
-    variance_free = np.clip(rng.gamma(shape=2.0 + pressure, scale=0.8, size=sample_size), 0.0, None)
-    can_fit_now = (total_free >= job_gpu).astype(float)
-    gpu_fit_ratio = np.clip(total_free / np.maximum(job_gpu, 1e-3), 0.0, 1.0)
-    fragmentation = np.clip(rng.normal(loc=0.9 + 0.3 * pressure, scale=0.45, size=sample_size), 0.0, None)
-    queue_pressure = np.clip((queue_length + 0.5 * running_jobs) / np.maximum(total_free + 1.0, 1.0), 0.0, None)
-    node_availability = np.clip(total_free / np.maximum(cluster_size, 1.0) + rng.normal(0.0, 0.08, sample_size), 0.0, 1.0)
-    avg_free_per_node = total_free / node_count
-
-    features = pd.DataFrame(
-        {
-            "job_gpu": job_gpu,
-            "total_free": total_free,
-            "queue_length": queue_length,
-            "running_jobs": running_jobs,
-            "max_free_node": max_free_node,
-            "variance_free": variance_free,
-            "can_fit_now": can_fit_now,
-            "gpu_fit_ratio": gpu_fit_ratio,
-            "fragmentation": fragmentation,
-            "queue_pressure": queue_pressure,
-            "node_availability": node_availability,
-            "avg_free_per_node": avg_free_per_node,
-        }
-    )
-
-    # Synthetic wait-time proxy used only when trace/model artifacts are unavailable.
-    # Runtime-profile offset for the synthetic target distribution:
-    # short-heavy tends to reduce waits, long-heavy increases waits.
-    dist_shift = DIST_SHIFT_TARGET[params["job_dist_type"]]
-    shift_mag = abs(arrival - BASELINE_ARRIVAL_RATE) + abs(cluster_size - REFERENCE_CLUSTER_SIZE) / REFERENCE_CLUSTER_SIZE
-    noise = rng.normal(0.0, 1.0 + 1.2 * shift_mag, sample_size)
-    # Coefficients are synthetic queue-pressure weights chosen to produce realistic OOD spread.
-    y_true = (
-        3.4
-        + 0.78 * queue_length
-        + 0.50 * runtime
-        + 0.44 * running_jobs
-        + 0.60 * job_gpu
-        + 9.5 * queue_pressure
-        - 0.40 * total_free
-        + dist_shift
-        + noise
-    )
-    return features, np.clip(y_true.astype(float), 1.0, None)
+def generate_shifted_jobs(params):
+    """Draw a workload under the scenario's domain shift (uses the seeded RNG)."""
+    num_jobs = max(1, round(BASE_NUM_JOBS * params["arrival_rate_multiplier"]))
+    max_gpu = min(8, params["cluster_size"])  # infeasible requests cannot exist
+    jobs = []
+    for i in range(num_jobs):
+        arrival_time = random.randint(0, SIM_TIME // 2)
+        num_gpus = random.randint(1, max_gpu)
+        runtime = _sample_runtime(params["job_dist_type"])
+        jobs.append(Job(i, arrival_time, num_gpus, runtime))
+    return sorted(jobs, key=lambda x: x.arrival_time)
 
 
-def _safe_predict(model, features, model_features):
-    x = features.copy()
-    for col in model_features:
-        if col not in x.columns:
-            x[col] = 0.0
-    x = x[model_features]
-    try:
-        preds = model.predict(x)
-        return np.asarray(preds, dtype=float)
-    except Exception:
-        fallback = FallbackHeuristicModel()
-        return fallback.predict(features)
+def _clone_jobs(jobs):
+    return [Job(j.job_id, j.arrival_time, j.num_gpus, j.runtime) for j in jobs]
+
+
+def run_fifo(jobs_input, num_nodes):
+    """FIFO simulation (training-data mechanics). Returns per-job (features, wait)
+    rows for completed jobs plus their wait times and the completed count."""
+    cluster = Cluster(num_nodes, GPUS_PER_NODE)
+    jobs = _clone_jobs(jobs_input)
+    queue, running_jobs, completed_jobs = [], [], []
+
+    for t in range(SIM_TIME):
+        for job in running_jobs[:]:
+            if job.end_time == t:
+                cluster.release(job)
+                running_jobs.remove(job)
+                completed_jobs.append(job)
+        for job in jobs:
+            if job.arrival_time == t:
+                job.feature_snapshot = extract_features(job, cluster, queue, running_jobs)
+                queue.append(job)
+        for job in queue[:]:
+            if cluster.total_free_gpus() >= job.num_gpus:
+                if cluster.allocate(job, t):
+                    running_jobs.append(job)
+                    queue.remove(job)
+
+    rows, waits = [], []
+    for job in completed_jobs:
+        if job.feature_snapshot is not None and job.start_time is not None:
+            row = job.feature_snapshot.copy()
+            row["wait_time"] = job.start_time - job.arrival_time
+            rows.append(row)
+            waits.append(row["wait_time"])
+    return rows, waits, len(completed_jobs)
+
+
+def run_proactive(jobs_input, num_nodes, model, model_features):
+    """Model-guided simulation: each tick the queue is re-ordered by the trained
+    model's predicted wait (ascending), then all fitting jobs dispatch — the same
+    policy as 04_scheduler/proactive_Schedule_v2.py, with batched predictions."""
+    cluster = Cluster(num_nodes, GPUS_PER_NODE)
+    jobs = _clone_jobs(jobs_input)
+    queue, running_jobs, completed_jobs = [], [], []
+
+    for t in range(SIM_TIME):
+        for job in running_jobs[:]:
+            if job.end_time == t:
+                cluster.release(job)
+                running_jobs.remove(job)
+                completed_jobs.append(job)
+        for job in jobs:
+            if job.arrival_time == t:
+                queue.append(job)
+
+        # Re-rank only when a dispatch is possible this tick — ordering has no
+        # effect otherwise, and skipping keeps the 72-scenario sweep fast.
+        free = cluster.total_free_gpus()
+        if len(queue) > 1 and any(j.num_gpus <= free for j in queue):
+            feats = np.asarray(
+                [
+                    [snap[c] for c in model_features]
+                    for snap in (extract_features(job, cluster, queue, running_jobs) for job in queue)
+                ],
+                dtype=float,
+            )
+            predicted = model.predict(feats)
+            order = np.argsort(predicted, kind="stable")
+            queue = [queue[i] for i in order]
+
+        for job in queue[:]:
+            if cluster.total_free_gpus() >= job.num_gpus:
+                if cluster.allocate(job, t):
+                    running_jobs.append(job)
+                    queue.remove(job)
+
+    waits = [j.start_time - j.arrival_time for j in completed_jobs if j.start_time is not None]
+    return waits, len(completed_jobs)
 
 
 def _compute_mape(y_true, y_pred):
-    return float(mean_absolute_percentage_error(y_true, np.clip(y_pred, 0.0, None)) * 100.0)
+    """MAPE over jobs with actual wait >= 1 (zero-wait jobs make MAPE undefined)."""
+    mask = y_true >= 1.0
+    if not mask.any():
+        return float("nan")
+    return float(np.mean(np.abs(y_true[mask] - y_pred[mask]) / y_true[mask]) * 100.0)
 
 
 # Run OOD evaluation
-def evaluate_ood_scenario(model, model_features, scenario_params, baseline_mean_improvement):
+def evaluate_ood_scenario(model, model_features, scenario_params, baseline_mean_improvement, scenario_index):
     """
     For each scenario:
-    1. Generate synthetic data matching the domain shift
-    2. Make predictions using Phase 21 model
-    3. Compute R², MAPE, improvement degradation
-    4. Detect failure modes
-    Returns: dict with metrics and failure flags
+    1. Simulate the shifted workload (real FIFO simulation, seeded per run)
+    2. Score the trained model on the observed (features, wait) pairs -> R2, MAPE
+    3. Re-run the scenario with model-guided ordering -> improvement vs FIFO
+    4. Measure the fraction of submitted jobs left unfinished (failure rate)
+    Returns: dict with metrics
     """
-    features, y_true = _generate_shifted_data(scenario_params)
-    y_pred = _safe_predict(model, features, model_features)
+    num_nodes = max(1, scenario_params["cluster_size"] // GPUS_PER_NODE)
 
-    r2 = float(r2_score(y_true, y_pred))
-    mape = _compute_mape(y_true, y_pred)
-    if (
-        (not np.isfinite(r2))
-        or (not np.isfinite(mape))
-        or r2 < FALLBACK_R2_THRESHOLD
-        or mape > FALLBACK_MAPE_THRESHOLD
-    ):
-        fallback = FallbackHeuristicModel()
-        y_pred = fallback.predict(features)
+    rows = []
+    fifo_waits, proactive_waits = [], []
+    submitted = completed_proactive = 0
+    for run in range(RUNS_PER_SCENARIO):
+        # Deterministic but distinct seed per (scenario, run).
+        seed = BASE_SEED + scenario_index * RUNS_PER_SCENARIO + run
+        random.seed(seed)
+        np.random.seed(seed)
+
+        jobs = generate_shifted_jobs(scenario_params)
+        submitted += len(jobs)
+
+        run_rows, run_waits, _ = run_fifo(jobs, num_nodes)
+        rows.extend(run_rows)
+        fifo_waits.extend(run_waits)
+
+        pro_waits, pro_completed = run_proactive(jobs, num_nodes, model, model_features)
+        proactive_waits.extend(pro_waits)
+        completed_proactive += pro_completed
+
+    sample_df = pd.DataFrame(rows)
+    y_true = sample_df["wait_time"].to_numpy(dtype=float)
+    y_pred = np.asarray(model.predict(sample_df[model_features]), dtype=float)
+
+    # R2 is undefined for a constant target (e.g. every job starts instantly).
+    if len(y_true) < 2 or np.var(y_true) == 0.0:
+        r2 = float("nan")
+    else:
         r2 = float(r2_score(y_true, y_pred))
-        mape = _compute_mape(y_true, y_pred)
-    mape = float(np.clip(mape, 0.0, 200.0))
+    mape = _compute_mape(y_true, y_pred)
+
+    fifo_mean = float(np.mean(fifo_waits)) if fifo_waits else float("nan")
+    proactive_mean = float(np.mean(proactive_waits)) if proactive_waits else float("nan")
+    if fifo_waits and fifo_mean > 0:
+        improvement_pct = (fifo_mean - proactive_mean) / fifo_mean * 100.0
+    else:
+        improvement_pct = 0.0  # no measurable queueing under this shift
+
+    # Jobs still unfinished at the simulation horizon under the proactive policy.
+    failure_rate = float(100.0 * (1.0 - completed_proactive / submitted)) if submitted else float("nan")
 
     arrival = scenario_params["arrival_rate_multiplier"]
     cluster_size = scenario_params["cluster_size"]
-    # Additional degradation penalty (separate from dist_shift above) used for scheduler improvement drop.
-    dist_penalty = DIST_PENALTY_IMPROVEMENT[scenario_params["job_dist_type"]]
-    # Weighted degradation model: shift distance, prediction quality, and runtime-profile mismatch.
-    improvement_drop = (
-        abs(arrival - 1.0) * 3.0
-        + abs(cluster_size - 8) / 8.0 * 1.0
-        + max(0.0, 0.6 - r2) * 2.0
-        + max(0.0, mape - 35.0) * 0.03
-        + dist_penalty
-    )
-    improvement_pct = float(np.clip(baseline_mean_improvement - improvement_drop, -4.8, 15.0))
-
-    # Failure-rate proxy compounds negative improvement, poor fit quality, and large relative errors.
-    failure_rate = float(
-        np.clip(
-            3.0
-            + max(0.0, -improvement_pct) * 9.0
-            + max(0.0, 0.55 - r2) * 35.0
-            + max(0.0, mape - 30.0) * 0.8,
-            0.0,
-            100.0,
-        )
-    )
-
     return {
         "scenario": scenario_params["scenario"],
         "arrival_rate_multiplier": arrival,
@@ -361,9 +434,10 @@ def evaluate_ood_scenario(model, model_features, scenario_params, baseline_mean_
         "job_dist_type": scenario_params["job_dist_type"],
         "r2_score": r2,
         "mape": mape,
-        "improvement_pct": improvement_pct,
+        "improvement_pct": float(improvement_pct),
         "improvement_degradation_pct": float(baseline_mean_improvement - improvement_pct),
         "failure_rate_pct": failure_rate,
+        "n_samples": int(len(y_true)),
     }
 
 
@@ -448,9 +522,14 @@ def plot_ood_heatmap(results_df):
             if value < 0:
                 ax.add_patch(plt.Rectangle((j - 0.5, i - 0.5), 1, 1, fill=False, edgecolor="black", linewidth=1.1))
 
-    xx, yy = np.meshgrid(range(len(CLUSTER_SIZES)), range(len(ARRIVAL_MULTIPLIERS)))
-    cs = ax.contour(xx, yy, r2_heat.to_numpy(), levels=[0.3, 0.5, 0.7], colors="black", linewidths=1.0)
-    ax.clabel(cs, inline=True, fmt="R²=%.1f", fontsize=8)
+    # Only draw contour levels that actually fall inside the observed R2 range.
+    r2_grid = r2_heat.to_numpy(dtype=float)
+    finite = r2_grid[np.isfinite(r2_grid)]
+    levels = [lv for lv in (0.3, 0.5, 0.7) if finite.size and finite.min() < lv < finite.max()]
+    if levels:
+        xx, yy = np.meshgrid(range(len(CLUSTER_SIZES)), range(len(ARRIVAL_MULTIPLIERS)))
+        cs = ax.contour(xx, yy, r2_grid, levels=levels, colors="black", linewidths=1.0)
+        ax.clabel(cs, inline=True, fmt="R²=%.1f", fontsize=8)
 
     fig.tight_layout()
     fig.savefig(OUTPUT_HEATMAP, dpi=220, bbox_inches="tight")
@@ -468,8 +547,10 @@ def main():
     scenarios = generate_ood_scenarios()
 
     results = []
-    for scenario_name, params in scenarios:
-        result = evaluate_ood_scenario(model, model_features, params, baseline_mean_improvement)
+    for scenario_index, (scenario_name, params) in enumerate(scenarios):
+        result = evaluate_ood_scenario(
+            model, model_features, params, baseline_mean_improvement, scenario_index
+        )
         mode, risk = detect_failure_mode(
             result["improvement_pct"],
             result["r2_score"],
@@ -481,6 +562,11 @@ def main():
         result["risk_level"] = risk
         result["scenario"] = scenario_name
         results.append(result)
+        print(
+            f"[{scenario_index + 1:2d}/{len(scenarios)}] {scenario_name}: "
+            f"R2={result['r2_score']:.3f} MAPE={result['mape']:.1f}% "
+            f"improvement={result['improvement_pct']:.2f}% ({risk})"
+        )
 
     results_df = pd.DataFrame(results)
     ordered_columns = [
@@ -495,6 +581,7 @@ def main():
         "risk_level",
         "improvement_degradation_pct",
         "failure_rate_pct",
+        "n_samples",
     ]
     results_df = results_df[ordered_columns]
 

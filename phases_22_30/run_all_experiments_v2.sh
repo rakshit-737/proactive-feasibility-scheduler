@@ -4,6 +4,10 @@
 
 set -e  # Exit on error
 
+# Force UTF-8 stdio on every Python step (Windows defaults to cp1252, which
+# crashes scripts that print Unicode symbols when output is piped/tee'd).
+export PYTHONUTF8=1
+
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="${PROJECT_ROOT}/run_all_experiments_$(date +%Y%m%d_%H%M%S).log"
 
@@ -16,10 +20,12 @@ echo ""
 
 exec &> >(tee -a "${LOG_FILE}")
 
-# Phase 01–09: Core simulation & model training
+# Phase 01–09: Core simulation & model training (root pipeline)
 echo "[Phases 01–09] Running core simulation pipeline..."
-if [ -f "${PROJECT_ROOT}/../01_simulation/run_simulation.py" ]; then
-    python "${PROJECT_ROOT}/../01_simulation/run_simulation.py" || echo "Phase 01–09 skipped (files not found)"
+if [ -f "${PROJECT_ROOT}/../run_all_experiments.sh" ]; then
+    bash "${PROJECT_ROOT}/../run_all_experiments.sh"
+else
+    echo "WARNING: Phases 01-09 pipeline (run_all_experiments.sh) not found - skipping"
 fi
 
 # Phase 22: Statistical rigor

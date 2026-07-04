@@ -4,9 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT_DIR"
 
-<<<<<<< HEAD
 # Resolve a Python interpreter (python3 preferred, fall back to python).
 PY="$(command -v python3 || command -v python)"
+
+# Force UTF-8 stdio on every Python step: several scripts print Unicode
+# (importance bars, R-squared symbols) which crashes under Windows' default
+# cp1252 console encoding when output is piped or redirected.
+export PYTHONUTF8=1
 
 # ---------------------------------------------------------------------------
 # Step 0 regenerates the dataset and the v2 model so the pipeline works on a
@@ -19,35 +23,35 @@ echo "[0/11] Generate dataset and train wait_model_v2"
 "$PY" 03_models/train_improved_model.py
 
 echo "[1/11] Ablation study"
-=======
-echo "[1/10] Ablation study"
->>>>>>> d420ccc5fc239b03e840287805338721fb55585d
-python 03_models/ablation_study.py
+"$PY" 03_models/ablation_study.py
 
-echo "[2/10] Fairness analysis"
-python 04_scheduler/fairness_analysis.py
+echo "[2/11] Fairness analysis"
+"$PY" 04_scheduler/fairness_analysis.py
 
-echo "[3/10] Scheduler baselines benchmark"
-python 04_scheduler/multi_scheduler_benchmark.py
+echo "[3/11] Scheduler baselines benchmark"
+"$PY" 04_scheduler/multi_scheduler_benchmark.py
 
-echo "[4/10] SHAP explainability"
-python 03_models/explainability_shap.py
+echo "[4/11] SHAP explainability"
+"$PY" 03_models/explainability_shap.py
 
-echo "[5/10] Real trace loading and synthetic-vs-real validation"
-python 02_data/load_real_traces.py
-python 02_data/synthetic_vs_real_comparison.py
+echo "[5/11] Real trace loading and synthetic-vs-real validation"
+"$PY" 02_data/load_real_traces.py
+"$PY" 02_data/synthetic_vs_real_comparison.py
 
-echo "[6/10] Scaling analysis"
-python 04_scheduler/scaling_analysis.py
+echo "[6/11] Scaling analysis"
+"$PY" 04_scheduler/scaling_analysis.py
 
-echo "[7/10] Online learning and concept drift"
-python 03_models/online_learning.py
-python 03_models/concept_drift_detection.py
+echo "[7/11] Online learning and concept drift"
+"$PY" 03_models/online_learning.py
+"$PY" 03_models/concept_drift_detection.py
 
-echo "[8/10] ROI analysis"
-python 05_results/roi_analysis.py
+echo "[8/11] Baseline statistical benchmark refresh"
+"$PY" 04_scheduler/benchmark_statistical.py
 
-echo "[9/10] Baseline statistical benchmark refresh"
-python 04_scheduler/benchmark_statistical.py
+echo "[9/11] ROI analysis"
+"$PY" 05_results/roi_analysis.py
 
-echo "[10/10] Done. Launch dashboard with: streamlit run dashboard.py"
+echo "[10/11] Multi-model comparison (Table 1)"
+"$PY" 03_models/compare_multiple_models.py
+
+echo "[11/11] Done. Launch dashboard with: streamlit run dashboard.py"

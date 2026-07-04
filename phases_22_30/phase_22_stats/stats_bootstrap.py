@@ -162,22 +162,40 @@ def paired_tests(df, optional_pairs):
 
     stats_rows = []
     raw_pvalues = []
+    testable_rows = []
     for metric, baseline, proactive in tests:
-        t_stat, p_raw = stats.ttest_rel(baseline, proactive, alternative="two-sided")
-        if np.isnan(t_stat) or np.isnan(p_raw):
+        diff = baseline - proactive
+        # Guard the degenerate case: identical paired columns (zero-variance
+        # differences) make ttest_rel return NaN; flag as not applicable
+        # instead of masquerading as a real "not significant" result.
+        if diff.size < 2 or np.allclose(np.var(diff), 0.0):
             warnings.warn(
-                f"Paired t-test produced NaN for '{metric}'. Falling back to t_stat=0.0, p_value=1.0.",
+                f"Paired t-test not applicable for '{metric}': zero-variance paired differences.",
                 RuntimeWarning,
                 stacklevel=2,
             )
-            t_stat, p_raw = 0.0, 1.0
-        stats_rows.append({"metric": metric, "t_stat": float(t_stat), "p_value_raw": float(p_raw)})
+            stats_rows.append(
+                {
+                    "metric": metric,
+                    "t_stat": np.nan,
+                    "p_value_raw": np.nan,
+                    "p_value_bh": np.nan,
+                    "significant_0_05": False,
+                    "note": "n/a (zero variance)",
+                }
+            )
+            continue
+        t_stat, p_raw = stats.ttest_rel(baseline, proactive, alternative="two-sided")
+        row = {"metric": metric, "t_stat": float(t_stat), "p_value_raw": float(p_raw), "note": ""}
+        stats_rows.append(row)
+        testable_rows.append(row)
         raw_pvalues.append(float(p_raw))
 
-    corrected = benjamini_hochberg(raw_pvalues)
-    for row, p_corr in zip(stats_rows, corrected):
-        row["p_value_bh"] = float(p_corr)
-        row["significant_0_05"] = bool(p_corr < 0.05)
+    if raw_pvalues:
+        corrected = benjamini_hochberg(raw_pvalues)
+        for row, p_corr in zip(testable_rows, corrected):
+            row["p_value_bh"] = float(p_corr)
+            row["significant_0_05"] = bool(p_corr < 0.05)
 
     return stats_rows
 
@@ -225,6 +243,8 @@ def build_summary(df, test_rows):
             "significant_0_05": wait_test["significant_0_05"],
         },
     ]
+    for row in rows:
+        row["note"] = wait_test.get("note", "")
 
     for row in test_rows:
         if row["metric"] == "wait_time":
@@ -240,6 +260,7 @@ def build_summary(df, test_rows):
                 "p_value_raw": row["p_value_raw"],
                 "p_value_bh": row["p_value_bh"],
                 "significant_0_05": row["significant_0_05"],
+                "note": row.get("note", ""),
             }
         )
 

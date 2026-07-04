@@ -1,0 +1,6 @@
+scheduler,scheduler_name,scheduler_type,reference,mean_wait,max_wait,fairness_gini,throughput_jobs_per_ts,gpu_util,predictor_mae
+SJF,Shortest Job First,heuristic_baseline,04_scheduler/sjf_scheduler.py,12.001212121212122,143.46666666666667,0.7817175173841735,0.3666666666666666,0.6364444444444445,
+NN,Neural Network (MLP),ml_baseline,04_scheduler/neural_network_scheduler.py (Phase 14),15.694545454545452,134.2,0.7958558349718919,0.3666666666666666,0.6364444444444445,17.608265281228505
+PROACTIVE,Proactive (XGBoost),proposed,Phase 09 proactive feasibility scheduler,15.713939393939397,125.73333333333332,0.7904280661148351,0.3666666666666666,0.6364444444444445,17.39328266995719
+PRIORITY,Priority,heuristic_baseline,04_scheduler/priority_scheduler.py,16.34121212121212,127.66666666666669,0.7386434750408835,0.3666666666666666,0.6364444444444445,
+FIFO,FIFO,baseline,04_scheduler/multi_scheduler_benchmark.py (arrival order),16.653333333333332,53.93333333333333,0.5177652705481778,0.3666666666666666,0.6364444444444445,

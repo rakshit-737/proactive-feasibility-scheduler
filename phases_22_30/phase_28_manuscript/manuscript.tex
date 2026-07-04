@@ -3,7 +3,7 @@
 
 \documentclass[11pt,twocolumn]{article}
 
-\usepackage[utf-8]{inputenc}
+\usepackage[utf8]{inputenc}
 \usepackage[margin=0.9in]{geometry}
 \usepackage{cite}
 \usepackage{amsmath}
@@ -36,7 +36,7 @@
 \maketitle
 
 \begin{abstract}
-Modern HPC and cloud clusters hosting GPU-intensive workloads face significant scheduling challenges: job wait times are unpredictable due to heterogeneous resource requests, cluster fragmentation, and queue dynamics. We propose \emph{Proactive}, an ML-based scheduling approach that predicts job feasibility using XGBoost trained on cluster-state features, enabling proactive queue reordering to minimize wait times while maintaining fairness. Evaluation on synthetic traces shows $\sim$7.5\% mean wait-time reduction vs. FIFO, with superior fairness metrics (Gini: 0.37 vs. 0.42) and compatibility with heterogeneous clusters. Cross-dataset validation confirms generalization from synthetic to real traces. Scaling analysis shows sub-linear inference overhead ($< 2\%$ at 256 GPUs), and deployment guide provides HPC operators practical integration strategies.
+Modern HPC and cloud clusters hosting GPU-intensive workloads face significant scheduling challenges: job wait times are unpredictable due to heterogeneous resource requests, cluster fragmentation, and queue dynamics. We propose \emph{Proactive}, an ML-based scheduling approach that predicts job wait time using XGBoost trained on cluster-state features, enabling proactive queue reordering to reduce mean wait time. On a seeded 40-run paired benchmark against FIFO, Proactive reduces mean wait time by 7.7\% (bootstrap 95\% CI [5.0\%, 10.3\%], paired $t$-test $p = 1.4\times10^{-6}$) at identical GPU utilisation. The gain is not free: tail latency (max wait $\sim$58 $\rightarrow$ $\sim$125 ts) and per-job fairness (Gini 0.53 $\rightarrow$ 0.80) worsen, and an anti-starvation variant recovers part of the fairness cost (Gini 0.69). The wait-time model reaches $R^2 \approx 0.84$ on a proper holdout, but degrades sharply out-of-distribution (mean $R^2 < 0$ across 72 domain-shift scenarios) and has not yet been validated on real traces (the LANL-style trace used is a synthetic proxy). We report these trade-offs and failure modes explicitly, together with a scaling analysis (scheduling overhead $< 5\%$) and a deployment guide with FIFO-fallback safeguards for HPC operators.
 \end{abstract}
 
 \section{Introduction}
@@ -54,11 +54,11 @@ Existing schedulers (FIFO, SLURM backfill, Kubernetes QoS) use greedy heuristics
 
 \subsection{Contributions}
 \begin{enumerate}
-  \item \textbf{ML-Based Feasibility Prediction}: XGBoost model trained on cluster-state features (queue length, GPU availability, fragmentation, etc.) to predict job wait time with $R^2 \approx 0.94$.
-  \item \textbf{Proactive Scheduler}: Reorders queue greedily by feasibility, achieving $\sim$7.5\% mean wait-time reduction vs. FIFO.
-  \item \textbf{Fairness Analysis}: Formal fairness metrics (Gini, Jain Index, SLA compliance) show proactive maintains equity while improving throughput.
-  \item \textbf{Cross-Dataset Validation}: Sensitivity analysis (OOD robustness) and real-trace integration confirm generalization.
-  \item \textbf{Scaling \& Operations}: Benchmarks at 16–256 GPU scales; deployment guide for HPC operators.
+  \item \textbf{ML-Based Wait-Time Prediction}: XGBoost model trained on 12 non-leaky cluster-state features (queue pressure, GPU availability, fragmentation, etc.), reaching $R^2 \approx 0.84$ / MAE $\approx 4.7$ ts on a 20\% holdout (5-fold CV MAE $4.74 \pm 0.42$).
+  \item \textbf{Proactive Scheduler}: Reorders the queue by predicted wait, achieving a 7.7\% mean wait-time reduction vs.\ FIFO (95\% CI [5.0\%, 10.3\%], $p = 1.4\times10^{-6}$) at unchanged GPU utilisation.
+  \item \textbf{Honest Fairness Analysis}: Formal fairness metrics (Gini, Jain Index, SLA compliance) show the mean-wait gain \emph{costs} per-job equity (Gini 0.53 $\rightarrow$ 0.80); we quantify the trade-off and evaluate an anti-starvation mitigation (Gini 0.69).
+  \item \textbf{OOD and Proxy-Trace Diagnostics}: A 72-scenario domain-shift study shows prediction quality collapses out-of-distribution (mean $R^2 < 0$), and a synthetic LANL-schema proxy shows near-zero cross-dataset $R^2$ --- real-trace validation remains future work and is reported as such.
+  \item \textbf{Scaling \& Operations}: Benchmarks at 32--256 GPU scales with $< 5\%$ scheduling overhead; deployment guide with FIFO-fallback safeguards for HPC operators.
 \end{enumerate}
 
 \section{Related Work}
@@ -108,7 +108,7 @@ Feature & Description \\
 \texttt{queue\_pressure} & Load indicator (high = risky) \\
 \texttt{node\_availability} & Fraction of nodes with resources \\
 \texttt{avg\_free\_per\_node} & Average free GPUs per node \\
-\toprule
+\bottomrule
 \end{tabular}
 \end{table}
 
@@ -143,40 +143,52 @@ Key insight: jobs predicted to have short wait are scheduled first, reducing fra
 
 \subsection{Benchmark Setup}
 \begin{itemize}
-  \item Discrete-event simulator (Python, custom)
-  \item Cluster: 8 nodes, 64 GPUs, 4 GPUs/node
-  \item Workload: 1 job/second, duration 10,000 timesteps
-  \item Job size: 1–8 GPUs; runtime: 10–200 timesteps (log-normal)
-  \item Schedulers: FIFO, SLURM backfill, Kubernetes QoS, Yarn FIFO, Neural Network, Proactive
+  \item Discrete-time simulator (Python, custom; seeded and reproducible)
+  \item Cluster: 8 nodes, 32 GPUs, 4 GPUs/node
+  \item Workload: 110 jobs arriving over the first 150 of 300 timesteps per run
+  \item Job size: 1--8 GPUs (uniform); runtime: 5--20 timesteps (uniform)
+  \item Schedulers: FIFO, SJF, Priority (with aging), Neural Network (MLP), Proactive (XGBoost)
   \item Metrics: mean/max wait, throughput, GPU util, fairness (Gini, JFI), SLA compliance
+  \item Statistical treatment: 40 seeded paired runs (FIFO vs.\ Proactive), paired $t$-test, Wilcoxon signed-rank, bootstrap 95\% CIs
 \end{itemize}
 
 \subsection{Results (Phase 22–27)}
 
 \subsubsection{Wait-Time Reduction (Phase 22)}
+On the 40-run paired benchmark, Proactive reduces mean wait from 18.27 to 16.70 ts
+(\textbf{+7.71\%}; bootstrap 95\% CI on improvement [4.95\%, 10.34\%]; paired
+$t$-test $p = 1.4\times10^{-6}$, Wilcoxon $p = 7.1\times10^{-6}$) at identical
+GPU utilisation ($\approx$64\%). The 20-run five-scheduler comparison
+(Table below) places Proactive ahead of Priority and FIFO on mean wait but
+behind SJF, which exploits known runtimes that Proactive does not require.
+
 \begin{table}[h]
 \centering
-\begin{tabular}{lrr}
+\begin{tabular}{lrrr}
 \toprule
-Scheduler & Mean Wait (ts) & Improvement \\
+Scheduler & Mean Wait (ts) & Max Wait (ts) & Gini \\
 \midrule
-FIFO & 18.27 & baseline \\
-Proactive & 16.72 & \textbf{+7.50\%} \\
-SLURM Backfill & 17.15 & +6.14\% \\
-Neural Network & 17.28 & +5.41\% \\
-Kubernetes QoS & 17.65 & +3.40\% \\
-\toprule
+SJF & 12.00 & 143.5 & 0.782 \\
+Neural Network & 15.69 & 134.2 & 0.796 \\
+Proactive & 15.71 & 125.7 & 0.790 \\
+Priority & 16.34 & 127.7 & 0.739 \\
+FIFO & 16.65 & \textbf{53.9} & \textbf{0.518} \\
+\bottomrule
 \end{tabular}
 \end{table}
 
-95\% bootstrap CI on improvement: [6.8\%, 8.2\%]. Paired t-test: $p < 0.001$.
-
 \subsubsection{Sensitivity \& OOD Robustness (Phase 23)}
-Under domain shifts (arrival rate 0.5–2.0×, cluster size 4–32 nodes, job distributions):
+Under 72 domain-shift scenarios (arrival rate 0.5--2.0$\times$, cluster size
+4--32 nodes, three job-size distributions), scoring the \emph{trained} model on
+freshly simulated shifted workloads:
 \begin{itemize}
-  \item Mean OOD improvement: 5.2\% (vs. 7.5\% in-distribution)
-  \item High-risk zones (arrival $\geq 1.5$×, small cluster): 12\% failure modes (improvement $< -2\%$)
-  \item Fallback heuristic or FIFO maintains safety in extreme regimes
+  \item Prediction quality collapses out-of-distribution: mean $R^2 \approx -0.31$
+        (range $-2.32$ to $+0.85$); only near-training configurations stay positive.
+  \item Scheduling improvement becomes erratic: per-scenario improvement ranges
+        $-14\%$ to $+50\%$, with a mean failure rate (jobs slower than FIFO) of
+        $\approx 32\%$.
+  \item Conclusion: the model must be retrained per deployment regime; a fallback
+        heuristic or FIFO is required for safety in shifted regimes.
 \end{itemize}
 
 \subsubsection{Fairness \& SLA (Phase 27)}
@@ -184,35 +196,58 @@ Under domain shifts (arrival rate 0.5–2.0×, cluster size 4–32 nodes, job di
 \centering
 \begin{tabular}{lrr}
 \toprule
-Scheduler & Gini & Compliance \\
+Scheduler & Per-job Gini & SLA Compliance \\
 \midrule
-FIFO & 0.420 & 0.885 \\
-Proactive & \textbf{0.368} & \textbf{0.948} \\
-SLURM Backfill & 0.392 & 0.910 \\
-Kubernetes QoS & 0.482 & 0.805 \\
-\toprule
+FIFO & \textbf{0.526} & 0.933 \\
+Proactive & 0.796 & \textbf{0.945} \\
+Proactive + Anti-Starvation & 0.688 & 0.863 \\
+\bottomrule
 \end{tabular}
 \end{table}
 
-Proactive achieves both lower Gini (fairer) and higher SLA compliance.
+Proactive \emph{worsens} per-job wait-time equity (Gini 0.53 $\rightarrow$ 0.80,
+max wait 58 $\rightarrow$ 125 ts) while modestly raising aggregate SLA
+compliance; run-level Jain indices are comparable (0.918 vs.\ 0.922). The
+anti-starvation variant recovers part of the equity loss (Gini 0.69, max wait
+87 ts) at a small compliance cost. The mean-wait gain is therefore a
+\emph{trade-off}, not a Pareto improvement.
 
 \subsubsection{Scaling (Phase 26)}
 \begin{itemize}
-  \item Inference latency: $0.54$ ms @ 32 GPUs, $0.68$ ms @ 256 GPUs
-  \item Overhead: $< 2\%$ scheduling cost
-  \item Scaling law: $O(\log(n))$ (exponent $\approx 0.08$)
+  \item Saturated stress test (10{,}000 queued jobs): GPU utilisation stays
+        $> 99.7\%$ at 32--256 GPUs; batched inference latency 10--48 ms per
+        scheduling decision; scheduling overhead $< 5\%$ of simulated
+        throughput at every scale.
+  \item Moderate-load study (Phase 17): the wait-time advantage is largest on
+        small, contended clusters (14.4\% at 8 GPUs) and vanishes when capacity
+        removes queueing entirely (0\% at 128--256 GPUs under the same workload).
+  \item Implication: Proactive pays off in the contended regime; on
+        over-provisioned clusters there is nothing to reorder.
 \end{itemize}
 
 \subsection{Threats to Validity}
 
 \subsubsection{Simulation-to-Reality Gap}
-Real cluster dynamics (node failures, complex job dependencies) not modeled. \textit{Mitigation}: Phase 25 real-trace validation shows MAE $< 25\%$ on LANL/Alibaba data.
+Real cluster dynamics (node failures, complex job dependencies, preemption) are
+not modeled, and \emph{no real trace has been evaluated}: the LANL-style trace
+in the repository is a synthetic proxy generated from the training
+distribution. Cross-dataset $R^2$ against that proxy is already near zero
+($\approx 0.02$, MAE $\approx 15$ ts), so transfer to genuinely real traces is
+expected to be worse, not better. \textit{Mitigation}: obtain SWF traces from
+the Parallel Workloads Archive, retrain per trace, and re-evaluate (Phase 25
+scaffolding exists).
 
 \subsubsection{OOD Failure Modes (Phase 23)}
-Extreme conditions (high arrival + small cluster) reduce benefits. \textit{Mitigation}: adaptive fallback to FIFO; operators can configure thresholds.
+Prediction quality collapses under distribution shift (mean $R^2 < 0$ across 72
+scenarios) and scheduling gains become erratic. \textit{Mitigation}: adaptive
+fallback to FIFO with drift-triggered retraining (Phase 19); operators can
+configure thresholds.
 
-\subsubsection{Generalization}
-Model trained on synthetic data may not capture real workload patterns. \textit{Mitigation}: Phase 25 demonstrates cross-dataset MAE; recommend periodic retraining on real traces.
+\subsubsection{Fairness Cost}
+The mean-wait improvement worsens tail latency and per-job Gini; unmitigated,
+this is operationally unacceptable in shared clusters. \textit{Mitigation}:
+anti-starvation bumping recovers part of the equity loss; bounding maximum wait
+is future work.
 
 \section{Deployment Guide}
 
@@ -226,9 +261,20 @@ See \texttt{DEPLOYMENT.md} for production considerations:
 
 \section{Conclusion}
 
-Proactive feasibility scheduling offers a practical ML-based approach to improve GPU cluster performance. With $\sim$7.5\% wait reduction, superior fairness, and sub-linear scaling, it bridges research and operations. Sensitivity analysis and fairness proofs address production concerns.
+Proactive feasibility scheduling delivers a small but statistically robust
+mean wait-time reduction (7.7\%, CI [5.0\%, 10.3\%]) on contended GPU clusters
+at no utilisation cost, using a wait-time model that is cheap to train and
+explainable. The gain trades off against tail latency and per-job fairness,
+prediction quality does not survive distribution shift, and real-trace
+validation is still open --- we report each of these limitations with
+quantitative evidence rather than claiming a Pareto improvement. The value of
+this work lies as much in its honest, fully reproducible evaluation harness
+(seeded pipeline, paired statistics, OOD diagnostics) as in the scheduler
+itself.
 
-\textbf{Future work}: real-world deployment, online learning with concept drift, multi-objective optimization (latency + fairness + energy).
+\textbf{Future work}: real-trace validation and per-trace retraining,
+fairness-constrained reordering (bounded max wait), online learning under
+concept drift, and multi-objective optimization (latency + fairness + energy).
 
 \section*{Acknowledgments}
 Thanks to [funding, advisors, etc.].
@@ -244,6 +290,12 @@ Thanks to [funding, advisors, etc.].
 \bibitem{Feitelson2000} D. G. Feitelson, \emph{Packing Schemes for List Scheduling}, JSSPP 2000.
 
 \bibitem{Feitelson2011} D. G. Feitelson et al., \emph{Parallel Workloads Archive}, CMU, 2011.
+
+\bibitem{ML-Scheduling1} H. Mao, M. Alizadeh, I. Menache, and S. Kandula, \emph{Resource Management with Deep Reinforcement Learning}, HotNets 2016.
+
+\bibitem{ML-Scheduling2} H. Mao, M. Schwarzkopf, S. B. Venkatakrishnan, Z. Meng, and M. Alizadeh, \emph{Learning Scheduling Algorithms for Data Processing Clusters}, SIGCOMM 2019.
+
+\bibitem{Sim2Real2021} W. Zhao, J. P. Queralta, and T. Westerlund, \emph{Sim-to-Real Transfer in Deep Reinforcement Learning: A Survey}, IEEE SSCI 2020.
 
 \end{thebibliography}
 

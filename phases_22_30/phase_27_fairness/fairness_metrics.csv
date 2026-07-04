@@ -1,0 +1,7 @@
+scheduler,scheduler_name,data_source,n_runs,mean_wait,gini_run_level,jain_fairness_index_run_level,min_run_wait,max_run_wait,run_max_min_ratio,gini_per_job,max_job_wait,starvation_count,starvation_rate_pct
+fifo,FIFO,benchmark_statistical(40 runs)+fairness_analysis,40,18.268863636363637,0.16951376534839468,0.9180018786923053,6.527272727272727,29.081818181818186,4.4554317548746525,0.5261904919201371,57.85,22.25,20.227272727272727
+proactive,Proactive (XGBoost),benchmark_statistical(40 runs)+fairness_analysis,40,16.695454545454545,0.1646474271712497,0.9222961758477422,7.281818181818182,26.227272727272727,3.601747815230961,0.7959223429661548,124.8,18.2,16.545454545454547
+proactive_starvation,Proactive + Anti-Starvation,per_job_aggregates_only,0,16.46181818181818,,,,,,0.6877747619825413,87.15,30.2,27.454545454545453
+sjf,SJF,per_job_aggregates_only,0,12.001212121212122,,,,,,0.7817175173841735,143.46666666666667,,
+nn,Neural Network,per_job_aggregates_only,0,15.694545454545452,,,,,,0.7958558349718919,134.2,,
+priority,Priority,per_job_aggregates_only,0,16.34121212121212,,,,,,0.7386434750408835,127.66666666666669,,

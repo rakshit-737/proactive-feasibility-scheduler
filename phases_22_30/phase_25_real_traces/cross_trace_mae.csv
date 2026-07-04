@@ -1,0 +1,2 @@
+trace_name,source_type,n_samples,mae,mape_pct,mean_wait,wait_std
+synthetic_proxy_trace,synthetic_proxy,2000,18.316905452404534,200.0,20.5455,20.44441040256124

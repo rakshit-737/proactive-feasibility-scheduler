@@ -1,6 +1,9 @@
+import os
 import random
 import numpy as np
 import pandas as pd
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class Job:
     def __init__(self, job_id, arrival_time, num_gpus, runtime):
@@ -145,18 +148,26 @@ def run_simulation():
 
 
 # ── Run 20 simulations ──────────────────────────────────────────────────────
-all_data = []
-NUM_RUNS = 20
+if __name__ == "__main__":
+    random.seed(42)
+    np.random.seed(42)
 
-for i in range(NUM_RUNS):
-    result = run_simulation()
-    all_data.extend(result)
-    print(f"Run {i+1}/{NUM_RUNS} — {len(result)} samples")
+    all_data = []
+    NUM_RUNS = 20
 
-df = pd.DataFrame(all_data)
-df.to_csv("improved_wait_dataset.csv", index=False)
+    for i in range(NUM_RUNS):
+        # per-run seed: runs differ but the whole set is reproducible
+        random.seed(42 + i)
+        np.random.seed(42 + i)
+        result = run_simulation()
+        all_data.extend(result)
+        print(f"Run {i+1}/{NUM_RUNS} — {len(result)} samples")
 
-print(f"\nTotal samples : {len(df)}")
-print(f"Avg wait time : {df['wait_time'].mean():.2f}")
-print(f"Wait time range: {df['wait_time'].min()} – {df['wait_time'].max()}")
-print(f"Columns: {list(df.columns)}")
+    df = pd.DataFrame(all_data)
+    output_path = os.path.join(PROJECT_ROOT, "02_data", "improved_wait_dataset.csv")
+    df.to_csv(output_path, index=False)
+
+    print(f"\nTotal samples : {len(df)}")
+    print(f"Avg wait time : {df['wait_time'].mean():.2f}")
+    print(f"Wait time range: {df['wait_time'].min()} – {df['wait_time'].max()}")
+    print(f"Columns: {list(df.columns)}")

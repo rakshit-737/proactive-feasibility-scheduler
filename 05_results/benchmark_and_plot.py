@@ -21,7 +21,7 @@ Key fix applied (vs original proactive_Schedule_v2.py):
   fitting jobs per tick. Fixed: removed the `break` so both schedulers
   have identical dispatching capacity — only the queue ORDER differs.
 ─────────────────────────────────────────────────────────────────────────────
-Run from: E:\\Research Project\\Proactive\\05_results\\
+Run from: anywhere (all paths are resolved relative to this file).
 """
 
 import sys, os, random, pickle

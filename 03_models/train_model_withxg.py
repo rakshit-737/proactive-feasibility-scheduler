@@ -1,10 +1,12 @@
+import os
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, roc_auc_score
 
-df = pd.read_csv("large_dataset.csv")
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+df = pd.read_csv(os.path.join(PROJECT_ROOT, "02_data", "large_dataset.csv"))
 
 X = df.drop("label", axis=1)
 y = df["label"]

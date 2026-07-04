@@ -25,13 +25,16 @@ This roadmap extends the proactive feasibility scheduler from core research (Pha
 
 ### Completed (✅)
 - Phase 22: ✅ Statistical bootstrap analysis (stats_bootstrap.py, CI plots)
-- Phase 23: ✅ OOD sensitivity analysis (ood_heatmap, failure modes)
+- Phase 23: ✅ OOD sensitivity analysis (real model on real shifted sims; ood_heatmap, failure modes)
+- Phase 24: ✅ Extended scheduler comparison (real implementations only — SLURM/K8s/Yarn baselines dropped, see COMPLETION_SUMMARY.md)
+- Phase 26: ✅ Scaling validation (real simulation + real inference timing)
+- Phase 27: ✅ Fairness & SLA analysis (real per-run/per-job data)
+- Phase 28: ✅ Manuscript draft (numbers synced to regenerated artifacts)
+- Phase 29: ✅ Reproducibility (seeded, cwd-independent, UTF-8-safe pipelines)
+- Phase 30: ✅ Deployment guide (../DEPLOYMENT.md)
 
-### In Progress (🔄)
-- **Phase 24**: Extended scheduler comparison (to start)
-
-### Planned (📋)
-- Phase 25–30: Full implementations pending
+### Open (⚠️)
+- **Phase 25**: scaffolding complete, but **no real trace evaluated yet** — the trace on disk is a synthetic proxy. Download a real SWF/Alibaba trace to close this out (instructions in trace_preprocessing.py).
 
 ---
 
@@ -69,13 +72,13 @@ Phase 13 (Fair) ───┤       ↓
 - `phases_22_30/phase_25_real_traces/trace_preprocessing.py`
 - `phases_22_30/phase_26_scaling/scaling_benchmark.py`
 - `phases_22_30/phase_27_fairness/fairness_sla_analysis.py`
-- `phases_22_30/phase_29_release/run_all_experiments_v2.sh`
+- `phases_22_30/run_all_experiments_v2.sh`
 
 ### Documents
 - `phases_22_30/phase_28_manuscript/manuscript.tex`
 - `phases_22_30/phase_27_fairness/fairness_formal_analysis.md`
-- `DEPLOYMENT.md`
-- `REPRODUCIBILITY_ADVANCED.md`
+- `DEPLOYMENT.md` (project root)
+- `README_REPRODUCIBILITY.md` (project root)
 
 ### Data Artifacts
 - CSV reports (comparison, traces, scaling, fairness metrics)

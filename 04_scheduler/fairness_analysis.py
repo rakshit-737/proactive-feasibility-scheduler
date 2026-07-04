@@ -194,13 +194,13 @@ def main():
     for i, size in enumerate(['small', 'medium', 'large']):
         vals = []
         for s in order:
-            arr = waits_df[(waits_df['scheduler'] == s)]['wait_time'].values
-            vals.append(np.mean(arr) if len(arr) else np.nan)
+            row = by_size_df[(by_size_df['scheduler'] == s) & (by_size_df['job_size'] == size)]
+            vals.append(float(row['mean_wait'].iloc[0]) if len(row) else np.nan)
         plt.bar(positions + (i - 1) * 0.22, vals, width=0.22, label=size)
 
     plt.xticks(positions, [x.upper() for x in order])
     plt.ylabel('Average wait time')
-    plt.title('Wait-time distribution proxy by scheduler and job size')
+    plt.title('Mean wait time by scheduler and job size (avg over runs)')
     plt.legend(title='Job size')
     plt.tight_layout()
     plot_path = os.path.join(OUT_FAIR, 'wait_time_distribution_by_size.png')

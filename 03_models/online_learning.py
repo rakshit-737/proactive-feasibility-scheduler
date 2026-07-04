@@ -19,7 +19,6 @@ def main():
     df = pd.read_csv(DATA_PATH).sample(frac=1, random_state=42).reset_index(drop=True)
 
     split = int(len(df) * 0.8)
-<<<<<<< HEAD
     initial = df.iloc[:split].reset_index(drop=True)
     # reset_index is essential here. Without it, the sliced stream frame keeps
     # its original labels (e.g. 1760..2199) and the label-based .loc[:drift_n]
@@ -38,14 +37,6 @@ def main():
     qp = stream.columns.get_loc('queue_pressure')
     stream.iloc[:drift_n, ql] = stream.iloc[:drift_n, ql] * 1.35
     stream.iloc[:drift_n, qp] = stream.iloc[:drift_n, qp] * 1.25
-=======
-    initial = df.iloc[:split]
-    stream = df.iloc[split:].copy()
-
-    drift_n = int(len(stream) * 0.2)
-    stream.loc[:drift_n, 'queue_length'] = stream.loc[:drift_n, 'queue_length'] * 1.35
-    stream.loc[:drift_n, 'queue_pressure'] = stream.loc[:drift_n, 'queue_pressure'] * 1.25
->>>>>>> d420ccc5fc239b03e840287805338721fb55585d
 
     x_init = initial[FEATURES].values
     y_init = initial['wait_time'].values

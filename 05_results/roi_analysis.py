@@ -17,11 +17,16 @@ ANNUAL_JOBS = 180_000
 
 
 def main():
+    improvement_pct = 7.5
     if os.path.exists(BENCH_PATH):
         summary = pd.read_csv(BENCH_PATH)
-        improvement_pct = float(summary.loc[0, 'mean_improvement_pct']) if 'mean_improvement_pct' in summary.columns else 7.5
-    else:
-        improvement_pct = 7.5
+        if {'metric', 'value'}.issubset(summary.columns):
+            # benchmark_statistical.py writes a long-format (metric,value) CSV
+            match = summary.loc[summary['metric'] == 'mean_improvement_pct', 'value']
+            if not match.empty:
+                improvement_pct = float(match.iloc[0])
+        elif 'mean_improvement_pct' in summary.columns:
+            improvement_pct = float(summary.loc[0, 'mean_improvement_pct'])
 
     baseline_gpu_hours = ANNUAL_JOBS * HOURS_PER_JOB
     saved_gpu_hours = baseline_gpu_hours * (improvement_pct / 100.0)

@@ -1,6 +1,9 @@
+import os
 import random
 import numpy as np
 import csv
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 # ----------------------------
@@ -172,18 +175,23 @@ def simulate():
             row["label"] = label
             dataset.append(row)
 
-    # Save dataset to CSV
+    # Save dataset to CSV (anchored to the project's 02_data directory)
     if dataset:
+        output_dir = os.path.join(PROJECT_ROOT, "02_data")
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, "dataset.csv")
         keys = dataset[0].keys()
-        with open("dataset.csv", "w", newline="") as output_file:
+        with open(output_path, "w", newline="", encoding="utf-8") as output_file:
             writer = csv.DictWriter(output_file, fieldnames=keys)
             writer.writeheader()
             writer.writerows(dataset)
 
-        print("Dataset saved as dataset.csv")
+        print(f"Dataset saved as {output_path}")
     else:
         print("No dataset generated.")
 
 
 if __name__ == "__main__":
+    random.seed(42)
+    np.random.seed(42)
     simulate()

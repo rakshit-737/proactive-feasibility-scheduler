@@ -155,23 +155,22 @@ def run_once(jobs_in, scheduler, nn_model):
             queue = rank_queue(queue, t, cluster, running, scheduler, nn_model)
 
         for job in queue[:]:
-            if cluster.total_free_gpus() >= job.num_gpus and cluster.allocate(job, t):
-                pred = 0.0
+            if cluster.total_free_gpus() >= job.num_gpus:
+                # Predicted wait at the dispatch decision point, from the
+                # PRE-allocation cluster state (only ML schedulers predict
+                # wait times; the others have no comparable prediction).
+                pred = float('nan')
                 if scheduler == 'proactive':
                     pred = float(wait_model.predict(get_features(job, cluster, queue, running).reshape(1, -1))[0])
                 elif scheduler == 'nn':
                     pred = float(nn_model.predict(build_feature_vector(job, cluster, queue, running).reshape(1, -1))[0])
-                elif scheduler == 'sjf':
-                    pred = float(job.runtime)
-                elif scheduler == 'priority':
-                    pred = float(job.priority_score)
-                else:
-                    pred = float(len(queue))
 
-                running.append(job)
-                queue.remove(job)
-                actual_wait = job.start_time - job.arrival_time
-                mae_samples.append(abs(pred - actual_wait))
+                if cluster.allocate(job, t):
+                    running.append(job)
+                    queue.remove(job)
+                    if not np.isnan(pred):
+                        actual_wait = job.start_time - job.arrival_time
+                        mae_samples.append(abs(pred - actual_wait))
 
         util.append((CAPACITY - cluster.total_free_gpus()) / CAPACITY)
 
@@ -182,7 +181,8 @@ def run_once(jobs_in, scheduler, nn_model):
         'throughput': len(completed) / SIM_TIME,
         'fairness_gini': gini(waits),
         'gpu_util': float(np.mean(util)) if util else 0.0,
-        'mae': float(np.mean(mae_samples)) if mae_samples else float('nan'),
+        # wait-prediction MAE at dispatch time; NaN for non-ML schedulers
+        'pred_wait_mae': float(np.mean(mae_samples)) if mae_samples else float('nan'),
     }
 
 def main():
@@ -203,7 +203,7 @@ def main():
 
     df = pd.DataFrame(rows)
     summary = df.groupby('scheduler', as_index=False).agg({
-        'mae': 'mean',
+        'pred_wait_mae': 'mean',
         'mean_wait': 'mean',
         'max_wait': 'mean',
         'fairness_gini': 'mean',
@@ -220,7 +220,7 @@ def main():
     plt.bar(x - width / 2, summary['mean_wait'], width=width, label='Mean wait', color='#38bdf8')
     plt.bar(x + width / 2, summary['throughput'], width=width, label='Throughput', color='#34d399')
     plt.xticks(x, summary['scheduler'])
-    plt.title('Scheduler benchmark (MAE, wait, fairness, throughput in CSV)')
+    plt.title('Scheduler benchmark (pred-wait MAE, wait, fairness, throughput in CSV)')
     plt.legend()
     plt.tight_layout()
     plot_path = os.path.join(OUT_DIR, 'scheduler_comparison.png')
@@ -228,7 +228,7 @@ def main():
 
     print('\n=== Multi-scheduler summary ===')
     print(summary.to_string(index=False, formatters={
-        'mae': '{:.3f}'.format,
+        'pred_wait_mae': '{:.3f}'.format,
         'mean_wait': '{:.3f}'.format,
         'max_wait': '{:.3f}'.format,
         'fairness_gini': '{:.3f}'.format,

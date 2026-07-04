@@ -111,7 +111,9 @@ def generate_jobs(profile, num_jobs, sim_time):
     for i in range(num_jobs):
         if profile == "low":
             num_gpus = random.randint(1, 2) if i % 10 != 0 else random.randint(3, 4)
-            runtime = random.randint(6, 12)
+            # runtime raised from (6, 12) so occasional queueing occurs and
+            # wait_time has non-zero variance; still clearly the lowest-contention profile
+            runtime = random.randint(10, 24)
         elif profile == "high":
             num_gpus = random.randint(4, 8)
             runtime = random.randint(10, 26)
@@ -168,6 +170,9 @@ def run_simulation(profile):
 def generate_profile_dataset(profile_name, file_name):
     all_rows = []
     for run in range(NUM_RUNS):
+        # per-run seed: runs differ but the whole set is reproducible
+        random.seed(42 + run)
+        np.random.seed(42 + run)
         rows = run_simulation(profile_name)
         all_rows.extend(rows)
         print(f"{profile_name:<6} run {run + 1:02d}/{NUM_RUNS} -> {len(rows)} samples")
@@ -202,7 +207,13 @@ def evaluate_xgboost(dataset_path, profile_name):
     pred = model.predict(x_test)
 
     mae = mean_absolute_error(y_test, pred)
-    r2 = r2_score(y_test, pred)
+    if y.nunique() <= 1:
+        # constant target: r2_score degenerately returns 1.0 (0/0 case);
+        # record NaN so a degenerate profile can never masquerade as perfect fit
+        print(f"WARNING: {profile_name}: wait_time has zero variance; R2 is undefined, recording NaN")
+        r2 = float("nan")
+    else:
+        r2 = r2_score(y_test, pred)
     return {"profile": profile_name, "samples": len(df), "mae": mae, "r2": r2}
 
 
@@ -220,7 +231,9 @@ if __name__ == "__main__":
         evaluate_xgboost(bursty_path, "mixed_bursty"),
     ]
     results_df = pd.DataFrame(profile_results)
-    results_output_path = os.path.join(PROJECT_ROOT, "05_results", "xgboost_load_profile_performance.csv")
+    results_dir = os.path.join(PROJECT_ROOT, "05_results")
+    os.makedirs(results_dir, exist_ok=True)
+    results_output_path = os.path.join(results_dir, "xgboost_load_profile_performance.csv")
     results_df.to_csv(results_output_path, index=False)
     print("=== XGBoost performance across load profiles ===")
     print(results_df.to_string(index=False, formatters={"mae": "{:.4f}".format, "r2": "{:.4f}".format}))

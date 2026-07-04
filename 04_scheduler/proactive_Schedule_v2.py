@@ -169,25 +169,32 @@ def run_proactive(jobs_input):
     return np.mean(wait_times), np.mean(gpu_usage), len(completed_jobs)
 
 
-NUM_RUNS = 10
-baseline_waits, baseline_utils = [], []
-proactive_waits, proactive_utils = [], []
+def main():
+    NUM_RUNS = 10
+    baseline_waits, baseline_utils = [], []
+    proactive_waits, proactive_utils = [], []
 
-for i in range(NUM_RUNS):
-    jobs = generate_jobs(110, 300)
+    for i in range(NUM_RUNS):
+        # per-run seed so runs differ but the whole set is reproducible
+        random.seed(42 + i)
+        np.random.seed(42 + i)
+        jobs = generate_jobs(110, 300)
 
-    bwait, butil, bjobs = run_baseline(jobs)
-    pwait, putil, pjobs = run_proactive(jobs)
+        bwait, butil, bjobs = run_baseline(jobs)
+        pwait, putil, pjobs = run_proactive(jobs)
 
-    baseline_waits.append(bwait)
-    baseline_utils.append(butil)
-    proactive_waits.append(pwait)
-    proactive_utils.append(putil)
+        baseline_waits.append(bwait)
+        baseline_utils.append(butil)
+        proactive_waits.append(pwait)
+        proactive_utils.append(putil)
 
-    print(f"Run {i+1:2d}: Baseline wait={bwait:.2f} util={butil:.2f} | Proactive wait={pwait:.2f} util={putil:.2f}")
+        print(f"Run {i+1:2d}: Baseline wait={bwait:.2f} util={butil:.2f} | Proactive wait={pwait:.2f} util={putil:.2f}")
 
-print("\n=== Final Results (avg over 10 runs) ===")
-print(f"Baseline   — Avg Wait: {np.mean(baseline_waits):.2f} | Avg Utilization: {np.mean(baseline_utils):.2f}")
-print(f"Proactive  — Avg Wait: {np.mean(proactive_waits):.2f} | Avg Utilization: {np.mean(proactive_utils):.2f}")
-wait_improvement = (np.mean(baseline_waits) - np.mean(proactive_waits)) / np.mean(baseline_waits) * 100
-print(f"Wait time reduction:  {wait_improvement:.1f}%")
+    print("\n=== Final Results (avg over 10 runs) ===")
+    print(f"Baseline   — Avg Wait: {np.mean(baseline_waits):.2f} | Avg Utilization: {np.mean(baseline_utils):.2f}")
+    print(f"Proactive  — Avg Wait: {np.mean(proactive_waits):.2f} | Avg Utilization: {np.mean(proactive_utils):.2f}")
+    wait_improvement = (np.mean(baseline_waits) - np.mean(proactive_waits)) / np.mean(baseline_waits) * 100
+    print(f"Wait time reduction:  {wait_improvement:.1f}%")
+
+if __name__ == "__main__":
+    main()

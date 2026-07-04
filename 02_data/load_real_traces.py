@@ -8,6 +8,15 @@ DEFAULT_OUTPUT = os.path.join(PROJECT_ROOT, '02_data', 'lanl_trace_sample.csv')
 
 
 def parse_lanl_swf(path):
+    """Parse a Standard Workload Format (SWF) trace.
+
+    SWF fields (0-indexed after whitespace split):
+      parts[0] = job number, parts[1] = submit time, parts[2] = wait time,
+      parts[3] = run time, parts[4] = allocated processors,
+      parts[7] = requested number of processors, parts[8] = requested time.
+    Requested processors (parts[7]) is preferred; the '-1' sentinel falls
+    back to allocated processors (parts[4]).
+    """
     rows = []
     with open(path, 'r', encoding='utf-8', errors='ignore') as f:
         for line in f:
@@ -20,7 +29,7 @@ def parse_lanl_swf(path):
             submit_time = int(float(parts[1]))
             wait_time = int(float(parts[2]))
             runtime = max(1, int(float(parts[3])))
-            req_procs = max(1, int(float(parts[8])) if parts[8] != '-1' else int(float(parts[4])))
+            req_procs = max(1, int(float(parts[7])) if parts[7] != '-1' else int(float(parts[4])))
             rows.append({
                 'arrival_time': submit_time,
                 'wait_time': wait_time,
@@ -31,6 +40,10 @@ def parse_lanl_swf(path):
 
 
 def build_fallback_trace():
+    """Build a SYNTHETIC proxy trace (a synthetic LANL-schema proxy) derived
+    from improved_wait_dataset.csv. This is NOT real LANL data; downstream
+    evaluations must label it 'synthetic_proxy_trace', not 'real_trace'.
+    """
     data = pd.read_csv(os.path.join(PROJECT_ROOT, '02_data', 'improved_wait_dataset.csv'))
     out = pd.DataFrame({
         'arrival_time': (data.index.values % 150) * 2,
@@ -52,8 +65,7 @@ def main():
         source = 'LANL SWF'
     else:
         df = build_fallback_trace()
-        source = 'fallback synthetic-real proxy'
-<<<<<<< HEAD
+        source = 'synthetic_proxy_trace (fallback; no SWF found)'
         # Guard: never let the synthetic fallback overwrite an existing real
         # trace CSV. If the user already has a curated lanl_trace_sample.csv and
         # no .swf is present, write the proxy to a clearly-named separate file.
@@ -63,8 +75,6 @@ def main():
                 os.path.dirname(DEFAULT_OUTPUT), 'lanl_trace_fallback_proxy.csv')
             print('No SWF found and a real trace CSV already exists; '
                   f'writing fallback proxy to {args.output} instead of overwriting it.')
-=======
->>>>>>> d420ccc5fc239b03e840287805338721fb55585d
 
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
     df.to_csv(args.output, index=False)

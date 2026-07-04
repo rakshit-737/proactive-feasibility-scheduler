@@ -1,6 +1,14 @@
+# NOTE: Despite the file name, this script writes wait_dataset.csv — the LEGACY
+# regression dataset consumed by 03_models/train_wait_model.py. The canonical
+# dataset for the main pipeline is improved_wait_dataset.csv from
+# generate_improved_dataset.py; shared-name feature columns here follow the
+# same (canonical) formulas as that script.
+import os
 import random
 import numpy as np
 import pandas as pd
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class Job:
     def __init__(self, job_id, arrival_time, num_gpus, runtime):
@@ -87,10 +95,11 @@ def run_simulation():
                 variance_free = np.var(cluster.nodes)
 
                 # Principled features — no queue-rank leakage
+                # (formulas match generate_improved_dataset.py exactly)
                 can_fit_now      = 1 if total_free >= job.num_gpus else 0
-                gpu_fit_ratio    = total_free / (job.num_gpus + 1e-6)
-                fragmentation    = 1.0 - (max_free_node / (GPUS_PER_NODE + 1e-6))
-                queue_pressure   = (queue_length * job.num_gpus) / (total_free + 1)
+                gpu_fit_ratio    = min(total_free / (job.num_gpus + 1e-6), 1.0)
+                fragmentation    = float(np.std(cluster.nodes))
+                queue_pressure   = sum(q.num_gpus for q in queue) / (total_free + 1)
                 nodes_that_fit   = sum(1 for n in cluster.nodes if n >= job.num_gpus)
                 node_availability = nodes_that_fit / NUM_NODES
                 avg_free_per_node = total_free / NUM_NODES
@@ -128,23 +137,31 @@ def run_simulation():
     return dataset
 
 
-all_data = []
-NUM_RUNS = 20
+if __name__ == "__main__":
+    random.seed(42)
+    np.random.seed(42)
 
-for i in range(NUM_RUNS):
-    result = run_simulation()
-    all_data.extend(result)
-    print(f"Run {i+1}/{NUM_RUNS} — {len(result)} samples")
+    all_data = []
+    NUM_RUNS = 20
 
-df = pd.DataFrame(all_data)
+    for i in range(NUM_RUNS):
+        # per-run seed: runs differ but the whole set is reproducible
+        random.seed(42 + i)
+        np.random.seed(42 + i)
+        result = run_simulation()
+        all_data.extend(result)
+        print(f"Run {i+1}/{NUM_RUNS} — {len(result)} samples")
 
-before = len(df)
-df = df.drop_duplicates().reset_index(drop=True)
-print(f"\nDropped {before - len(df)} duplicate rows")
+    df = pd.DataFrame(all_data)
 
-df.to_csv("wait_dataset.csv", index=False)
+    before = len(df)
+    df = df.drop_duplicates().reset_index(drop=True)
+    print(f"\nDropped {before - len(df)} duplicate rows")
 
-print(f"Total samples: {len(df)}")
-print(f"Avg wait time: {df['wait_time'].mean():.2f}")
-print(f"Wait time range: {df['wait_time'].min()} to {df['wait_time'].max()}")
-print(f"Features: {[c for c in df.columns if c != 'wait_time']}")
+    output_path = os.path.join(PROJECT_ROOT, "02_data", "wait_dataset.csv")
+    df.to_csv(output_path, index=False)
+
+    print(f"Total samples: {len(df)}")
+    print(f"Avg wait time: {df['wait_time'].mean():.2f}")
+    print(f"Wait time range: {df['wait_time'].min()} to {df['wait_time'].max()}")
+    print(f"Features: {[c for c in df.columns if c != 'wait_time']}")

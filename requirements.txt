@@ -1,14 +1,14 @@
-numpy==2.4.5
-pandas==3.0.3
-scipy==1.16.3
-scikit-learn==1.7.2
-<<<<<<< HEAD
+# Requires Python >= 3.10 (pins below verified working on Python 3.14)
+numpy==2.4.3
+pandas==3.0.1
+scipy==1.17.1
+scikit-learn==1.8.0
 lightgbm==4.6.0
 catboost==1.2.10
-=======
->>>>>>> d420ccc5fc239b03e840287805338721fb55585d
-matplotlib==3.10.7
-xgboost==3.1.0
-shap==0.49.1
-streamlit==1.51.0
-plotly==6.4.0
+matplotlib==3.10.8
+xgboost==3.2.0
+shap==0.52.0
+streamlit==1.58.0
+plotly==6.8.0
+seaborn==0.13.2
+joblib==1.5.3
