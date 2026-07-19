@@ -1,6 +1,23 @@
+<div align="center">
+
 # Proactive Feasibility Scheduler
 
-Simulation-driven proactive GPU job scheduling with ML-based wait-time prediction.
+**Simulation-driven proactive GPU job scheduling with ML-based wait-time prediction.**
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
+[![CI](https://github.com/rakshit-737/proactive-feasibility-scheduler/actions/workflows/ci.yml/badge.svg)](https://github.com/rakshit-737/proactive-feasibility-scheduler/actions/workflows/ci.yml)
+[![Results: reproducible](https://img.shields.io/badge/results-reproducible-brightgreen.svg)](README_REPRODUCIBILITY.md)
+
+[Methodology](METHODOLOGY.md) ·
+[Results](RESULTS.md) ·
+[Reproducibility](README_REPRODUCIBILITY.md) ·
+[Deployment](DEPLOYMENT.md) ·
+[Documentation](docs/index.html)
+
+</div>
+
+---
 
 ## Quick start
 ```bash
@@ -57,4 +74,27 @@ All figures below come from a proper 20% holdout / 5-fold CV (model) and a seede
 - Deployment guide: `DEPLOYMENT.md`
 
 ## Citation
-If you use this work, cite the repository and include the phase/version context (v3.2, phases 01–30 + research extensions, July 2026).
+
+If you use this work, please cite it. GitHub's **"Cite this repository"** button (shown on
+the repository sidebar) reads the machine-readable [`CITATION.cff`](CITATION.cff). A BibTeX
+entry:
+
+```bibtex
+@software{rameshbabu_proactive_feasibility_scheduler_2026,
+  author  = {Rameshbabu, Rakshit},
+  title   = {Proactive Feasibility Scheduler: Simulation-Driven GPU Job
+             Scheduling with ML-Based Wait-Time Prediction},
+  version = {3.2},
+  year    = {2026},
+  url     = {https://github.com/rakshit-737/proactive-feasibility-scheduler}
+}
+```
+
+Please include the version context (v3.2, phases 01–30 + research extensions, July 2026).
+For a permanently archived, DOI-backed snapshot, enable the GitHub–Zenodo integration and
+publish a release, then add the resulting DOI to [`CITATION.cff`](CITATION.cff) and this
+section.
+
+## License
+
+Released under the [MIT License](LICENSE) © 2026 Rakshit Rameshbabu.

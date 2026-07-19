@@ -1,0 +1,40 @@
+cff-version: 1.2.0
+title: >-
+  Proactive Feasibility Scheduler: Simulation-Driven GPU Job
+  Scheduling with ML-Based Wait-Time Prediction
+message: >-
+  If you use this software, its results, or its methodology in
+  your work, please cite it using the metadata below.
+type: software
+authors:
+  - given-names: Rakshit
+    family-names: Rameshbabu
+    email: rakshitoffl@gmail.com
+    # affiliation: "<add your institution here>"
+repository-code: >-
+  https://github.com/rakshit-737/proactive-feasibility-scheduler
+url: >-
+  https://github.com/rakshit-737/proactive-feasibility-scheduler
+abstract: >-
+  A simulation-driven study of proactive GPU-cluster job scheduling that uses a
+  machine-learning wait-time predictor to reorder the queue. The repository
+  contains a 30-phase research pipeline: discrete-time cluster simulation,
+  wait-time regression modelling, a five-scheduler benchmark (FIFO, SJF,
+  Priority, Proactive, and a neural-network scheduler), ablation and SHAP
+  explainability, fairness and starvation analysis, an EASY-backfill baseline
+  with a tunable fairness budget, uncertainty-aware scheduling, scaling and
+  concept-drift studies, real-trace validation on Parallel Workloads Archive
+  traces (LANL CM-5, SDSC SP2), ROI analysis, and a one-command
+  reproducibility kit.
+keywords:
+  - job scheduling
+  - GPU cluster
+  - high-performance computing
+  - machine learning
+  - wait-time prediction
+  - backfilling
+  - reproducible research
+  - queue optimization
+license: MIT
+version: "3.2"
+date-released: "2026-07-04"
