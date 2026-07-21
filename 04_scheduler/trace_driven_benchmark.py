@@ -95,9 +95,13 @@ import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 from xgboost import XGBRegressor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from vizstyle import (figure, finish, save_both, bar_ends, color_of,  # noqa: E402
+                      label_of, PALETTE)
 
 from sjf_scheduler import order_queue as order_sjf, order_queue_estimated as order_sjf_est
 from hrrn_scheduler import order_queue_estimated as order_hrrn_est
@@ -752,34 +756,69 @@ def run_trace(trace_key, n_windows, warmup_days, measure_days, skip_consbf):
 
 # ─────────────────────────────────────────────────────────────────────────────
 
-def make_figure(summary, path):
-    traces = list(summary['trace'].unique())
-    fig, axes = plt.subplots(len(traces), 2, figsize=(15, 4.6 * len(traces)),
-                             squeeze=False)
-    for r, tr in enumerate(traces):
-        sub = summary[summary['trace'] == tr].sort_values('mean_wait')
-        label = TRACES[tr]['label']
-        colors = ['#f472b6' if s.startswith('PROACTIVE') else
-                  '#94a3b8' if 'ORACLE' in s else '#38bdf8'
-                  for s in sub['scheduler']]
-        axes[r][0].barh(sub['scheduler'], sub['mean_wait'] / 60.0, color=colors)
-        axes[r][0].set_xlabel('Mean wait (minutes)')
-        axes[r][0].set_title(f'{label} — mean wait')
-        axes[r][0].invert_yaxis()
+def make_figure(summary, stem):
+    """Trace-driven results as a light/dark pair.
 
-        sub2 = summary[summary['trace'] == tr].sort_values('mean_bounded_slowdown')
-        colors2 = ['#f472b6' if s.startswith('PROACTIVE') else
-                   '#94a3b8' if 'ORACLE' in s else '#34d399'
-                   for s in sub2['scheduler']]
-        axes[r][1].barh(sub2['scheduler'], sub2['mean_bounded_slowdown'], color=colors2)
-        axes[r][1].set_xlabel('Mean bounded slowdown')
-        axes[r][1].set_title(f'{label} — bounded slowdown (standard metric)')
-        axes[r][1].invert_yaxis()
-    fig.suptitle('Trace-driven scheduler benchmark (real PWA traces, real user estimates)',
-                 y=1.0)
-    fig.tight_layout()
-    fig.savefig(path, dpi=150, bbox_inches='tight')
-    plt.close(fig)
+    Colour follows the ENTITY, not the panel or the rank: a policy keeps its
+    colour in every panel of every figure in the repo (an earlier version drew
+    the same scheduler blue in one panel and green in the next, so the reader
+    could not track it across metrics). Emphasis encoding — blue is the ML
+    method, orange is the ML-free control it is being tested against, everything
+    classical recedes to neutral grey. Oracle policies are marked in the tick
+    LABEL rather than given a fourth hue, because the text already says it.
+    """
+    traces = list(summary['trace'].unique())
+    metrics = [('mean_wait', 'Mean wait (minutes)', 60.0),
+               ('mean_bounded_slowdown', 'Mean bounded slowdown', 1.0)]
+
+    for mode in ('light', 'dark'):
+        p = PALETTE[mode]
+        fig, axes = figure(mode, figsize=(15.5, 5.1 * len(traces)),
+                           nrows=len(traces), ncols=2, squeeze=False,
+                           gridspec_kw={'wspace': 0.52, 'hspace': 0.36})
+        for r, tr in enumerate(traces):
+            for c, (col, xlabel, div) in enumerate(metrics):
+                ax = axes[r][c]
+                sub = summary[summary['trace'] == tr].sort_values(col)
+                vals = (sub[col] / div).to_numpy()
+                names = [label_of(s) for s in sub['scheduler']]
+                colors = [color_of(s, mode) for s in sub['scheduler']]
+                y = np.arange(len(sub))
+                ax.barh(y, vals, height=0.68, color=colors)
+                ax.set_yticks(y)
+                ax.set_yticklabels(names, fontsize=8.6)
+                ax.set_xlabel(xlabel)
+                ax.set_title(f'{TRACES[tr]["label"]} — '
+                             f'{"mean wait" if c == 0 else "bounded slowdown"}',
+                             loc='left', fontsize=10.5)
+                bar_ends(ax, 'h')
+                ax.invert_yaxis()
+                span = vals.max() if len(vals) else 1.0
+                for yi, v in zip(y, vals):
+                    ax.text(v + span * 0.012, yi, f'{v:,.1f}', va='center',
+                            fontsize=8, color=p['ink_2'])
+                ax.set_xlim(0, span * 1.16)
+        # Figure-level legend in the title block: inside an axes it overlapped
+        # the longest bar (strict FIFO) and clipped its value label.
+        fig.legend(
+            handles=[Patch(facecolor=p['series_1'], label='Proactive (ML wait-time model)'),
+                     Patch(facecolor=p['series_2'], label='Smallest-first (no ML)'),
+                     Patch(facecolor=p['muted'], label='Classical baselines')],
+            loc='upper left', bbox_to_anchor=(0.011, 0.912), ncol=3,
+            fontsize=9, frameon=False, handlelength=1.4, columnspacing=1.8)
+
+        finish(fig, mode,
+               title='On real workloads the ML scheduler lands where an ML-free '
+                     'size sort lands',
+               subtitle='Twelve policies replayed through two Parallel Workloads '
+                        'Archive traces, 20 paired 7-day windows each at offered '
+                        'load ≈0.70,\nusing the real user runtime estimates the '
+                        'traces record. Lower is better in both metrics.',
+               source='05_results/trace_schedulers/trace_scheduler_summary.csv — '
+                      '04_scheduler/trace_driven_benchmark.py',
+               title_y=0.992, subtitle_y=0.972, source_y=0.004)
+        fig.subplots_adjust(top=0.845, bottom=0.058, left=0.175, right=0.985)
+        save_both(fig, stem, mode)
 
 
 def main():
@@ -792,8 +831,19 @@ def main():
     ap.add_argument('--skip-consbf', action='store_true',
                     help='skip conservative backfill (slowest policy)')
     ap.add_argument('--smoke', action='store_true',
-                    help='2 short windows per trace for a fast sanity run')
+                    help='2 short windows per trace for a fast sanity run. NOTE: '
+                         'this OVERWRITES the full results in 05_results/'
+                         'trace_schedulers/ — re-run without --smoke afterwards')
+    ap.add_argument('--figures-only', action='store_true',
+                    help='re-render the figures from the saved summary CSV '
+                         'without re-running any simulation')
     args = ap.parse_args()
+
+    if args.figures_only:
+        summary = pd.read_csv(os.path.join(OUT_DIR, 'trace_scheduler_summary.csv'))
+        make_figure(summary, os.path.join(OUT_DIR, 'trace_scheduler_comparison'))
+        print('Re-rendered figures from existing CSV in', OUT_DIR)
+        return
 
     if args.smoke:
         args.windows, args.warmup_days, args.measure_days = 2, 1, 2
@@ -861,8 +911,9 @@ def main():
     fid_path = os.path.join(OUT_DIR, 'trace_fidelity.csv')
     pd.concat(all_fid, ignore_index=True).to_csv(fid_path, index=False)
 
-    fig_path = os.path.join(OUT_DIR, 'trace_scheduler_comparison.png')
-    make_figure(summary, fig_path)
+    fig_stem = os.path.join(OUT_DIR, 'trace_scheduler_comparison')
+    fig_path = fig_stem + '.png'
+    make_figure(summary, fig_stem)
 
     print('\n' + '=' * 74)
     print('TRACE-DRIVEN SUMMARY (mean over windows; wait in minutes)')

@@ -30,22 +30,29 @@
 #
 # Outputs (05_results/traces/):
 #   real_trace_validation.csv
-#   real_pred_vs_actual_{lanl,sdsc}.png
-#   real_feature_importance_{lanl,sdsc}.png
+#   real_pred_vs_actual_{lanl,sdsc}.png       (+ -dark.png twin)
+#   real_feature_importance_{lanl,sdsc}.png   (+ -dark.png twin)
+#
+# Figures are styled through the repo-wide vizstyle module: neither chart is
+# about scheduling policies, so both use exactly ONE series hue (series_1) and
+# neutral ink for reference marks and text.
 
 import os
 import pickle
 import random
+import sys
 
 import numpy as np
 import pandas as pd
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from sklearn.metrics import mean_absolute_error, r2_score
 from xgboost import XGBRegressor
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_ROOT)
+from vizstyle import (figure, finish, save_both, PALETTE, color_of,  # noqa: E402
+                      label_of, bar_ends, legend_roles)
+
 DATA_DIR = os.path.join(PROJECT_ROOT, '02_data')
 MODEL_PATH = os.path.join(PROJECT_ROOT, '03_models', 'wait_model_v2.pkl')
 OUT_DIR = os.path.join(PROJECT_ROOT, '05_results', 'traces')
@@ -66,6 +73,24 @@ RETRAIN_FEATURES = [
     'job_procs', 'total_free', 'queue_length', 'running_jobs',
     'can_fit_now', 'fit_ratio', 'queue_pressure', 'free_frac',
 ]
+
+# --- presentation only: readable names for figure text -----------------------
+TRACE_TITLE = {
+    'lanl': 'LANL CM-5 (1994)',
+    'sdsc': 'SDSC SP2 (1998)',
+}
+
+# Axes are labelled by feature NAME, never by column index.
+FEATURE_LABEL = {
+    'job_procs': 'Job size (processors)',
+    'total_free': 'Free processors',
+    'queue_length': 'Queue length',
+    'running_jobs': 'Running jobs',
+    'can_fit_now': 'Job fits right now',
+    'fit_ratio': 'Free / requested ratio',
+    'queue_pressure': 'Queued demand / free',
+    'free_frac': 'Free fraction of machine',
+}
 
 SYNTH_FEATURES_ORDER = [
     'job_gpu', 'total_free', 'queue_length', 'running_jobs',
@@ -231,38 +256,70 @@ def eval_retrained(df, name):
     })
 
     # ── plots ────────────────────────────────────────────────────────────
-    # holdout scatter, log axes (+1 min offset so zero waits are plottable)
-    fig, ax = plt.subplots(figsize=(7, 6))
-    ax.scatter(y_test_min + 1.0, np.maximum(pred_min, 0.0) + 1.0,
-               s=4, alpha=0.15, color='#38bdf8', edgecolors='none')
-    lims = [1.0, max(float(np.max(y_test_min)), float(np.max(pred_min)), 1.0) + 1.0]
-    ax.plot(lims, lims, 'r--', linewidth=1, label='perfect prediction')
-    ax.set_xscale('log')
-    ax.set_yscale('log')
-    ax.set_xlabel('Actual wait (minutes + 1, log)')
-    ax.set_ylabel('Predicted wait (minutes + 1, log)')
-    ax.set_title(f'{name.upper()} — retrained model, chronological holdout\n'
-                 f'R2(log)={r2:.3f}, MAE={mae:.1f} min, n={n - n_train}')
-    ax.legend()
-    plt.tight_layout()
-    scatter_path = os.path.join(OUT_DIR, f'real_pred_vs_actual_{name}.png')
-    plt.savefig(scatter_path, dpi=150)
-    plt.close(fig)
-    print(f'  Saved: {scatter_path}')
+    # Presentation only below this line: every quantity plotted is already
+    # computed above.  Each figure is rendered twice, light and dark.
+    trace_title = TRACE_TITLE.get(name, name.upper())
+    source = f'02_data/real_trace_dataset_{name}.csv'
 
-    # feature importances
+    # holdout scatter, log axes (+1 min offset so zero waits are plottable)
+    x_actual = y_test_min + 1.0
+    y_pred = np.maximum(pred_min, 0.0) + 1.0
+    lims = [1.0, max(float(np.max(y_test_min)), float(np.max(pred_min)), 1.0) + 1.0]
+    scatter_stem = os.path.join(OUT_DIR, f'real_pred_vs_actual_{name}')
+    for mode in ('light', 'dark'):
+        p = PALETTE[mode]
+        fig, ax = figure(mode, figsize=(7, 6.6))
+        ax.scatter(x_actual, y_pred, s=4,
+                   alpha=0.15 if mode == 'light' else 0.22,
+                   color=p['series_1'], edgecolors='none', zorder=3)
+        # reference rule, not a series: neutral ink, solid hairline
+        ax.plot(lims, lims, color=p['muted'], linewidth=1.1, zorder=2)
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.set_xlabel('Actual wait (minutes + 1, log scale)')
+        ax.set_ylabel('Predicted wait (minutes + 1, log scale)')
+        ax.set_axisbelow(True)
+        ax.legend(handles=[
+            Line2D([], [], marker='o', linestyle='none', markersize=5,
+                   color=p['series_1'], label='Held-out job'),
+            Line2D([], [], color=p['muted'], linewidth=1.1,
+                   label='Perfect prediction (y = x)'),
+        ], loc='upper left')
+        fig.tight_layout(rect=(0, 0.02, 1, 0.87))
+        finish(fig, mode,
+               title=f'{trace_title}: predicted vs actual wait, holdout',
+               subtitle=(f'XGBoost retrained on the trace, chronological 80/20 '
+                         f'split  ·  R²(log) = {r2:.3f}  ·  MAE = {mae:.1f} min  '
+                         f'·  n = {n - n_train} held-out jobs'),
+               source=source)
+        print(f'  Saved: {save_both(fig, scatter_stem, mode)}')
+
+    # feature importances -- one series colour; bars labelled by feature NAME
     imp = model.feature_importances_
     order = np.argsort(imp)[::-1]
-    fig, ax = plt.subplots(figsize=(8, 4.5))
-    ax.bar([RETRAIN_FEATURES[i] for i in order], imp[order], color='#34d399')
-    ax.set_title(f'{name.upper()} — feature importance (retrained on real trace)')
-    ax.set_ylabel('Importance')
-    plt.xticks(rotation=35, ha='right', fontsize=9)
-    plt.tight_layout()
-    imp_path = os.path.join(OUT_DIR, f'real_feature_importance_{name}.png')
-    plt.savefig(imp_path, dpi=150)
-    plt.close(fig)
-    print(f'  Saved: {imp_path}')
+    imp_stem = os.path.join(OUT_DIR, f'real_feature_importance_{name}')
+    bar_order = order[::-1]                              # barh draws bottom-up
+    bar_names = [FEATURE_LABEL.get(RETRAIN_FEATURES[i], RETRAIN_FEATURES[i])
+                 for i in bar_order]
+    top_imp = max(float(imp.max()), 1e-9)                # display scale only
+    for mode in ('light', 'dark'):
+        p = PALETTE[mode]
+        fig, ax = figure(mode, figsize=(8.4, 5.2))
+        ax.barh(bar_names, imp[bar_order], color=p['series_1'], height=0.68)
+        bar_ends(ax, 'h')
+        ax.set_xlabel('Relative importance (share of total gain)')
+        ax.set_xlim(0, top_imp * 1.18)
+        # direct-label the leading feature only, never every bar
+        ax.text(imp[order[0]] + top_imp * 0.02, len(bar_names) - 1,
+                f'{imp[order[0]]:.2f}', va='center', ha='left',
+                color=p['ink_2'], fontsize=9)
+        fig.tight_layout(rect=(0, 0.02, 1, 0.87))
+        finish(fig, mode,
+               title=f'{trace_title}: what carries the wait signal',
+               subtitle=('Gain-based feature importance, XGBoost retrained on '
+                         'the 8 reconstructable trace features'),
+               source=source)
+        print(f'  Saved: {save_both(fig, imp_stem, mode)}')
     print('  Importances: ' + ', '.join(
         f'{RETRAIN_FEATURES[i]}={imp[i]:.3f}' for i in order))
 

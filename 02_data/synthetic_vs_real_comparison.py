@@ -1,15 +1,17 @@
 import os
+import sys
 import subprocess
 import pandas as pd
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, r2_score
 from xgboost import XGBRegressor
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_ROOT)
+from vizstyle import figure, finish, save_both, bar_ends, PALETTE  # noqa: E402
 SYN_PATH = os.path.join(PROJECT_ROOT, '02_data', 'improved_wait_dataset.csv')
 SWF_PATH = os.path.join(PROJECT_ROOT, '02_data', 'lanl_trace_sample.swf')
 REAL_PATH = os.path.join(PROJECT_ROOT, '02_data', 'lanl_trace_sample.csv')
@@ -85,6 +87,69 @@ def build_real_features(real_df):
     return x
 
 
+# Presentation only: slug -> the name a reader can actually parse. The CSV keeps
+# the slugs; only the tick labels are humanised.
+EVAL_LABEL = {
+    'synthetic_holdout': 'Synthetic hold-out\n(in-distribution)',
+    'real_trace': 'LANL trace\n(out-of-distribution)',
+    'synthetic_proxy_trace': 'Proxy trace\n(out-of-distribution)',
+}
+
+
+def plot_comparison(df, trace_label, stem):
+    """Draw the sim-to-real figure in both modes. Presentation only.
+
+    Two panels rather than one dual-axis plot: MAE is in timesteps and R2 is
+    unitless, so they share the category axis and nothing else. The chart is not
+    about schedulers, so every mark wears the single series colour and identity
+    is carried by the axis labels, not by hue.
+    """
+    labels = [
+        '{}\nn = {:,}'.format(EVAL_LABEL.get(str(name), str(name)), int(n))
+        for name, n in zip(df['evaluation'], df['samples'])
+    ]
+    y = np.arange(len(df))
+    emph = len(df) - 1  # the transfer row: the one result worth direct-labelling
+
+    panels = (
+        ('mae', 'MAE (timesteps), lower is better', '{:.2f}'),
+        ('r2', 'R², higher is better', '{:.3f}'),
+    )
+
+    for mode in ('light', 'dark'):
+        p = PALETTE[mode]
+        fig, axes = figure(mode, figsize=(9.6, 3.6), ncols=2, sharey=True)
+
+        for ax, (col, xlabel, fmt) in zip(axes, panels):
+            vals = df[col].to_numpy(dtype=float)
+            ax.barh(y, vals, height=0.38, color=p['series_1'])
+            bar_ends(ax, 'h')
+            ax.tick_params(axis='y', length=0)
+            ax.set_xlabel(xlabel)
+            lo = min(0.0, float(vals.min()) * 1.15)
+            hi = max(1.0, float(vals.max()) * 1.25) if col == 'r2' \
+                else float(vals.max()) * 1.25
+            ax.set_xlim(lo, hi)
+            pad = (hi - lo) * 0.015
+            ax.text(vals[emph] + pad, y[emph], fmt.format(vals[emph]),
+                    va='center', ha='left', fontsize=9.5, color=p['ink_2'])
+
+        axes[0].set_yticks(y)
+        axes[0].set_yticklabels(labels)
+        axes[0].invert_yaxis()
+
+        fig.tight_layout(rect=(0, 0.035, 1, 0.83))
+        finish(
+            fig, mode,
+            title='Sim-to-real gap: one model, two test sets',
+            subtitle='XGBoost wait-time model trained on the synthetic dataset, '
+                     'then scored in-distribution and on the {}.'.format(
+                         trace_label.replace('_', ' ')),
+            source='05_results/traces/lanl_validation_results.csv',
+        )
+        save_both(fig, stem, mode)
+
+
 def main():
     swf_present = ensure_real_trace()
     trace_label = 'real_trace' if swf_present else 'synthetic_proxy_trace'
@@ -129,13 +194,9 @@ def main():
     out_csv = os.path.join(OUT_DIR, 'lanl_validation_results.csv')
     df.to_csv(out_csv, index=False)
 
-    plt.figure(figsize=(7, 4.5))
-    plt.bar(df['evaluation'], df['mae'], color=['#38bdf8', '#fb923c'])
-    plt.ylabel('MAE (timesteps)')
-    plt.title(f'Synthetic train → synthetic holdout vs {trace_label} test')
-    plt.tight_layout()
-    out_plot = os.path.join(OUT_DIR, 'synthetic_vs_real_comparison.png')
-    plt.savefig(out_plot, dpi=160)
+    plot_stem = os.path.join(OUT_DIR, 'synthetic_vs_real_comparison')
+    plot_comparison(df, trace_label, plot_stem)
+    out_plot = plot_stem + '.png'
 
     print(df.to_string(index=False, formatters={'mae': '{:.3f}'.format, 'r2': '{:.3f}'.format}))
     print('Saved:', out_csv)

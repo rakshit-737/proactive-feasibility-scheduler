@@ -8,6 +8,8 @@ Produces:
   • wait_comparison.png   — per-run wait times (line) + distribution (hist)
   • util_comparison.png   — per-run GPU utilisation
   • scatter_pred_vs_actual.png — model quality check
+  Each PNG is written as a light/dark pair via vizstyle.save_both, so the
+  light-mode filename above is unchanged and '<stem>-dark.png' is added.
 
 Results (10 runs, seeds fixed for reproducibility):
   Baseline  — Avg Wait: 20.64 ts | Avg Util: 65.6%
@@ -30,13 +32,20 @@ import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
+from matplotlib.lines import Line2D
 from sklearn.metrics import mean_absolute_error, r2_score
 
 RESULTS_DIR  = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(RESULTS_DIR)
 MODEL_PATH   = os.path.join(PROJECT_ROOT, "03_models", "wait_model_v2.pkl")
 DATA_PATH    = os.path.join(PROJECT_ROOT, "02_data",   "improved_wait_dataset.csv")
+
+# Shared figure style (one palette, colour follows the ENTITY not the panel).
+# PROJECT_ROOT is on sys.path so this import works whether the script is run
+# from 05_results/ or from the repository root.
+sys.path.insert(0, PROJECT_ROOT)
+from vizstyle import (figure, finish, save_both, PALETTE, color_of, label_of,
+                      bar_ends, legend_roles)  # noqa: F401  (shared helper set)
 
 with open(MODEL_PATH, "rb") as f:
     bundle = pickle.load(f)
@@ -159,60 +168,124 @@ y_pred=model.predict(X_all)
 mae_all=mean_absolute_error(y_true,y_pred); r2_all=r2_score(y_true,y_pred)
 print(f"Model quality — MAE: {mae_all:.2f} ts | R²: {r2_all:.4f}\n")
 
+# ── Figure styling constants (presentation only) ────────────────────────────
+# Colour follows the ENTITY: FCFS is the classical baseline (neutral) and the
+# proactive policy is the ML method (blue) in EVERY panel of EVERY figure here.
+runs = df_r.run.values
+POL_BASE, POL_ML = 'FIFO', 'PROACTIVE'
+# Shared bin edges so the two pooled histograms are actually comparable
+# (rendering choice only — no statistic is recomputed).
+WAIT_BINS = np.histogram_bin_edges(np.concatenate([all_bw, all_pw]), bins=35)
+
 # ── Plot 1: per-run wait + distribution ────────────────────────────────────
-runs=df_r.run.values
-fig=plt.figure(figsize=(14,5))
-gs=gridspec.GridSpec(1,2,figure=fig,width_ratios=[1.4,1])
-ax1=fig.add_subplot(gs[0])
-ax1.plot(runs,df_r.b_wait,'o-',color='#94a3b8',lw=2.2,ms=8,label='FIFO Baseline')
-ax1.plot(runs,df_r.p_wait,'s-',color='#38bdf8',lw=2.2,ms=8,label='Proactive (wait_model_v2)')
-ax1.fill_between(runs,df_r.b_wait,df_r.p_wait,
-                 where=df_r.p_wait<df_r.b_wait,alpha=0.13,color='#38bdf8',label='Improvement region')
-ax1.axhline(b_mean,color='#94a3b8',ls='--',lw=1.2,alpha=0.7,label=f'B avg={b_mean:.1f}')
-ax1.axhline(p_mean,color='#38bdf8',ls='--',lw=1.2,alpha=0.7,label=f'P avg={p_mean:.1f}')
-ax1.set_xlabel('Run',fontsize=11); ax1.set_ylabel('Average Wait Time (timesteps)',fontsize=11)
-ax1.set_title('Per-Run Average Wait Time',fontsize=12,fontweight='bold')
-ax1.legend(fontsize=9); ax1.set_xticks(runs); ax1.grid(axis='y',alpha=0.25)
-ax2=fig.add_subplot(gs[1])
-ax2.hist(all_bw,bins=35,color='#94a3b8',alpha=0.6,label='Baseline',density=True)
-ax2.hist(all_pw,bins=35,color='#38bdf8',alpha=0.65,label='Proactive',density=True)
-ax2.axvline(np.mean(all_bw),color='#64748b',ls='--',lw=1.5,label=f'B mean={np.mean(all_bw):.1f}')
-ax2.axvline(np.mean(all_pw),color='#0ea5e9',ls='--',lw=1.5,label=f'P mean={np.mean(all_pw):.1f}')
-ax2.set_xlabel('Wait Time (timesteps)',fontsize=11); ax2.set_ylabel('Density',fontsize=11)
-ax2.set_title('Wait Time Distribution (pooled, 10 runs)',fontsize=12,fontweight='bold')
-ax2.legend(fontsize=9); ax2.grid(axis='y',alpha=0.25)
-plt.suptitle(f'FIFO Baseline vs Proactive Scheduler — 10-Run Benchmark  ({imp_mean:+.1f}% avg wait reduction)',
-             fontsize=12,fontweight='bold',y=1.02)
-plt.tight_layout()
-plt.savefig(os.path.join(RESULTS_DIR,'wait_comparison.png'),dpi=150,bbox_inches='tight'); plt.close()
-print("Saved: wait_comparison.png")
+for mode in ('light', 'dark'):
+    p = PALETTE[mode]
+    c_base, c_ml = color_of(POL_BASE, mode), color_of(POL_ML, mode)
+
+    fig, (ax1, ax2) = figure(mode, figsize=(13.5, 5.4), ncols=2,
+                             gridspec_kw={'width_ratios': [1.4, 1]})
+
+    # Panel A — per-run average wait
+    ax1.fill_between(runs, df_r.b_wait, df_r.p_wait, where=df_r.p_wait < df_r.b_wait,
+                     color=c_ml, alpha=0.14, linewidth=0,
+                     label='Runs where proactive waits less')
+    ax1.plot(runs, df_r.b_wait, 'o-', color=c_base, lw=2.0, ms=6,
+             label=label_of(POL_BASE))
+    ax1.plot(runs, df_r.p_wait, 's-', color=c_ml, lw=2.0, ms=6,
+             label=label_of(POL_ML))
+    ax1.axhline(b_mean, color=c_base, lw=1.0)
+    ax1.axhline(p_mean, color=c_ml, lw=1.0)
+    ax1.text(runs[0], b_mean, f'  FCFS mean {b_mean:.1f}', color=p['ink_2'],
+             fontsize=8.5, ha='left', va='bottom')
+    ax1.text(runs[0], p_mean, f'  Proactive mean {p_mean:.1f}', color=p['ink_2'],
+             fontsize=8.5, ha='left', va='top')
+    ax1.set_xlabel('Run (fixed seed per run)')
+    ax1.set_ylabel('Average wait time (timesteps)')
+    ax1.set_title('Per-run average wait time', loc='left')
+    ax1.set_xticks(runs)
+    ax1.grid(axis='x', visible=False); ax1.set_axisbelow(True)
+    ax1.legend(loc='upper right')
+
+    # Panel B — pooled per-job wait distribution (same entities, same colours)
+    # Filled baseline + outlined ML series: two overlapping translucent fills
+    # would blend into a third apparent hue, which the colour rule forbids.
+    ax2.hist(all_bw, bins=WAIT_BINS, density=True, color=c_base, alpha=0.85,
+             label=label_of(POL_BASE))
+    ax2.hist(all_pw, bins=WAIT_BINS, density=True, histtype='step', color=c_ml,
+             lw=1.7, label=label_of(POL_ML))
+    ax2.axvline(np.mean(all_bw), color=c_base, lw=1.2)
+    ax2.axvline(np.mean(all_pw), color=c_ml, lw=1.2)
+    ax2.annotate(f'mean wait\n{np.mean(all_bw):.1f} ts FCFS\n{np.mean(all_pw):.1f} ts proactive',
+                 xy=(0.97, 0.74), xycoords='axes fraction', ha='right', va='top',
+                 color=p['ink_2'], fontsize=8.5, linespacing=1.5)
+    ax2.set_xlabel('Wait time of an individual job (timesteps)')
+    ax2.set_ylabel('Density')
+    ax2.set_title('Pooled job waits, all 10 runs', loc='left')
+    ax2.grid(axis='x', visible=False); ax2.set_axisbelow(True)
+    ax2.legend(loc='upper right')
+
+    fig.tight_layout(rect=(0, 0.02, 1, 0.86))
+    finish(fig, mode,
+           title='Ordering the queue by predicted wait shortens the average wait',
+           subtitle=(f'10 seeded runs, 110 jobs on an 8-node x 4-GPU cluster  ·  '
+                     f'mean wait {b_mean:.2f} to {p_mean:.2f} timesteps  ·  '
+                     f'mean per-run reduction {imp_mean:+.1f}% (sd {imp_std:.1f}%)'),
+           source='05_results/benchmark_results.csv  ·  05_results/benchmark_and_plot.py')
+    print(f"Saved: {os.path.basename(save_both(fig, os.path.join(RESULTS_DIR, 'wait_comparison'), mode))}")
 
 # ── Plot 2: GPU utilisation ─────────────────────────────────────────────────
-fig,ax=plt.subplots(figsize=(9,4))
-ax.plot(runs,df_r.b_util,'o-',color='#94a3b8',lw=2.2,ms=8,label='FIFO Baseline')
-ax.plot(runs,df_r.p_util,'s-',color='#34d399',lw=2.2,ms=8,label='Proactive (wait_model_v2)')
-ax.axhline(b_util,color='#94a3b8',ls='--',lw=1.2,alpha=0.7,label=f'B avg={b_util:.1%}')
-ax.axhline(p_util,color='#34d399',ls='--',lw=1.2,alpha=0.7,label=f'P avg={p_util:.1%}')
-ax.set_xlabel('Run',fontsize=11); ax.set_ylabel('Average GPU Utilisation',fontsize=11)
-ax.set_title('GPU Utilisation — FIFO vs Proactive Scheduler',fontsize=12,fontweight='bold')
-ax.legend(fontsize=10); ax.set_xticks(runs); ax.set_ylim(0,1.05)
-ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y,_:f'{y:.0%}'))
-ax.grid(axis='y',alpha=0.25)
-plt.tight_layout()
-plt.savefig(os.path.join(RESULTS_DIR,'util_comparison.png'),dpi=150,bbox_inches='tight'); plt.close()
-print("Saved: util_comparison.png")
+for mode in ('light', 'dark'):
+    p = PALETTE[mode]
+    c_base, c_ml = color_of(POL_BASE, mode), color_of(POL_ML, mode)
+
+    fig, ax = figure(mode, figsize=(9.5, 4.8))
+    # The two curves coincide exactly (both policies dispatch every fitting job
+    # each tick), so the baseline is drawn as a wide halo under a thin ML line
+    # rather than being hidden beneath it.
+    ax.plot(runs, df_r.b_util, 'o-', color=c_base, lw=4.0, ms=9,
+            label=label_of(POL_BASE))
+    ax.plot(runs, df_r.p_util, 's-', color=c_ml, lw=1.4, ms=5,
+            markerfacecolor='none', markeredgewidth=1.5, label=label_of(POL_ML))
+    ax.set_xlabel('Run (fixed seed per run)')
+    ax.set_ylabel('Average GPU utilisation')
+    ax.set_xticks(runs); ax.set_ylim(0, 1.05)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y:.0%}'))
+    ax.grid(axis='x', visible=False); ax.set_axisbelow(True)
+    ax.legend(loc='lower right')
+
+    fig.tight_layout(rect=(0, 0.03, 1, 0.84))
+    finish(fig, mode,
+           title='Queue order changes who waits, not how busy the cluster is',
+           subtitle=(f'Both policies dispatch every fitting job each tick  ·  '
+                     f'mean utilisation {b_util:.1%} (FCFS) vs {p_util:.1%} (proactive)'),
+           source='05_results/benchmark_results.csv')
+    print(f"Saved: {os.path.basename(save_both(fig, os.path.join(RESULTS_DIR, 'util_comparison'), mode))}")
 
 # ── Plot 3: predicted vs actual ─────────────────────────────────────────────
-fig,ax=plt.subplots(figsize=(7,6))
-ax.scatter(y_true,y_pred,alpha=0.2,s=12,color='#818cf8',rasterized=True)
-mn,mx=0,max(y_true.max(),y_pred.max())
-ax.plot([mn,mx],[mn,mx],'r--',lw=1.5,label='Perfect prediction')
-ax.set_xlabel('Actual Wait Time (timesteps)',fontsize=11)
-ax.set_ylabel('Predicted Wait Time (timesteps)',fontsize=11)
-ax.set_title(f'Model Quality: Predicted vs Actual\nMAE = {mae_all:.2f} ts  |  R² = {r2_all:.4f}',
-             fontsize=12,fontweight='bold')
-ax.legend(fontsize=10); ax.grid(alpha=0.2)
-plt.tight_layout()
-plt.savefig(os.path.join(RESULTS_DIR,'scatter_pred_vs_actual.png'),dpi=150,bbox_inches='tight'); plt.close()
-print("Saved: scatter_pred_vs_actual.png")
+for mode in ('light', 'dark'):
+    p = PALETTE[mode]
+
+    fig, ax = figure(mode, figsize=(7.2, 6.4))
+    # Not a scheduler chart: exactly ONE series colour, reference line in ink.
+    ax.scatter(y_true, y_pred, s=11, alpha=0.18, color=p['series_1'],
+               edgecolors='none', rasterized=True)
+    mn, mx = 0, max(y_true.max(), y_pred.max())
+    ax.plot([mn, mx], [mn, mx], color=p['muted'], lw=1.4)
+    ax.set_xlabel('Actual wait time (timesteps)')
+    ax.set_ylabel('Predicted wait time (timesteps)')
+    ax.set_axisbelow(True)
+    ax.legend(handles=[
+        Line2D([], [], marker='o', linestyle='none', color=p['series_1'],
+               markersize=5.5, label='One dataset row'),
+        Line2D([], [], color=p['muted'], lw=1.4, label='Perfect prediction'),
+    ], loc='upper left')
+
+    fig.tight_layout(rect=(0, 0.02, 1, 0.87))
+    finish(fig, mode,
+           title='Wait-time model: predicted vs actual',
+           subtitle=(f'MAE {mae_all:.2f} timesteps  ·  R² {r2_all:.4f}  ·  scored on every '
+                     f'dataset row, which includes the training split'),
+           source='02_data/improved_wait_dataset.csv  ·  model 03_models/wait_model_v2.pkl')
+    print(f"Saved: {os.path.basename(save_both(fig, os.path.join(RESULTS_DIR, 'scatter_pred_vs_actual'), mode))}")
+
 print("\nAll done.")

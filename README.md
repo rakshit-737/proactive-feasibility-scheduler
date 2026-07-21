@@ -36,12 +36,46 @@
 > See [`04_scheduler/ranking_degeneracy.py`](04_scheduler/ranking_degeneracy.py)
 > and [the manuscript](phases_22_30/phase_28_manuscript/manuscript.tex).
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="05_results/degeneracy/ranking_degeneracy-dark.png">
+  <img alt="Left: of the 12 cluster-state features, only the four derived from requested size ever differ between two jobs waiting side by side; the other eight differ in 0.0% of dispatch instants. Right: the resulting ML queue order is identical to the smallest-first order in 69-83% of instants and identical to plain arrival order in 18-26%." src="05_results/degeneracy/ranking_degeneracy.png">
+</picture>
+
+### Why the score can only see job size
+
+At a dispatch instant the cluster state is the **same for every queued job**, so it
+cannot separate any two of them. What is left are the per-job features — and given
+the state, each one is a deterministic function of the requested size `g`:
+
+```
+can_fit_now        = 1[ free(S) >= g ]
+gpu_fit_ratio      = min( free(S) / g , 1 )
+node_availability  = |{ n : free_n(S) >= g }| / N
+queue_pressure     = ( Σ_queue − g ) / ( free(S) + 1 )
+```
+
+So the learned score is `ŵ(job | S) = g_S(size)` — a per-instant **lookup table from
+requested size to priority**. The remaining **eight** features describe only the
+cluster, so they choose *which* table is used but can never distinguish two jobs
+inside one. And a ranking consumes nothing else.
+
+The honest control is therefore not FIFO — it is *sorting by requested size*, which
+needs no dataset, no training, no inference, no SHAP explanation and no drift monitor.
+
 ## Quick start
 ```bash
 pip install -r requirements.txt
 bash run_all_experiments.sh
 ```
-The pipeline now bootstraps itself: step 0 of `run_all_experiments.sh` regenerates `02_data/improved_wait_dataset.csv` and trains `03_models/wait_model_v2.pkl` before any analysis runs, so a fresh checkout works end-to-end. `requirements.txt` includes every dependency the scripts import (including `lightgbm` and `catboost`, used by the multi-model comparison).
+The pipeline bootstraps itself: step 0 of `run_all_experiments.sh` regenerates `02_data/improved_wait_dataset.csv` and trains `03_models/wait_model_v2.pkl` before any analysis runs, so a fresh checkout works end-to-end. `requirements.txt` includes every dependency the scripts import.
+
+Just the v3.4 headline experiments:
+```bash
+cd 04_scheduler
+python ranking_degeneracy.py        # the degeneracy result (25,306 instants)
+python trace_driven_benchmark.py    # 12 policies x 2 real traces x 20 windows
+python multi_scheduler_benchmark.py # 14-scheduler synthetic study + TOST
+```
 
 ## Key features
 - **Ranking-degeneracy diagnostic (v3.4)**: instruments real dispatch decisions to test whether a learned wait-time score can distinguish co-queued jobs at all, and recovers the size→priority lookup table the model collapses to
@@ -54,8 +88,60 @@ The pipeline now bootstraps itself: step 0 of `run_all_experiments.sh` regenerat
 - Reproducibility kit (shell script + Docker + requirements)
 - Interactive dashboard (`dashboard.py`) and GitHub Pages docs (`docs/`)
 
-## Headline results
-All figures below come from a proper 20% holdout / 5-fold CV (model) and a seeded 40-run paired benchmark (scheduler). They are deliberately the honest numbers, not in-sample ones, and are fully reproducible via `bash run_all_experiments.sh` (the pipeline is now seeded end-to-end).
+## The result, in three numbers
+
+| | | |
+|---|---|---|
+| **0** | counterexamples in **25,306** real dispatch instants | two equally-sized queued jobs never received different scores |
+| **0.0%** | of instants in which any of the 8 cluster-state features differs across the queue | they cannot affect a ranking, by construction |
+| **p = 2×10⁻¹⁶** | paired TOST: `sort by requested size` ≡ the XGBoost pipeline | difference CI [−0.14, +0.08] ts against a ±1.61 margin |
+
+### On real workloads it does not replicate
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="05_results/trace_schedulers/trace_scheduler_comparison-dark.png">
+  <img alt="Twelve scheduling policies replayed through the LANL CM-5 and SDSC SP2 traces. On both machines the Proactive (ML) bars and the Smallest-first (no ML) bar sit adjacent, and every classical policy holding a runtime estimate finishes ahead of both." src="05_results/trace_schedulers/trace_scheduler_comparison.png">
+</picture>
+
+Twelve policies replayed through two Parallel Workloads Archive traces (20 paired
+7-day windows each, offered load ≈0.70), using **the real user runtime estimates the
+traces record** rather than a simulated estimate model. The ML scheduler is given its
+best case: a model retrained on that machine's own earlier data.
+
+- The synthetic **7.7% gain over FCFS does not replicate** — Proactive vs FCFS is
+  −20.4% on SDSC (p=0.042) but **−4.5%, p=0.48 on LANL CM-5**: indistinguishable
+  from doing nothing.
+- **Any runtime signal dominates.** SJF on the estimate the user actually typed beats
+  Proactive by 20.2% on SDSC (Holm p=0.009) and 15.3% on LANL.
+- **ML adds nothing on top of the estimate.** Give the model the estimate as a
+  feature — so it can learn everything SJF exploits *plus* the cluster state — and it
+  still loses to plain SJF on both machines. The pipeline's ceiling is the sort it is
+  imitating.
+
+### Real user estimates are not the f-model
+
+Because SWF records requested time, estimate error can be **measured** instead of
+simulated. The backfill literature models it as `est = runtime × U(1,C)`:
+
+| | SDSC SP2 | LANL CM-5 | f-model (C=5) |
+|---|---|---|---|
+| Median est / runtime | 6.91× | 1.51× | 3.00× |
+| Within 2× | 24.0% | 41.7% | — |
+| **Under-estimates** | 0.1% | **36.3%** | **0%** |
+
+The two machines sit in opposite regimes and neither is the f-model, which by
+construction **cannot produce an under-estimate at all**. This matters: v3.3 concluded
+from the f-model that EASY backfill is "nearly insensitive to estimate quality". On the
+traces, real estimate error costs EASY **+6.2% on SDSC but +74% on LANL** (p=0.025) —
+under-estimates break the reservation guarantee, and over-estimate-only noise cannot
+reveal it.
+
+<details>
+<summary><b>Full results table</b> — model quality, fairness, tails, OOD, sim-to-real, backfill (click to expand)</summary>
+
+<br>
+
+All figures come from a proper 20% holdout / 5-fold CV (model) and seeded paired benchmarks (scheduler). They are deliberately the honest numbers, not in-sample ones, and are fully reproducible via `bash run_all_experiments.sh`.
 
 | Metric | Value | Notes |
 |---|---|---|
@@ -75,38 +161,46 @@ All figures below come from a proper 20% holdout / 5-fold CV (model) and a seede
 | Fairness budget B | **B=60: +7.1% wait gain, max 81 ts** | Tunable Pareto dial between pure proactive (+13.2%, max 136) and FIFO (v3.2) |
 | OOD robustness | **Mean R² < 0** across 72 shifted scenarios | Retrain per regime; interval-width guards tested and **not** reliable (68% coverage) — use the drift trigger |
 
+</details>
+
 **Honest summary (v3.4).** The v3.3 study established that any runtime signal beats the proactive scheduler on mean wait, leaving it a claimed niche in the *zero-runtime-information* regime. v3.4 removes that niche. The learned score cannot distinguish two co-queued jobs by anything except requested size — this is a property of the feature set, provable by construction and confirmed with zero counterexamples over 25,306 real dispatch decisions — so the policy is a per-instant lookup table from size to priority. An ML-free size sort is statistically equivalent to it, an MLP over the same features *is* that sort, and on real traces its advantage over plain FCFS is machine-dependent and insignificant on LANL CM-5. The measured improvement was evidence about size-based ordering, not about learning.
 
 The constructive takeaways: (1) the **non-degeneracy condition** — a wait-time feature set can only produce a meaningful ranking if it contains a per-job attribute that is *not* a function of size given the state (a runtime estimate, user history, partition identity, dependency structure); (2) report the **ML-free control the feature set implies**, not FIFO; (3) use **equivalence tests** — with difference tests alone, the p=0.65 size-sort comparison reads as "no significant difference" and gets dropped instead of being recognised as the finding. See `RESULTS.md`, the [manuscript](phases_22_30/phase_28_manuscript/manuscript.tex), and `docs/explanation.html`.
 
-## Results folders
-- `05_results/degeneracy` — ranking-degeneracy diagnostic (v3.4)
-- `05_results/trace_schedulers` — trace-driven benchmark on real SWF traces (v3.4)
-- `05_results/models`
-- `05_results/schedulers`
-- `05_results/scaling`
-- `05_results/fairness`
-- `05_results/shap`
-- `05_results/traces`
-- `05_results/roi`
+## Repository map
 
-## Documentation
-- **Full project documentation (start here): `docs/explanation.html`**
-- Research progress: `docs/research_progress.html`
-- Project report: `docs/project_report.html`
-- Methodology: `METHODOLOGY.md`
-- Results summary: `RESULTS.md`
-- Reproducibility: `README_REPRODUCIBILITY.md`
-- Deployment guide: `DEPLOYMENT.md`
-
-## Reproducing the v3.4 headline results
-```bash
-cd 04_scheduler
-python ranking_degeneracy.py        # the degeneracy result (25,306 instants)
-python trace_driven_benchmark.py    # 12 policies x 2 real traces x 20 windows
-python multi_scheduler_benchmark.py # 14-scheduler synthetic study + TOST
 ```
-Or `bash run_all_experiments.sh` for the full seeded pipeline (steps 4 and 5).
+01_simulation/   discrete-time cluster simulator (the synthetic substrate)
+02_data/         dataset generation + the two real SWF traces (.swf.gz) and their parsers
+03_models/       wait-time model training, ablation, SHAP, drift, online learning
+04_scheduler/    every scheduling policy and every benchmark  ← the research lives here
+05_results/      all generated artefacts: CSVs and figures, one folder per study
+06_paper/        reference papers
+07_archive/      superseded v1 scripts, kept for provenance
+phases_22_30/    the later research phases + the LaTeX manuscript
+docs/            self-contained HTML documentation (GitHub Pages)
+vizstyle.py      shared figure palette + helpers, so all 46 figures read as one system
+```
+
+**Where to look first**
+
+| Question | File |
+|---|---|
+| The central result | [`04_scheduler/ranking_degeneracy.py`](04_scheduler/ranking_degeneracy.py) |
+| The ML-free control it is tested against | [`04_scheduler/size_scheduler.py`](04_scheduler/size_scheduler.py) |
+| Real-trace evaluation | [`04_scheduler/trace_driven_benchmark.py`](04_scheduler/trace_driven_benchmark.py) |
+| Synthetic 14-policy benchmark | [`04_scheduler/multi_scheduler_benchmark.py`](04_scheduler/multi_scheduler_benchmark.py) |
+| Equivalence / significance machinery | [`04_scheduler/simstats.py`](04_scheduler/simstats.py) |
+| The write-up | [`phases_22_30/phase_28_manuscript/manuscript.tex`](phases_22_30/phase_28_manuscript/manuscript.tex) |
+
+### Result folders
+`05_results/degeneracy` (v3.4 diagnostic) · `trace_schedulers` (v3.4 real traces) ·
+`schedulers` · `models` · `scaling` · `fairness` · `shap` · `traces` · `uncertainty` · `roi`
+
+### Documentation
+- **Start here: [`docs/explanation.html`](docs/explanation.html)** — the whole project explained from scratch
+- [Methodology](METHODOLOGY.md) · [Results](RESULTS.md) · [Reproducibility](README_REPRODUCIBILITY.md) · [Deployment](DEPLOYMENT.md) · [Changelog](CHANGELOG.md)
+- Also in `docs/`: `project_report.html`, `research_progress.html`
 
 ## Citation
 

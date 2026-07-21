@@ -17,20 +17,45 @@ loudly rather than silently substituting synthetic predictions.
 import os
 import pickle
 import random
+import sys
 
 import matplotlib
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-from sklearn.metrics import r2_score
 
 matplotlib.use("Agg")
+
+import numpy as np
+import pandas as pd
+from matplotlib.colors import LinearSegmentedColormap, Normalize
+from matplotlib.patches import Rectangle
+from sklearn.metrics import r2_score
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 
+sys.path.insert(0, PROJECT_ROOT)
+from vizstyle import (  # noqa: E402  (needs PROJECT_ROOT on sys.path first)
+    figure,
+    finish,
+    save_both,
+    PALETTE,
+    color_of,
+    label_of,
+    bar_ends,
+    legend_roles,
+)
+
 OUTPUT_CSV = os.path.join(SCRIPT_DIR, "ood_failure_modes.csv")
-OUTPUT_HEATMAP = os.path.join(SCRIPT_DIR, "ood_heatmap.png")
+# Stem, not a filename: save_both() writes '<stem>.png' (light) and
+# '<stem>-dark.png' (dark). The light path stays byte-identical to the old
+# output so every README/report reference keeps resolving.
+OUTPUT_HEATMAP_STEM = os.path.join(SCRIPT_DIR, "ood_heatmap")
+OUTPUT_HEATMAP = OUTPUT_HEATMAP_STEM + ".png"
+
+# Provenance footer: the artefacts every mark in the figure is drawn from.
+FIGURE_SOURCE = (
+    "phases_22_30/phase_23_sensitivity/ood_failure_modes.csv"
+    "  ·  model: 03_models/wait_model_v2.pkl"
+)
 
 ARRIVAL_MULTIPLIERS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
 CLUSTER_SIZES = [4, 8, 16, 32]  # total GPUs; nodes = size / GPUS_PER_NODE
@@ -481,10 +506,105 @@ def detect_failure_mode(improvement_pct, r2_value, mape, arrival_rate_multiplier
 
 
 # Visualization
-def plot_ood_heatmap(results_df):
+def _signed_cmap(mode):
+    """Diverging ramp for a SIGNED quantity: the ML-free/regression side in orange,
+    the neutral hairline grey exactly at break-even, the ML-wins side in blue.
+
+    Two hues plus a neutral -- the repo's emphasis pair. The old ramp was RdYlGn:
+    three hues, and red/green is the one pair a protanope cannot separate, so the
+    single most important read of this chart (win vs loss) was carried by the
+    weakest possible channel.
     """
-    Create 2D heatmap: rows=arrival_rates, cols=cluster_sizes, values=improvement_pct
-    Save to ood_heatmap.png
+    p = PALETTE[mode]
+    return LinearSegmentedColormap.from_list(
+        "ood_signed", [p["series_2"], p["grid"], p["series_1"]]
+    )
+
+
+def _symmetric_norm(grid):
+    """Zero-centred colour scale, so the hue flip lands exactly on break-even.
+
+    Symmetric rather than two-slope: a -0.4% cell must not be painted as loudly
+    as a +44% cell just because it happens to be the only negative one.
+    """
+    finite = grid[np.isfinite(grid)]
+    span = float(np.max(np.abs(finite))) if finite.size else 1.0
+    span = span if span > 0 else 1.0
+    return Normalize(vmin=-span, vmax=span)
+
+
+def _cell_ink(rgba):
+    """Ink token that stays legible on the cell it sits on.
+
+    Text never wears a series colour; this only picks between the light-mode and
+    dark-mode ink depending on how saturated the cell underneath is.
+    """
+    red, green, blue = rgba[:3]
+    luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+    return PALETTE["light"]["ink"] if luminance > 0.55 else PALETTE["dark"]["ink"]
+
+
+def _draw_matrix(ax, grid, mode, fmt, outline_negative=False):
+    """One domain-shift matrix: rows = arrival multiplier, cols = cluster size.
+
+    Every cell is annotated on purpose. In a matrix, colour is the ONLY channel
+    encoding the value -- there is no position to read it off -- so the number is
+    the readout, not a redundant decoration on top of a bar.
+    """
+    p = PALETTE[mode]
+    cmap = _signed_cmap(mode)
+    norm = _symmetric_norm(grid)
+    im = ax.imshow(grid, cmap=cmap, norm=norm, aspect="auto", origin="upper")
+
+    # A matrix carries no gridlines of its own; solid hairline separators in the
+    # page colour keep the cells discrete.
+    ax.grid(False)
+    ax.set_xticks(np.arange(grid.shape[1]) - 0.5, minor=True)
+    ax.set_yticks(np.arange(grid.shape[0]) - 0.5, minor=True)
+    ax.grid(which="minor", color=p["surface"], linewidth=1.4)
+    ax.tick_params(which="minor", length=0)
+
+    ax.set_xticks(range(len(CLUSTER_SIZES)))
+    ax.set_xticklabels(CLUSTER_SIZES)
+    ax.set_yticks(range(len(ARRIVAL_MULTIPLIERS)))
+    ax.set_yticklabels([f"{v:.2f}x" for v in ARRIVAL_MULTIPLIERS])
+    ax.set_xlabel("Cluster size (total GPUs)")
+
+    for i in range(grid.shape[0]):
+        for j in range(grid.shape[1]):
+            value = grid[i, j]
+            if not np.isfinite(value):
+                continue
+            ax.text(
+                j, i, fmt(value), ha="center", va="center", fontsize=9,
+                color=_cell_ink(cmap(norm(value))),
+            )
+            # Redundant (non-colour) marker for the regression cells, so the
+            # win/loss split survives greyscale printing and colour blindness.
+            if outline_negative and value < 0:
+                ax.add_patch(
+                    Rectangle((j - 0.49, i - 0.49), 0.98, 0.98, fill=False,
+                              edgecolor=p["ink"], linewidth=1.8, zorder=4)
+                )
+    return im
+
+
+def _style_colorbar(fig, im, ax, mode, label):
+    cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
+    cb.outline.set_visible(False)
+    cb.ax.tick_params(length=0, labelsize=8.5, labelcolor=PALETTE[mode]["ink_2"])
+    cb.set_label(label, color=PALETTE[mode]["ink_2"], fontsize=9)
+    return cb
+
+
+def plot_ood_heatmap(results_df):
+    """Two matched matrices over the same shift grid, written light + dark.
+
+    Rows = arrival-rate multiplier, cols = cluster size, exactly as before. What
+    changed is presentation only: R2 used to be drawn as contour lines ON TOP of
+    the improvement colours -- two independent value scales sharing one plot, the
+    2D form of a dual axis -- so it is now its own panel on a shared y-axis. Both
+    grids are the same aggregation of the same numbers as before.
     """
     heat = (
         results_df.groupby(["arrival_rate_multiplier", "cluster_size"], as_index=False)["improvement_pct"]
@@ -499,41 +619,51 @@ def plot_ood_heatmap(results_df):
         .reindex(index=ARRIVAL_MULTIPLIERS, columns=CLUSTER_SIZES)
     )
 
-    fig, ax = plt.subplots(figsize=(10.5, 6.5))
-    im = ax.imshow(heat.to_numpy(), cmap="RdYlGn", aspect="auto", origin="upper")
-
-    cbar = fig.colorbar(im, ax=ax)
-    cbar.set_label("Improvement (%) vs FIFO", rotation=90)
-
-    ax.set_xticks(range(len(CLUSTER_SIZES)))
-    ax.set_xticklabels(CLUSTER_SIZES)
-    ax.set_yticks(range(len(ARRIVAL_MULTIPLIERS)))
-    ax.set_yticklabels([f"{v:.2f}x" for v in ARRIVAL_MULTIPLIERS])
-    ax.set_xlabel("Cluster size (GPUs)")
-    ax.set_ylabel("Arrival rate multiplier")
-    ax.set_title("Phase 23 OOD Robustness: Improvement Heatmap with R² Contours")
-
-    for i in range(heat.shape[0]):
-        for j in range(heat.shape[1]):
-            value = heat.iloc[i, j]
-            if np.isnan(value):
-                continue
-            ax.text(j, i, f"{value:.1f}%", ha="center", va="center", fontsize=9, color="black")
-            if value < 0:
-                ax.add_patch(plt.Rectangle((j - 0.5, i - 0.5), 1, 1, fill=False, edgecolor="black", linewidth=1.1))
-
-    # Only draw contour levels that actually fall inside the observed R2 range.
+    imp_grid = heat.to_numpy(dtype=float)
     r2_grid = r2_heat.to_numpy(dtype=float)
-    finite = r2_grid[np.isfinite(r2_grid)]
-    levels = [lv for lv in (0.3, 0.5, 0.7) if finite.size and finite.min() < lv < finite.max()]
-    if levels:
-        xx, yy = np.meshgrid(range(len(CLUSTER_SIZES)), range(len(ARRIVAL_MULTIPLIERS)))
-        cs = ax.contour(xx, yy, r2_grid, levels=levels, colors="black", linewidths=1.0)
-        ax.clabel(cs, inline=True, fmt="R²=%.1f", fontsize=8)
 
-    fig.tight_layout()
-    fig.savefig(OUTPUT_HEATMAP, dpi=220, bbox_inches="tight")
-    plt.close(fig)
+    n_cells = int(np.isfinite(imp_grid).sum())
+    n_win = int(np.sum(np.isfinite(imp_grid) & (imp_grid > 0)))
+    n_loss = int(np.sum(np.isfinite(imp_grid) & (imp_grid < 0)))
+    n_r2_neg = int(np.sum(np.isfinite(r2_grid) & (r2_grid < 0)))
+
+    outline_note = (
+        f" Outlined cells ({n_loss} of {n_cells}) are regressions."
+        if n_loss
+        else " No cell regresses."
+    )
+
+    for mode in ("light", "dark"):
+        fig, axes = figure(mode, figsize=(12.4, 6.2), nrows=1, ncols=2, sharey=True)
+
+        # ── Panel 1: what the POLICY does under the shift ─────────────────────
+        im_imp = _draw_matrix(
+            axes[0], imp_grid, mode, lambda v: f"{v:.1f}%", outline_negative=True
+        )
+        axes[0].set_ylabel("Arrival-rate multiplier (1.00x = training load)")
+        axes[0].set_title("Mean wait reduction vs FIFO")
+        _style_colorbar(fig, im_imp, axes[0], mode, "Improvement (%) vs FIFO")
+
+        # ── Panel 2: how well the MODEL predicts under the same shift ─────────
+        im_r2 = _draw_matrix(axes[1], r2_grid, mode, lambda v: f"{v:.2f}")
+        axes[1].tick_params(axis="y", length=0)  # y is shared; its rule lives left
+        axes[1].set_title("Wait-model accuracy (R²)")
+        _style_colorbar(fig, im_r2, axes[1], mode, "R² of the trained wait model")
+
+        fig.tight_layout(rect=(0, 0.03, 1, 0.82))
+        finish(
+            fig, mode,
+            title=f"Proactive ordering still beats FIFO in {n_win} of {n_cells} "
+                  f"shifted regimes",
+            subtitle=f"{len(ARRIVAL_MULTIPLIERS)}x{len(CLUSTER_SIZES)} domain-shift "
+                     f"grid; each cell averages {len(JOB_DISTRIBUTIONS)} runtime "
+                     f"profiles x {RUNS_PER_SCENARIO} seeded runs.\n"
+                     f"R² is below zero in {n_r2_neg} of {n_cells} cells: the "
+                     f"absolute wait estimate degrades off-distribution while the "
+                     f"queue ORDER it implies still helps." + outline_note,
+            source=FIGURE_SOURCE,
+        )
+        save_both(fig, OUTPUT_HEATMAP_STEM, mode)
 
 
 def main():

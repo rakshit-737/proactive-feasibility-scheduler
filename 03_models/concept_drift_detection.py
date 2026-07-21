@@ -1,4 +1,5 @@
 import os
+import sys
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -8,6 +9,12 @@ from sklearn.linear_model import SGDRegressor
 from sklearn.preprocessing import StandardScaler
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+sys.path.insert(0, PROJECT_ROOT)
+from vizstyle import (  # noqa: E402,F401  (shared house style; runs from any cwd)
+    figure, finish, save_both, PALETTE, color_of, label_of, bar_ends, legend_roles,
+)
+
 DATA_PATH = os.path.join(PROJECT_ROOT, '02_data', 'improved_wait_dataset.csv')
 OUT_DIR = os.path.join(PROJECT_ROOT, '05_results', 'models')
 os.makedirs(OUT_DIR, exist_ok=True)
@@ -72,19 +79,56 @@ def main():
     out_csv = os.path.join(OUT_DIR, 'concept_drift_results.csv')
     out.to_csv(out_csv, index=False)
 
-    plt.figure(figsize=(10, 4.8))
-    plt.plot(out['stream_index'], out['rolling_mae'], color='#38bdf8', label='Rolling MAE')
-    plt.axhline(threshold, color='#fb923c', linestyle='--', label='Retrain trigger threshold')
-    if triggers:
-        plt.scatter(triggers, out.loc[triggers, 'rolling_mae'], color='#34d399', s=25, label='Adaptive retrain trigger')
-    plt.title('Concept drift detection with adaptive retraining triggers')
-    plt.xlabel('Stream index')
-    plt.ylabel('Rolling MAE')
-    plt.legend()
-    plt.grid(alpha=0.25)
-    plt.tight_layout()
+    # ── figure (presentation only; nothing below changes a number) ───────────
     out_plot = os.path.join(OUT_DIR, 'concept_drift_triggers.png')
-    plt.savefig(out_plot, dpi=160)
+    plot_stem = out_plot[:-len('.png')]
+    drift_onset = drift_start - split      # where the injected shift enters the stream
+
+    for mode in ('light', 'dark'):
+        p = PALETTE[mode]
+        fig, ax = figure(mode, figsize=(10, 5.2))
+
+        # One chart, one story: the error curve is the subject (series_1), the
+        # retrain events are the second series (series_2). Reference lines are
+        # neutral chrome, solid hairlines, direct-labelled instead of legended.
+        ax.plot(out['stream_index'], out['rolling_mae'], color=p['series_1'],
+                linewidth=1.9, label='Rolling MAE (80-job window)')
+
+        # NB: the trigger test is evaluated on a 30-job window, the plotted curve
+        # is the 80-job window written to the CSV, so markers can sit below this
+        # line. The label says which window the line belongs to rather than
+        # implying the two are the same series.
+        ax.axhline(threshold, color=p['muted'], linewidth=1.0, zorder=1)
+        ax.text(0.998, threshold, 'Retrain trigger threshold (tested on a 30-job window)  ',
+                transform=ax.get_yaxis_transform(), ha='right', va='bottom',
+                fontsize=8.5, color=p['muted'])
+
+        if 0 < drift_onset < len(y_stream):
+            ax.axvline(drift_onset, color=p['muted'], linewidth=1.0, zorder=1)
+            ax.text(drift_onset, 0.985, '  Synthetic drift injected',
+                    transform=ax.get_xaxis_transform(), ha='left', va='top',
+                    fontsize=8.5, color=p['muted'])
+
+        if triggers:
+            ax.scatter(triggers, out.loc[triggers, 'rolling_mae'],
+                       color=p['series_2'], s=34, zorder=3,
+                       label='Adaptive retrain trigger')
+
+        ax.set_xlabel('Stream position (jobs seen after the training split)')
+        ax.set_ylabel('Rolling MAE (simulation time steps)')
+        ax.set_xlim(0, len(y_stream) - 1)
+        ax.set_axisbelow(True)
+        ax.legend(loc='upper left')
+
+        fig.tight_layout(rect=(0, 0.03, 1, 0.85))
+        finish(
+            fig, mode,
+            title='Concept drift detection with adaptive retraining triggers',
+            subtitle=(f'{len(triggers)} retrain events over the {len(y_stream)}-job stream; '
+                      'markers overlap where consecutive jobs trigger'),
+            source='02_data/improved_wait_dataset.csv -> 05_results/models/concept_drift_results.csv',
+        )
+        save_both(fig, plot_stem, mode)
 
     print(f'Drift triggers fired: {len(triggers)}')
     print('Saved:', out_csv)

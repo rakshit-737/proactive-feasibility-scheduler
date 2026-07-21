@@ -25,21 +25,24 @@
 # jobs that fit this tick, greedy allocation across per-node GPU lists.
 #
 # Outputs:
-#   05_results/fairness/budget_sweep.csv   (one row per budget B)
-#   05_results/fairness/budget_pareto.png  (mean vs max wait; mean vs Gini)
+#   05_results/fairness/budget_sweep.csv        (one row per budget B)
+#   05_results/fairness/budget_pareto.png       (mean vs max wait; mean vs Gini)
+#   05_results/fairness/budget_pareto-dark.png  (same figure, dark mode)
 # ─────────────────────────────────────────────────────────────────────────────
 
 import os
+import sys
 import random
 import pickle
 import numpy as np
 import pandas as pd
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 
 # ── Paths (PROJECT_ROOT pattern used across the repo) ────────────────────────
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_ROOT)
+from vizstyle import (figure, finish, save_both, PALETTE, color_of, label_of,
+                      bar_ends, legend_roles)
+
 MODEL_PATH = os.path.join(PROJECT_ROOT, '03_models', 'wait_model_v2.pkl')
 OUT_DIR = os.path.join(PROJECT_ROOT, '05_results', 'fairness')
 os.makedirs(OUT_DIR, exist_ok=True)
@@ -270,47 +273,67 @@ def main():
     }))
 
     # ── Pareto plot ─────────────────────────────────────────────────────────
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5.5))
-
+    # Colour follows the ENTITY: every point on the frontier is the SAME policy
+    # family (proactive + wait budget) so it carries one colour -- the ML blue --
+    # in both panels; the FIFO reference is a classical baseline and recedes to
+    # neutral grey. The B=None endpoint is distinguished by MARKER, not by hue.
+    plot_stem = os.path.join(OUT_DIR, 'budget_pareto')
     order = df.sort_values('mean_wait')
-    for ax, ycol, ylabel in ((ax1, 'max_wait', 'Max wait (ticks)'),
-                             (ax2, 'gini', 'Gini coefficient of waits')):
-        ax.plot(order['mean_wait'], order[ycol], '-', color='#94a3b8',
-                zorder=1, linewidth=1.2)
-        ax.scatter(df['mean_wait'], df[ycol], s=55, color='#38bdf8',
-                   zorder=2, label='wait-budget policy')
-        for _, r in df.iterrows():
-            is_endpoint = r['budget'] == 'None'
-            ax.annotate(f"B={r['budget']}", (r['mean_wait'], r[ycol]),
-                        textcoords='offset points', xytext=(6, 6), fontsize=8,
-                        fontweight='bold' if is_endpoint else 'normal')
-        # highlight endpoints: pure proactive (B=None) and true FIFO reference
-        pp = df[df['budget'] == 'None'].iloc[0]
-        ax.scatter([pp['mean_wait']], [pp[ycol]], s=140, facecolors='none',
-                   edgecolors='#34d399', linewidths=2.2, zorder=3,
-                   label='pure proactive (B=None)')
-        ax.scatter([fifo_agg['mean_wait']], [fifo_agg[ycol]],
-                   s=140, marker='s', color='#f87171', zorder=3,
-                   label='FIFO (reference)')
-        ax.annotate('FIFO', (fifo_agg['mean_wait'], fifo_agg[ycol]),
-                    textcoords='offset points', xytext=(6, -12), fontsize=8,
-                    fontweight='bold', color='#b91c1c')
-        ax.set_xlabel('Mean wait (ticks)')
-        ax.set_ylabel(ylabel)
-        ax.grid(alpha=0.3)
+    pp = df[df['budget'] == 'None'].iloc[0]
+    written = []
 
-    ax1.set_title('Wait-budget Pareto frontier: mean vs max wait')
-    ax2.set_title('Mean wait vs fairness (Gini)')
-    ax1.legend(fontsize=8)
-    plt.suptitle(f'Bounded-fairness wait-budget sweep '
-                 f'({NUM_RUNS} paired runs, {NUM_JOBS} jobs, '
-                 f'{NUM_NODES}x{GPUS_PER_NODE} GPUs)', y=1.00)
-    plt.tight_layout()
-    plot_path = os.path.join(OUT_DIR, 'budget_pareto.png')
-    plt.savefig(plot_path, dpi=160)
+    for mode in ('light', 'dark'):
+        p = PALETTE[mode]
+        c_policy = color_of('PROACTIVE', mode)     # blue: the ML method
+        c_fifo = color_of('FIFO', mode)            # grey: classical baseline
+
+        fig, (ax1, ax2) = figure(mode, figsize=(13, 5.5), nrows=1, ncols=2)
+
+        for ax, ycol, ylabel in ((ax1, 'max_wait', 'Max wait (ticks)'),
+                                 (ax2, 'gini', 'Gini coefficient of waits')):
+            ax.plot(order['mean_wait'], order[ycol], '-', color=c_policy,
+                    zorder=1, linewidth=1.2, alpha=0.45)
+            ax.scatter(df['mean_wait'], df[ycol], s=55, color=c_policy,
+                       zorder=2, label='Proactive + wait budget B')
+            # identity labels (which budget a point is) -- not value labels
+            for _, r in df.iterrows():
+                is_endpoint = r['budget'] == 'None'
+                ax.annotate(f"B={r['budget']}", (r['mean_wait'], r[ycol]),
+                            textcoords='offset points',
+                            xytext=(9, 10) if is_endpoint else (6, 6), fontsize=8,
+                            color=p['ink'] if is_endpoint else p['ink_2'],
+                            fontweight='semibold' if is_endpoint else 'normal')
+            # endpoints: pure proactive (B=None) and the true FIFO reference
+            ax.scatter([pp['mean_wait']], [pp[ycol]], s=170, facecolors='none',
+                       edgecolors=c_policy, linewidths=2.2, zorder=3,
+                       label='Pure proactive (B = None)')
+            ax.scatter([fifo_agg['mean_wait']], [fifo_agg[ycol]],
+                       s=140, marker='s', color=c_fifo, zorder=3,
+                       label=f'{label_of("FIFO")} (reference)')
+            ax.annotate('FIFO', (fifo_agg['mean_wait'], fifo_agg[ycol]),
+                        textcoords='offset points', xytext=(6, -13), fontsize=8,
+                        fontweight='semibold', color=p['ink_2'])
+            ax.set_xlabel('Mean wait (ticks)')
+            ax.set_ylabel(ylabel)
+            ax.margins(x=0.10, y=0.12)
+            ax.set_axisbelow(True)
+
+        ax1.set_title('Tail wait: mean vs max wait')
+        ax2.set_title('Fairness: mean wait vs Gini of waits')
+        ax1.legend(loc='upper right')
+
+        fig.tight_layout(rect=(0, 0.03, 1, 0.86))
+        finish(fig, mode,
+               title='A hard wait budget buys a bounded tail, and gives back mean wait',
+               subtitle=(f'Escalating any job that has waited longer than B to the queue head; '
+                         f'{NUM_RUNS} paired runs, {NUM_JOBS} jobs, '
+                         f'{NUM_NODES}x{GPUS_PER_NODE} GPUs, same trace for every policy'),
+               source='05_results/fairness/budget_sweep.csv')
+        written.append(save_both(fig, plot_stem, mode))
 
     print('\nSaved:', csv_path)
-    print('Saved:', plot_path)
+    for path in written:
+        print('Saved:', path)
 
 if __name__ == '__main__':
     main()

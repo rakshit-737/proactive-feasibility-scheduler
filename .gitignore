@@ -1,8 +1,41 @@
+# --- Python ---
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Tooling caches ---
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
 catboost_info/
+.streamlit/secrets.toml
+
+# --- Editor / IDE state ---
 .vscode/
-*.log
+.idea/
 *.VSIXPackage
+
+# --- OS cruft ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Logs & local env ---
+*.log
+.env
+
+# --- Large / regenerable data ---
+# Raw SWF traces are shipped gzipped (*.swf.gz is tracked); uncompressed
+# extractions and the per-trace datasets they generate are not.
 *.swf
 real_trace_dataset_*.csv

@@ -108,9 +108,9 @@ Hence the score satisfies
 for some function $g_{S_t}$ determined entirely by the state, and the induced
 queue order is the order of $g_{S_t}$ over the sizes present in $Q_t$. The model
 is, at each instant, a \emph{lookup table from requested size to priority}. The
-eleven cluster-state features are not useless --- they select \emph{which} table
-is used --- but they cannot distinguish two co-queued jobs, which is the only
-thing a ranking consumes.
+remaining eight features describe only the cluster --- they select \emph{which}
+table is used --- but they cannot distinguish two co-queued jobs, which is the
+only thing a ranking consumes.
 
 \paragraph{Why this matters.}
 If the argument holds, then a reported improvement of an ML wait-time scheduler
@@ -284,10 +284,12 @@ same score, so the policy silently reduces to FCFS.
 The recovered size$\rightarrow$priority table is monotone increasing in only
 $52$--$67\%$ of instants. Where it is monotone the policy \emph{is}
 smallest-job-first; where it is not, the model has learned a non-trivial size
-preference (for instance, favouring the power-of-two sizes that historically
-cleared fastest on that machine). This distinction turns out to matter, and it
-is why the equivalence in \S\ref{sec:equivalence} holds on two of the three
-substrates rather than all three.
+preference. We note explicitly that this fraction does \emph{not} predict where
+the equivalence of \S\ref{sec:equivalence} fires --- it is lowest on SDSC
+($51.9\%$), which is the substrate on which the size sort is certified
+equivalent. Degeneracy is the claim this section supports; the shape of the
+learned table is a description of it, not an explanation of the downstream
+scheduling difference.
 
 \section{Sorting by Size Is Equivalent to the Model}
 \label{sec:equivalence}
@@ -323,12 +325,22 @@ the same point --- \textsc{NN} and \textsc{Smallest\_First} produce
 \emph{bit-identical} results on every metric of all 20 runs. Two different model
 classes over the same features collapse to the same one-line sort.
 
-On LANL the equivalence fails, and honestly so: the learned table is
-non-monotone often enough that \textsc{Proactive} beats a naive size sort by
-$14.4\%$. This does not rescue the method. The learned policy is still only a
-function of requested size --- it is a \emph{better} size table, not a different
-kind of policy --- and as \S\ref{sec:traces} shows, on that same machine it
-fails to beat FCFS.
+On LANL the equivalence test does not fire, and the honest verdict there is
+\emph{inconclusive} rather than "different". The size sort is $14.4\%$ worse on
+mean wait, but that difference does not survive Holm correction on the paired
+$t$-test ($p = 0.25$; the Wilcoxon test disagrees at $p = 0.015$), it shrinks to
+$+7.3\%$ and $p = 0.60$ on bounded slowdown, and TOST cannot certify equivalence
+either ($p = 0.77$). With 20 windows we can neither declare the two policies the
+same on LANL nor establish that they differ.
+
+We initially attributed this to the learned size table being less monotone on
+LANL, and that explanation is wrong: the per-instant monotone fraction is
+$51.9\%$ on SDSC --- where equivalence \emph{does} hold --- against $61.5\%$ on
+LANL. Monotonicity does not track where the equivalence fires, so we report the
+LANL result as underpowered rather than mechanistically explained. What is not in
+question on either machine is the degeneracy itself (\S\ref{sec:degeneracy}), and
+on LANL the ML scheduler also fails to beat plain FCFS ($p = 0.48$,
+\S\ref{sec:traces}).
 
 \section{Trace-Driven Re-Evaluation}
 \label{sec:traces}

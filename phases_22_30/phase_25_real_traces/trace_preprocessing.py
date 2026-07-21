@@ -16,14 +16,14 @@ block above TRACE_CANDIDATES for how to obtain the real traces.
 Generates:
   - trace_inventory.csv: metadata for all loaded traces
   - cross_trace_mae.csv: heuristic-model MAE on each trace
-  - real_vs_synthetic_comparison.png: distribution alignment plots
+  - real_vs_synthetic_comparison.png (+ -dark.png): distribution alignment plots
 """
 
 import os
+import sys
 from typing import Dict, List, Tuple
 
 import matplotlib
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -32,9 +32,24 @@ matplotlib.use("Agg")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 
+sys.path.insert(0, PROJECT_ROOT)
+from vizstyle import (  # noqa: E402,F401  (needs PROJECT_ROOT on sys.path first)
+    figure,
+    finish,
+    save_both,
+    PALETTE,
+    color_of,
+    label_of,
+    bar_ends,
+    legend_roles,
+)
+
 OUTPUT_INVENTORY = os.path.join(SCRIPT_DIR, "trace_inventory.csv")
 OUTPUT_MAE_COMPARISON = os.path.join(SCRIPT_DIR, "cross_trace_mae.csv")
-OUTPUT_PLOT = os.path.join(SCRIPT_DIR, "real_vs_synthetic_comparison.png")
+# Stem, not a filename: save_both() writes '<stem>.png' (light) and
+# '<stem>-dark.png' (dark). The light path is byte-identical to the old output.
+OUTPUT_PLOT_STEM = os.path.join(SCRIPT_DIR, "real_vs_synthetic_comparison")
+OUTPUT_PLOT = OUTPUT_PLOT_STEM + ".png"
 
 # ---------------------------------------------------------------------------
 # OBTAINING REAL TRACES (none are committed to this repository)
@@ -89,6 +104,21 @@ TRACE_CANDIDATES = [
         "source_type": "real",
     },
 ]
+
+# Presentation only: trace name -> the repo-relative file the chart is drawn
+# from, used for the provenance footer. The fallback trace has no file on disk.
+TRACE_SOURCE_PATH = {
+    c["name"]: os.path.relpath(c["path"], PROJECT_ROOT).replace(os.sep, "/")
+    for c in TRACE_CANDIDATES
+}
+TRACE_SOURCE_PATH["synthetic_fallback"] = "generated in-script (no trace file on disk)"
+
+# Presentation only: source_type slug -> the phrase a reader can parse.
+SOURCE_TYPE_LABEL = {
+    "real": "real trace",
+    "synthetic_proxy": "synthetic proxy",
+    "synthetic_fallback": "synthetic fallback",
+}
 
 # Synthetic feature template (from Phase 01–21)
 SYNTHETIC_FEATURES = [
@@ -454,60 +484,125 @@ def build_trace_inventory(trace_results: List[Tuple[str, pd.DataFrame, Dict, str
     return pd.DataFrame(rows)
 
 
+def _trace_legend_label(name: str, source_type: str, n_rows: int) -> str:
+    """Legend/subtitle identity for one trace. Presentation only."""
+    kind = SOURCE_TYPE_LABEL.get(source_type, source_type)
+    return f"{name} - {kind} (n = {n_rows:,})"
+
+
+def _trace_color(index: int, mode: str) -> str:
+    """Colour follows the TRACE, never the panel: trace i keeps colour i in all
+    four panels. Only two hues exist (blue, orange); any further trace recedes
+    to neutral ink rather than inventing a third hue."""
+    keys = ("series_1", "series_2", "ink_2", "muted")
+    return PALETTE[mode][keys[min(index, len(keys) - 1)]]
+
+
 def plot_real_vs_synthetic(trace_results: List[Tuple[str, pd.DataFrame, Dict, str]]) -> None:
-    """Create comparison plots between loaded traces (real or synthetic)."""
-    fig, axes = plt.subplots(2, 2, figsize=(12, 9))
+    """Create comparison plots between loaded traces (real or synthetic).
 
-    # Collect all trace data (label each trace with its source type)
-    trace_names = [f"{name} [{source_type}]" for name, _, _, source_type in trace_results]
-    all_waits = [df["wait_time"].to_numpy() for _, df, _, _ in trace_results]
-    all_gpus = [df["job_gpu"].to_numpy() for _, df, _, _ in trace_results]
+    Presentation only -- nothing here touches the mapped features, the decile
+    binning or any statistic. The four panels share one colour assignment keyed
+    on the trace, so a trace that appears in every panel is the same colour in
+    every panel.
+    """
+    # Identity of each trace, computed once and reused by all four panels.
+    labels = [
+        _trace_legend_label(name, source_type, len(df))
+        for name, df, _, source_type in trace_results
+    ]
+    markers = ("o", "s", "^", "D")
+    multi = len(trace_results) > 1
 
-    # Plot 1: Wait time distributions
-    ax = axes[0, 0]
-    for i, (name, wait) in enumerate(zip(trace_names, all_waits)):
-        ax.hist(wait, bins=50, alpha=0.5, label=name)
-    ax.set_xlabel("Wait Time (timesteps)")
-    ax.set_ylabel("Frequency")
-    ax.set_title("Phase 25: Wait Time Distributions Across Traces")
-    ax.legend()
+    sources = " | ".join(
+        dict.fromkeys(TRACE_SOURCE_PATH.get(name, name) for name, _, _, _ in trace_results)
+    )
+    if any(source_type == "real" for _, _, _, source_type in trace_results):
+        subtitle = "Traces loaded: " + "; ".join(labels)
+    else:
+        subtitle = (
+            "No real LANL/Alibaba trace is on disk, so every series below is the "
+            "synthetic LANL-schema proxy: " + "; ".join(labels) + "."
+        )
 
-    # Plot 2: GPU request distributions
-    ax = axes[0, 1]
-    for i, (name, gpu) in enumerate(zip(trace_names, all_gpus)):
-        ax.hist(gpu, bins=8, alpha=0.5, label=name)
-    ax.set_xlabel("GPU Request (count)")
-    ax.set_ylabel("Frequency")
-    ax.set_title("GPU Request Distributions")
-    ax.legend()
+    for mode in ("light", "dark"):
+        p = PALETTE[mode]
+        fig, axes = figure(mode, figsize=(12, 8.6), nrows=2, ncols=2)
 
-    # Plot 3: Queue pressure correlations
-    ax = axes[1, 0]
-    for name, df, _, source_type in trace_results:
-        name = f"{name} [{source_type}]"
-        pressure_bins = pd.qcut(df["queue_pressure"], q=10, duplicates="drop")
-        wait_by_pressure = df.groupby(pressure_bins)["wait_time"].mean()
-        ax.plot(range(len(wait_by_pressure)), wait_by_pressure, marker="o", label=name)
-    ax.set_xlabel("Queue Pressure Decile")
-    ax.set_ylabel("Mean Wait Time")
-    ax.set_title("Wait Time vs. Queue Pressure")
-    ax.legend()
+        # Panel 1: wait-time distribution -----------------------------------
+        ax = axes[0, 0]
+        for i, (name, df, _, _) in enumerate(trace_results):
+            wait = df["wait_time"].to_numpy()
+            color = _trace_color(i, mode)
+            # Overlapping translucent fills would blend into a third hue, so
+            # only a single trace is filled; further traces are drawn as outlines.
+            if multi:
+                ax.hist(wait, bins=50, histtype="step", linewidth=1.6,
+                        color=color, label=labels[i])
+            else:
+                ax.hist(wait, bins=50, color=color, label=labels[i])
+                # One direct label, not a value on every bar (rule 7).
+                mean_wait = float(np.mean(wait))
+                ax.axvline(mean_wait, color=p["ink_2"], linewidth=1.0)
+                ax.text(mean_wait, ax.get_ylim()[1] * 0.96,
+                        f"  mean {mean_wait:.1f}", color=p["ink_2"],
+                        fontsize=9, ha="left", va="top")
+        ax.set_xlabel("Wait time (timesteps)")
+        ax.set_ylabel("Number of jobs")
+        ax.set_title("Wait-time distribution")
 
-    # Plot 4: Node availability impact
-    ax = axes[1, 1]
-    for name, df, _, source_type in trace_results:
-        name = f"{name} [{source_type}]"
-        avail_bins = pd.qcut(df["node_availability"], q=10, duplicates="drop")
-        wait_by_avail = df.groupby(avail_bins)["wait_time"].mean()
-        ax.plot(range(len(wait_by_avail)), wait_by_avail, marker="s", label=name)
-    ax.set_xlabel("Node Availability Decile")
-    ax.set_ylabel("Mean Wait Time")
-    ax.set_title("Wait Time vs. Node Availability")
-    ax.legend()
+        # Panel 2: GPU request distribution ---------------------------------
+        ax = axes[0, 1]
+        for i, (name, df, _, _) in enumerate(trace_results):
+            gpu = df["job_gpu"].to_numpy()
+            color = _trace_color(i, mode)
+            if multi:
+                ax.hist(gpu, bins=8, histtype="step", linewidth=1.6,
+                        color=color, label=labels[i])
+            else:
+                ax.hist(gpu, bins=8, color=color, label=labels[i])
+        ax.set_xlabel("GPUs requested per job")
+        ax.set_ylabel("Number of jobs")
+        ax.set_title("Job-size distribution")
 
-    fig.tight_layout()
-    fig.savefig(OUTPUT_PLOT, dpi=220, bbox_inches="tight")
-    plt.close(fig)
+        # Panels 3 and 4: mean wait across deciles of a cluster-state feature.
+        # Same binning as before; only the tick labels change (deciles are named
+        # 1..10 rather than left as raw positional indices).
+        decile_panels = (
+            (axes[1, 0], "queue_pressure", "Queue-pressure decile (1 = least pressure)",
+             "Wait time vs. queue pressure"),
+            (axes[1, 1], "node_availability", "Node-availability decile (1 = least free)",
+             "Wait time vs. node availability"),
+        )
+        for ax, column, xlabel, panel_title in decile_panels:
+            n_bins = 0
+            for i, (name, df, _, _) in enumerate(trace_results):
+                bins = pd.qcut(df[column], q=10, duplicates="drop")
+                wait_by_bin = df.groupby(bins)["wait_time"].mean()
+                n_bins = max(n_bins, len(wait_by_bin))
+                ax.plot(range(len(wait_by_bin)), wait_by_bin,
+                        marker=markers[min(i, len(markers) - 1)],
+                        color=_trace_color(i, mode), label=labels[i])
+            ax.set_xticks(range(n_bins))
+            ax.set_xticklabels([str(b + 1) for b in range(n_bins)])
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel("Mean wait time (timesteps)")
+            ax.set_title(panel_title)
+
+        # A legend only earns its space when >= 2 series are drawn; with a
+        # single trace the identity lives in the subtitle instead.
+        if multi:
+            axes[0, 0].legend(loc="upper right")
+
+        fig.tight_layout(rect=(0, 0.03, 1, 0.87))
+        finish(
+            fig,
+            mode,
+            title="Phase 25: what the loaded workload traces look like",
+            subtitle=subtitle,
+            source=sources,
+        )
+        save_both(fig, OUTPUT_PLOT_STEM, mode)
 
 
 def estimate_cross_trace_mae(trace_results: List[Tuple[str, pd.DataFrame, Dict, str]]) -> pd.DataFrame:

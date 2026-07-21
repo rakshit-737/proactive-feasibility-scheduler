@@ -15,6 +15,12 @@ from sklearn.metrics import mean_absolute_error, r2_score
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Shared figure style (light/dark pair, one palette for all 46 repo figures).
+# PROJECT_ROOT is derived from __file__, so this import resolves whether the
+# script is run from 03_models/ or from the repo root.
+import sys; sys.path.insert(0, PROJECT_ROOT)
+from vizstyle import figure, finish, save_both, PALETTE, color_of, label_of, bar_ends, legend_roles
+
 # ── Load data ──────────────────────────────────────────────────
 df = pd.read_csv(os.path.join(PROJECT_ROOT, "02_data", "improved_wait_dataset.csv"))
 print(f"Dataset shape: {df.shape}")
@@ -70,14 +76,52 @@ for i in sorted_idx:
     print(f"  {FEATURES[i]:<22} {importance[i]:.4f}  {bar}")
 
 # ── Plot feature importance ───────────────────────────────────────────────────
-fig, ax = plt.subplots(figsize=(9, 5))
-colors = ['#38bdf8' if importance[i] < 0.25 else '#fb923c' for i in sorted_idx]
-ax.bar([FEATURES[i] for i in sorted_idx], importance[sorted_idx], color=colors)
-ax.set_title("Feature Importance — Improved Wait-Time Model", fontsize=13)
-ax.set_ylabel("Importance")
-plt.xticks(rotation=40, ha='right', fontsize=9)
-plt.tight_layout()
-plt.savefig(os.path.join(MODEL_DIR, "feature_importance_v2.png"), dpi=150)
+# Axes are labelled by feature NAME, spelled out: the raw column names are
+# cluster-state shorthand, so each tick says what the signal actually measures.
+FEATURE_LABEL = {
+    "job_gpu":           "GPUs requested by the job",
+    "total_free":        "Free GPUs, cluster-wide",
+    "queue_length":      "Jobs waiting in the queue",
+    "running_jobs":      "Jobs currently running",
+    "max_free_node":     "Largest free block on one node",
+    "variance_free":     "Variance of free GPUs per node",
+    "can_fit_now":       "Can start immediately (0/1)",
+    "gpu_fit_ratio":     "Free GPUs vs GPUs requested",
+    "fragmentation":     "Fragmentation (SD of free GPUs/node)",
+    "queue_pressure":    "Queued GPU demand vs free GPUs",
+    "node_availability": "Share of nodes that fit the job",
+    "avg_free_per_node": "Mean free GPUs per node",
+}
+
+# This chart is not about schedulers, so it carries exactly ONE series colour;
+# importance is already encoded by bar length and by rank order, and giving the
+# large bars a second hue would make colour restate the rank.
+plot_order = sorted_idx[::-1]            # largest ends up at the top in barh
+top_feature = sorted_idx[0]
+
+for mode in ('light', 'dark'):
+    p = PALETTE[mode]
+    fig, ax = figure(mode, figsize=(9, 5.4))
+
+    ax.barh([FEATURE_LABEL[FEATURES[i]] for i in plot_order],
+            importance[plot_order], color=p['series_1'], height=0.66)
+    bar_ends(ax, 'h')
+    ax.set_xlabel("Share of total importance")
+    ax.set_xlim(0, float(importance.max()) * 1.16)
+
+    # Direct-label the single dominant feature only, not every bar.
+    ax.text(float(importance[top_feature]) * 1.02, len(plot_order) - 1,
+            f"{importance[top_feature]:.2f}", va='center', ha='left',
+            fontsize=9, color=p['ink'], fontweight='semibold')
+
+    finish(fig, mode,
+           title="What the improved wait-time model actually keys on",
+           subtitle=(f"XGBoost, {len(FEATURES)} cluster-state features · "
+                     f"hold-out MAE {mae:.2f}, R² {r2:.3f}"),
+           source="02_data/improved_wait_dataset.csv")
+    fig.subplots_adjust(top=0.82)
+    save_both(fig, os.path.join(MODEL_DIR, "feature_importance_v2"), mode)
+
 print("\nPlot saved: feature_importance_v2.png")
 
 # ── Save model ────────────────────────────────────────────────

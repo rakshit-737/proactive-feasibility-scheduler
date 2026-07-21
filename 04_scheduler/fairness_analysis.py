@@ -1,13 +1,15 @@
 import os
+import sys
 import random
 import pickle
 import numpy as np
 import pandas as pd
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_ROOT)
+from vizstyle import (figure, finish, save_both, bar_ends, legend_roles,  # noqa: E402
+                      color_of, label_of, PALETTE)
+
 MODEL_PATH = os.path.join(PROJECT_ROOT, '03_models', 'wait_model_v2.pkl')
 OUT_FAIR = os.path.join(PROJECT_ROOT, '05_results', 'fairness')
 OUT_SCHED = os.path.join(PROJECT_ROOT, '05_results', 'schedulers')
@@ -162,6 +164,93 @@ def run_scheduler(jobs_in, mode='fifo'):
         'by_size': by_size,
     }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Presentation only: how each policy in this experiment is coloured and named.
+#
+# Colour follows the ENTITY, not the panel: FIFO is the grey classical baseline
+# it is in every other figure in the repo, and BOTH proactive variants are the
+# ML policy, so both take the ML blue. The starvation-guard variant is told
+# apart by its tick label, not by a fourth hue -- the same convention vizstyle
+# uses for oracle policies, where the label already carries the identity.
+# ─────────────────────────────────────────────────────────────────────────────
+POLICY_KEY = {
+    'fifo': 'FIFO',
+    'proactive': 'PROACTIVE',
+    'proactive_starvation': 'PROACTIVE',
+}
+POLICY_TICK = {
+    'fifo': label_of('FIFO'),
+    'proactive': label_of('PROACTIVE'),
+    'proactive_starvation': 'Proactive + starvation guard',
+}
+SIZE_PANEL = {
+    'small': 'Small jobs (1-2 GPUs)',
+    'medium': 'Medium jobs (3-5 GPUs)',
+    'large': 'Large jobs (6-8 GPUs)',
+}
+
+
+def make_size_figure(by_size_df, stem):
+    """Mean wait per job-size bucket, as small multiples sharing one wait scale.
+
+    One panel per size bucket and one bar per policy, so a policy keeps a single
+    colour across all three panels; the shared x-axis keeps the cross-panel
+    comparison honest. Only the 'large' panel is direct-labelled -- that bucket
+    is where the ML ordering moves the delay to, and labelling all nine bars
+    would just be a table drawn as a chart.
+    """
+    order = ['fifo', 'proactive', 'proactive_starvation']
+    sizes = ['small', 'medium', 'large']
+
+    def mean_wait(sched, size):
+        row = by_size_df[(by_size_df['scheduler'] == sched) & (by_size_df['job_size'] == size)]
+        return float(row['mean_wait'].iloc[0]) if len(row) else np.nan
+
+    values = {size: [mean_wait(s, size) for s in order] for size in sizes}
+    vmax = float(np.nanmax([v for vals in values.values() for v in vals]))
+
+    light_path = None
+    for mode in ('light', 'dark'):
+        p = PALETTE[mode]
+        fig, axes = figure(mode, figsize=(13, 4.4), ncols=3, sharex=True, sharey=True,
+                           gridspec_kw={'wspace': 0.07})
+        y = np.arange(len(order))
+        colors = [color_of(POLICY_KEY[s], mode) for s in order]
+
+        for ax, size in zip(axes, sizes):
+            vals = values[size]
+            ax.barh(y, vals, height=0.62, color=colors)
+            ax.set_title(SIZE_PANEL[size], loc='left')
+            ax.set_xlim(0, vmax * 1.18)
+            bar_ends(ax, 'h')
+            if size == 'large':
+                for yi, v in zip(y, vals):
+                    if np.isfinite(v):
+                        ax.text(v + vmax * 0.015, yi, f'{v:.1f}', va='center',
+                                fontsize=8.5, color=p['ink_2'])
+
+        axes[0].set_yticks(y)
+        axes[0].set_yticklabels([POLICY_TICK[s] for s in order], fontsize=9)
+        axes[0].invert_yaxis()
+        axes[1].set_xlabel('mean wait before start (simulation time steps)')
+        legend_roles(axes[0], mode, roles=('ml', 'baseline'), loc='lower right')
+
+        finish(fig, mode,
+               title='Ordering the queue by predicted wait moves the delay onto the '
+                     'largest jobs',
+               subtitle='Mean queueing delay per job-size bucket, averaged over '
+                        f'{NUM_RUNS} seeded runs of a {NUM_NODES}x{GPUS_PER_NODE}-GPU '
+                        'cluster. Small and medium jobs start almost immediately '
+                        'under the ML order;\nthe large bucket absorbs the wait. '
+                        'The starvation guard hands part of it back.',
+               source='05_results/fairness/completion_by_size.csv')
+        fig.subplots_adjust(top=0.73, bottom=0.16, left=0.155, right=0.99)
+        path = save_both(fig, stem, mode)
+        if mode == 'light':
+            light_path = path
+    return light_path
+
+
 def main():
     modes = ['fifo', 'proactive', 'proactive_starvation']
     rows, size_rows, all_wait_rows = [], [], []
@@ -188,23 +277,8 @@ def main():
     summary.to_csv(metrics_csv_2, index=False)
     by_size_df.to_csv(by_size_csv, index=False)
 
-    plt.figure(figsize=(9, 5.2))
-    order = ['fifo', 'proactive', 'proactive_starvation']
-    positions = np.arange(len(order))
-    for i, size in enumerate(['small', 'medium', 'large']):
-        vals = []
-        for s in order:
-            row = by_size_df[(by_size_df['scheduler'] == s) & (by_size_df['job_size'] == size)]
-            vals.append(float(row['mean_wait'].iloc[0]) if len(row) else np.nan)
-        plt.bar(positions + (i - 1) * 0.22, vals, width=0.22, label=size)
-
-    plt.xticks(positions, [x.upper() for x in order])
-    plt.ylabel('Average wait time')
-    plt.title('Mean wait time by scheduler and job size (avg over runs)')
-    plt.legend(title='Job size')
-    plt.tight_layout()
-    plot_path = os.path.join(OUT_FAIR, 'wait_time_distribution_by_size.png')
-    plt.savefig(plot_path, dpi=160)
+    plot_path = make_size_figure(
+        by_size_df, os.path.join(OUT_FAIR, 'wait_time_distribution_by_size'))
 
     print('\n=== Fairness summary ===')
     print(summary.to_string(index=False, formatters={

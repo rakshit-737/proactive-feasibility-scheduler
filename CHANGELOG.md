@@ -13,8 +13,8 @@ per-job features can differ — and in this feature set each of those
 (`can_fit_now`, `gpu_fit_ratio`, `node_availability`, `queue_pressure`) is a
 deterministic function of the requested size given the state. The predicted
 score is therefore `g_S(size)` and the ranking is a permutation of the size
-order; the eleven cluster-state features shift all scores equally and **cannot
-reorder anything**.
+order; the remaining **eight** features describe only the cluster, so they shift
+all scores equally and **cannot reorder anything**.
 
 - **NEW `04_scheduler/ranking_degeneracy.py`** — instruments real dispatch
   decisions via a `RANK_OBSERVER` hook added to both benchmarks (no simulator
@@ -29,10 +29,19 @@ reorder anything**.
 - **Result**: statistically **equivalent** to the XGBoost pipeline — synthetic
   −0.18%, paired TOST p=2e-16, diff CI [−0.14,+0.08] ts vs a ±1.61 margin; SDSC
   SP2 −0.05%, TOST p=1.8e-12. The **MLP baseline is bit-identical to the size
-  sort on every metric of all 20 runs**. On LANL the equivalence honestly fails
-  (+14.4%): the learned table is non-monotone often enough to beat a naive size
-  sort — a *better size table*, still a function of size alone, and on that same
-  machine it does not beat FCFS (p=0.48).
+  sort on every metric of all 20 runs**. On LANL the verdict is **inconclusive**,
+  not "different": the size sort is 14.4% worse on mean wait, but that does not
+  survive Holm correction on the t-test (p=0.25; Wilcoxon disagrees at p=0.015),
+  shrinks to +7.3% at p=0.60 on bounded slowdown, and TOST cannot certify
+  equivalence either (p=0.77). On that machine the ML scheduler also fails to
+  beat plain FCFS (p=0.48).
+- **Retraction within this release.** A draft of this entry explained the LANL
+  result by its learned size table being less monotone. That is wrong: the
+  per-instant monotone fraction is 51.9% on SDSC — where equivalence *does* hold
+  — against 61.5% on LANL, so monotonicity does not track where the equivalence
+  fires. LANL is reported as underpowered, not mechanistically explained. The
+  jagged SDSC curve in `size_priority_table.png` is likewise mostly sampling
+  noise (51 distinct sizes vs 6 on LANL, 8 synthetic), not ranking instability.
 
 ### Trace-driven scheduler benchmark on real workloads
 - **NEW `04_scheduler/trace_driven_benchmark.py`** — event-driven, second-exact
@@ -273,7 +282,8 @@ snapshot of the project was kept locally (outside the repo).
 - Proxy-trace transfer: R² ≈ 0.015 (real-trace validation open).
 
 ### 📚 New & reorganised documentation
-- **`docs/index.html`** — complete interactive project documentation: every concept
+- **`docs/index.html`** (since renamed to **`docs/explanation.html`**) — complete
+  interactive project documentation: every concept
   explained from scratch, 9 data charts, architecture diagrams, a **live in-browser
   simulator** running a distilled 40-tree export of the real XGBoost model
   (distilled holdout R² 0.842), per-file repository guide, audit changelog, future
@@ -312,8 +322,9 @@ git remote add origin https://github.com/<you>/proactive-feasibility-scheduler.g
 git push -u origin main --force   # only if you intend to replace history
 ```
 
-Tip: enable **GitHub Pages → deploy from branch → /docs** to serve
-`docs/index.html` as the project site.
+Tip: enable **GitHub Pages → deploy from branch → /docs** to serve the HTML
+documentation as the project site. (The entry page was `docs/index.html` at the
+time of this release; it is now `docs/explanation.html`.)
 
 ---
 

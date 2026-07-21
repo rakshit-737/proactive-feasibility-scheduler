@@ -25,7 +25,8 @@ listed in dropped_schedulers.txt instead of being given invented numbers.
 Generates:
   - fairness_metrics.csv: Gini, JFI, max/min ratios per scheduler
   - sla_compliance.csv: SLA pass/fail per scheduler
-  - starvation_analysis.png: real starvation counts/rates
+  - starvation_analysis.png / starvation_analysis-dark.png: real starvation
+    counts/rates, in the shared repository figure style (vizstyle.py)
   - dropped_schedulers.txt: schedulers excluded for lack of real data
 """
 
@@ -34,7 +35,6 @@ import sys
 from typing import Dict
 
 import matplotlib
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -43,10 +43,39 @@ matplotlib.use("Agg")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 
+sys.path.insert(0, PROJECT_ROOT)
+from vizstyle import (figure, finish, save_both, bar_ends, legend_roles,  # noqa: E402
+                      color_of, label_of, PALETTE)
+
 OUTPUT_FAIRNESS_METRICS = os.path.join(SCRIPT_DIR, "fairness_metrics.csv")
 OUTPUT_SLA_COMPLIANCE = os.path.join(SCRIPT_DIR, "sla_compliance.csv")
-OUTPUT_STARVATION_PLOT = os.path.join(SCRIPT_DIR, "starvation_analysis.png")
+OUTPUT_STARVATION_STEM = os.path.join(SCRIPT_DIR, "starvation_analysis")
+OUTPUT_STARVATION_PLOT = OUTPUT_STARVATION_STEM + ".png"
 OUTPUT_DROPPED = os.path.join(SCRIPT_DIR, "dropped_schedulers.txt")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Presentation-only mapping: scheduler key -> the repo-wide policy identity used
+# for colour, and the tick label. Colour follows the ENTITY (the proactive
+# scheduler is blue whether or not the starvation guard is enabled), never the
+# panel or the bar's rank. Matches 04_scheduler/fairness_analysis.py so the same
+# policy reads the same across both phases' figures.
+# ─────────────────────────────────────────────────────────────────────────────
+POLICY_KEY = {
+    "fifo": "FIFO",
+    "proactive": "PROACTIVE",
+    "proactive_starvation": "PROACTIVE",
+    "sjf": "SJF",
+    "nn": "NN",
+    "priority": "PRIORITY",
+}
+POLICY_TICK = {
+    "fifo": label_of("FIFO"),
+    "proactive": label_of("PROACTIVE"),
+    "proactive_starvation": "Proactive + starvation guard",
+    "sjf": label_of("SJF"),
+    "nn": label_of("NN"),
+    "priority": label_of("PRIORITY"),
+}
 
 # Real result files produced by the phases 01-21 pipeline
 REAL_BENCHMARK_CSV = os.path.join(PROJECT_ROOT, "05_results", "benchmark_statistical_results.csv")
@@ -280,37 +309,70 @@ def compute_sla_compliance(run_level: Dict, per_job: Dict) -> pd.DataFrame:
 
 
 def plot_starvation_analysis(fairness_df: pd.DataFrame) -> None:
-    """Visualize REAL starvation counts/rates (schedulers with measurements)."""
+    """Visualize REAL starvation counts/rates (schedulers with measurements).
+
+    Two panels, one per measure, drawn as horizontal bars so every policy is
+    labelled by name rather than by an index and no tick label has to be
+    rotated. Colour carries the policy's role only (blue = the ML scheduler,
+    grey = the classical baseline) and is identical in both panels; the count
+    and the rate are deliberately kept on separate axes rather than overlaid on
+    a shared plot with two y-scales.
+    """
     plot_df = fairness_df.dropna(subset=["starvation_count"])
     if len(plot_df) == 0:
         print("  WARNING: no real starvation measurements available; skipping plot")
         return
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    keys = [str(k) for k in plot_df["scheduler"].tolist()]
+    names = [str(n) for n in plot_df["scheduler_name"].tolist()]
+    ticks = [POLICY_TICK.get(k, n) for k, n in zip(keys, names)]
+    counts = plot_df["starvation_count"].to_numpy(dtype=float)
+    rates = plot_df["starvation_rate_pct"].to_numpy(dtype=float)
 
-    schedulers = plot_df["scheduler_name"].values
-    starvation_counts = plot_df["starvation_count"].values
-    starvation_rates = plot_df["starvation_rate_pct"].values
+    panels = (
+        (counts, "Starved jobs per run",
+         "jobs waiting more than 3x their own runtime"),
+        (rates, "Starvation rate",
+         "% of completed jobs"),
+    )
+    y = np.arange(len(keys))
 
-    ax = axes[0]
-    ax.bar(range(len(schedulers)), starvation_counts, color="orangered", alpha=0.7)
-    ax.set_xticks(range(len(schedulers)))
-    ax.set_xticklabels(schedulers, rotation=45, ha="right")
-    ax.set_ylabel("Starved jobs per run (wait > 3x runtime)")
-    ax.set_title("Phase 27: Starvation Analysis (Count, measured)")
-    ax.grid(True, alpha=0.3, axis="y")
+    for mode in ("light", "dark"):
+        fig, axes = figure(mode, figsize=(12, 4.4), ncols=2, sharey=True,
+                           gridspec_kw={"wspace": 0.09})
+        colors = [color_of(POLICY_KEY.get(k, k), mode) for k in keys]
 
-    ax = axes[1]
-    ax.bar(range(len(schedulers)), starvation_rates, color="crimson", alpha=0.7)
-    ax.set_xticks(range(len(schedulers)))
-    ax.set_xticklabels(schedulers, rotation=45, ha="right")
-    ax.set_ylabel("Starvation Rate (% of completed jobs)")
-    ax.set_title("Phase 27: Starvation Analysis (Rate, measured)")
-    ax.grid(True, alpha=0.3, axis="y")
+        for ax, (values, panel_title, xlabel) in zip(axes, panels):
+            ax.barh(y, values, height=0.6, color=colors)
+            ax.set_title(panel_title, loc="left")
+            ax.set_xlabel(xlabel)
+            finite = values[np.isfinite(values)]
+            if len(finite):
+                ax.set_xlim(0, float(np.max(finite)) * 1.18)
+            bar_ends(ax, "h")
+            ax.tick_params(axis="y", length=0)   # no stubs where the spine is off
 
-    fig.tight_layout()
-    fig.savefig(OUTPUT_STARVATION_PLOT, dpi=220, bbox_inches="tight")
-    plt.close(fig)
+        axes[0].set_yticks(y)
+        axes[0].set_yticklabels(ticks, fontsize=9)
+        axes[0].invert_yaxis()
+        axes[0].set_ylim(len(keys) - 0.35, -1.15)  # headroom above the top bar
+        legend_roles(axes[1], mode, roles=("ml", "baseline"), loc="upper right")
+
+        finish(
+            fig, mode,
+            title="Measured starvation: the anti-starvation guard does not lower "
+                  "the starved-job count",
+            # No fixed list of excluded schedulers here: which policies carry a
+            # starvation measurement depends on the upstream CSVs, so a
+            # hard-coded enumeration silently goes stale as they grow.
+            subtitle="A job is starved when its queueing delay exceeds three "
+                     "times its own runtime; counts are per simulation run.\n"
+                     "Schedulers with no measured starvation count are omitted "
+                     "rather than drawn as zero.",
+            source="phases_22_30/phase_27_fairness/fairness_metrics.csv",
+        )
+        fig.subplots_adjust(top=0.74, bottom=0.17, left=0.19, right=0.99)
+        save_both(fig, OUTPUT_STARVATION_STEM, mode)
 
 
 def write_dropped_note() -> None:

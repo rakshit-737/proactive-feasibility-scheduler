@@ -1,12 +1,11 @@
 import os
 import pickle
+import sys
 import warnings
 
 import matplotlib
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
 from scipy import stats
 
 matplotlib.use("Agg")
@@ -15,8 +14,23 @@ matplotlib.use("Agg")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 
+sys.path.insert(0, PROJECT_ROOT)
+from vizstyle import (  # noqa: E402  (needs PROJECT_ROOT on sys.path first)
+    figure,
+    finish,
+    save_both,
+    PALETTE,
+    color_of,
+    label_of,
+    bar_ends,
+    legend_roles,
+)
+
 OUTPUT_CSV = os.path.join(SCRIPT_DIR, "stats_summary.csv")
-OUTPUT_PLOT = os.path.join(SCRIPT_DIR, "ci_plots.png")
+# Stem, not a filename: save_both() writes '<stem>.png' (light) and
+# '<stem>-dark.png' (dark). The light path is byte-identical to the old output.
+OUTPUT_PLOT_STEM = os.path.join(SCRIPT_DIR, "ci_plots")
+OUTPUT_PLOT = OUTPUT_PLOT_STEM + ".png"
 
 DATA_CANDIDATES = [
     os.path.join(PROJECT_ROOT, "05_results", "benchmarks", "40_run_benchmark.pkl"),
@@ -267,47 +281,99 @@ def build_summary(df, test_rows):
     return pd.DataFrame(rows)
 
 
-def plot_confidence_intervals(summary_df):
+# Which scheduler each summary row describes. Colour follows the ENTITY, so the
+# baseline stays grey and the proposed method stays blue in every panel.
+METRIC_POLICY = {"fifo_mean_wait": "FIFO", "proactive_mean_wait": "PROACTIVE"}
+
+
+def _repo_rel(path):
+    """Repo-relative, forward-slashed path for the provenance footer."""
+    try:
+        return os.path.relpath(path, PROJECT_ROOT).replace(os.sep, "/")
+    except ValueError:  # different drive on Windows
+        return os.path.basename(path)
+
+
+def plot_confidence_intervals(summary_df, source_path=None):
     """Create and save Phase 22 CI forest-style plots for key wait metrics."""
-    sns.set_theme(style="whitegrid")
     wait_rows = summary_df[summary_df["metric"].isin(["fifo_mean_wait", "proactive_mean_wait"])].copy()
     imp_row = summary_df[summary_df["metric"] == "wait_improvement_pct"].iloc[0]
 
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5), gridspec_kw={"width_ratios": [3, 2]})
-
-    y_positions = np.arange(wait_rows.shape[0])
     means = wait_rows["mean"].to_numpy()
     lower = wait_rows["ci_lower"].to_numpy()
     upper = wait_rows["ci_upper"].to_numpy()
-    xerr = np.vstack((means - lower, upper - means))
-
-    axes[0].errorbar(means, y_positions, xerr=xerr, fmt="o", capsize=5, color="#1f77b4")
-    metric_labels = [label.replace("_", " ").title() for label in wait_rows["metric"]]
-    axes[0].set_yticks(y_positions)
-    axes[0].set_yticklabels(metric_labels)
-    axes[0].set_xlabel("Mean wait time (timesteps)")
-    axes[0].set_title("95% Bootstrap CI (Wait Time)")
+    policies = [METRIC_POLICY.get(m, m) for m in wait_rows["metric"]]
+    y_positions = np.arange(wait_rows.shape[0])
 
     mean_imp = imp_row["mean"]
     ci_low = imp_row["ci_lower"]
     ci_high = imp_row["ci_upper"]
-    axes[1].errorbar(
-        [mean_imp],
-        [0],
-        xerr=[[mean_imp - ci_low], [ci_high - mean_imp]],
-        fmt="o",
-        capsize=5,
-        color="#2ca02c",
-    )
-    axes[1].axvline(0.0, linestyle="--", color="black", linewidth=1)
-    axes[1].set_yticks([0])
-    axes[1].set_yticklabels(["Improvement"])
-    axes[1].set_xlabel("Percent (%)")
-    axes[1].set_title("95% Bootstrap CI (Wait Improvement)")
+    n_runs = int(imp_row["n"])
 
-    fig.tight_layout()
-    fig.savefig(OUTPUT_PLOT, dpi=200, bbox_inches="tight")
-    plt.close(fig)
+    source = _repo_rel(OUTPUT_CSV)
+    if source_path is not None:
+        source += f"  ·  benchmark runs: {_repo_rel(source_path)}"
+
+    for mode in ("light", "dark"):
+        ink = PALETTE[mode]["ink_2"]
+        muted = PALETTE[mode]["muted"]
+
+        fig, axes = figure(mode, figsize=(11, 4.8), nrows=1, ncols=2,
+                           gridspec_kw={"width_ratios": [3, 2]})
+
+        # ── Panel 1: mean wait per policy, with bootstrap CI ──────────────────
+        for y, policy, mu, lo, hi in zip(y_positions, policies, means, lower, upper):
+            axes[0].errorbar(
+                [mu], [y],
+                xerr=[[mu - lo], [hi - mu]],
+                fmt="o", capsize=4, elinewidth=1.6, capthick=1.6, markersize=7,
+                color=color_of(policy, mode), label=label_of(policy),
+            )
+        axes[0].set_yticks(y_positions)
+        axes[0].set_yticklabels([label_of(p) for p in policies])
+        axes[0].set_ylim(y_positions.max() + 0.95, y_positions.min() - 0.55)
+        axes[0].set_xlabel("Mean wait time (timesteps)")
+        axes[0].set_title("Mean wait time, 95% bootstrap CI")
+        bar_ends(axes[0], "h")
+        legend_roles(axes[0], mode, roles=("ml", "baseline"), loc="lower right")
+
+        # ── Panel 2: the paired difference the study is actually about ────────
+        # One series colour only (blue = the ML method's effect); no second hue.
+        axes[1].axvline(0.0, color=muted, linewidth=1.0, zorder=1)
+        axes[1].errorbar(
+            [mean_imp], [0],
+            xerr=[[mean_imp - ci_low], [ci_high - mean_imp]],
+            fmt="o", capsize=4, elinewidth=1.6, capthick=1.6, markersize=7,
+            color=PALETTE[mode]["series_1"], zorder=3,
+        )
+        # Direct-label the single estimate; no per-point labels anywhere else.
+        axes[1].annotate(
+            f"{mean_imp:.1f}%  [{ci_low:.1f}, {ci_high:.1f}]",
+            xy=(mean_imp, 0), xytext=(0, 14), textcoords="offset points",
+            ha="center", va="bottom", color=ink, fontsize=9.5,
+        )
+        axes[1].set_yticks([0])
+        axes[1].set_yticklabels(["Wait reduction"])
+        axes[1].set_ylim(0.9, -0.9)
+        axes[1].set_xlabel("Reduction vs FCFS baseline (%)")
+        axes[1].set_title("Paired improvement, 95% bootstrap CI")
+        bar_ends(axes[1], "h")
+        axes[1].annotate(
+            "0 = no change", xy=(0.0, 0.62), xytext=(4, 0),
+            textcoords="offset points", ha="left", va="center",
+            color=muted, fontsize=8.5,
+        )
+
+        fig.tight_layout(rect=(0, 0.03, 1, 0.85))
+        finish(
+            fig, mode,
+            title=f"Proactive scheduling cuts mean wait {mean_imp:.1f}% "
+                  f"(95% CI {ci_low:.1f}-{ci_high:.1f}%)",
+            subtitle=f"Paired across {n_runs} benchmark runs · "
+                     f"10,000-resample percentile bootstrap of the mean",
+            source=source,
+        )
+        save_both(fig, OUTPUT_PLOT_STEM, mode)
 
 
 def main():
@@ -317,7 +383,7 @@ def main():
     test_rows = paired_tests(df, optional_pairs)
     summary_df = build_summary(df, test_rows)
     summary_df.to_csv(OUTPUT_CSV, index=False)
-    plot_confidence_intervals(summary_df)
+    plot_confidence_intervals(summary_df, source_path=source_path)
 
     wait_row = summary_df.loc[summary_df["metric"] == "wait_improvement_pct"].iloc[0]
     print(f"Loaded benchmark artifact: {source_path}")

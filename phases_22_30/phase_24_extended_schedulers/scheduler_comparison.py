@@ -20,12 +20,14 @@ script exits with instructions to regenerate them.
 
 Generates:
   - baseline_comparison.csv: side-by-side metrics across schedulers
-  - scheduler_heatmap.png: wait time, fairness, throughput comparison
+  - scheduler_heatmap.png (+ scheduler_heatmap-dark.png): normalized wait,
+    throughput, utilization and fairness scores, one panel per metric
   - novelty_claim.txt: quantitative positioning derived from the computed numbers
 """
 
 import os
 import pickle
+import sys
 from typing import Dict, Optional, Tuple
 
 import matplotlib
@@ -40,9 +42,31 @@ from scipy import stats
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 
+sys.path.insert(0, PROJECT_ROOT)
+from vizstyle import (  # noqa: E402  (needs PROJECT_ROOT on sys.path first)
+    figure,
+    finish,
+    save_both,
+    PALETTE,
+    color_of,
+    label_of,
+    bar_ends,
+    legend_roles,
+)
+
 OUTPUT_CSV = os.path.join(SCRIPT_DIR, "baseline_comparison.csv")
-OUTPUT_HEATMAP = os.path.join(SCRIPT_DIR, "scheduler_heatmap.png")
+# Stem, not a filename: save_both() writes '<stem>.png' (light) and
+# '<stem>-dark.png' (dark). The light path is unchanged so every existing
+# reference to scheduler_heatmap.png keeps resolving.
+OUTPUT_HEATMAP_STEM = os.path.join(SCRIPT_DIR, "scheduler_heatmap")
+OUTPUT_HEATMAP = OUTPUT_HEATMAP_STEM + ".png"
 OUTPUT_CLAIM = os.path.join(SCRIPT_DIR, "novelty_claim.txt")
+
+# Provenance footer: the artefacts every mark in the figure is drawn from.
+FIGURE_SOURCE = (
+    "phases_22_30/phase_24_extended_schedulers/baseline_comparison.csv"
+    "  ·  05_results/schedulers/multi_scheduler_benchmark.csv"
+)
 
 # Scheduler names and characteristics (keys match the 'scheduler' column of
 # 05_results/schedulers/multi_scheduler_benchmark.csv)
@@ -290,7 +314,19 @@ def build_comparison_dataframe(summary_df: pd.DataFrame) -> pd.DataFrame:
 
 def plot_comparison_heatmap(comparison_df: pd.DataFrame) -> None:
     """
-    Create side-by-side heatmap comparing schedulers across normalized metrics.
+    Compare schedulers across normalized metrics, one panel per metric.
+
+    Encoding notes (the normalization below is unchanged; only the drawing is):
+      * colour follows the ENTITY, never the rank -- every scheduler keeps the
+        colour of its role (blue = ML policy, orange = the ML-free control,
+        grey = classical baselines) in all four panels, so a reader who learns
+        "proactive is blue" in the wait panel can find it in the fairness panel.
+        The previous version drew the same matrix as a red-yellow-green heatmap,
+        which is a rainbow ramp painted onto nominal categories: it recoloured
+        every scheduler per metric and spent three hues re-stating the number
+        already printed in the cell.
+      * a neutral track behind each bar keeps a 0.00 score (worst on that
+        metric) legible as an empty meter instead of missing data.
     """
     # Normalize each metric to [0, 1] scale (lower=better for wait/gini, higher=better for throughput/util)
     metrics_to_plot = [
@@ -331,27 +367,67 @@ def plot_comparison_heatmap(comparison_df: pd.DataFrame) -> None:
         "Fairness (1-Gini)",
     ]
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    im = ax.imshow(data_for_heat.T.to_numpy(), cmap="RdYlGn", aspect="auto", vmin=0.0, vmax=1.0)
+    # Rows of data_for_heat are in comparison_df order, so the scheduler keys
+    # line up with the score rows; the key (not the row position) picks colour.
+    policy_keys = list(comparison_df["scheduler"])
+    panel_titles = list(data_for_heat.columns)
+    scores = data_for_heat.to_numpy(dtype=float)
+    y = np.arange(len(policy_keys))
+    track = np.ones(len(policy_keys), dtype=float)
 
-    cbar = fig.colorbar(im, ax=ax)
-    cbar.set_label("Normalized Performance (↑ better)", rotation=90)
+    for mode in ("light", "dark"):
+        p = PALETTE[mode]
+        fig, axes = figure(
+            mode,
+            figsize=(13.0, 6.8),
+            ncols=len(panel_titles),
+            sharey=True,
+            gridspec_kw={"wspace": 0.09},
+        )
+        colors = [color_of(k, mode) for k in policy_keys]
+        # Roles 'ml' and 'control' carry colour; classical baselines wear the
+        # muted ink. Only the coloured rows get a direct value label, and only
+        # in the first panel -- never a number on every mark.
+        emphasized = [i for i, c in enumerate(colors) if c != p["muted"]]
 
-    ax.set_xticks(range(len(data_for_heat)))
-    ax.set_xticklabels(data_for_heat.index, rotation=45, ha="right")
-    ax.set_yticks(range(len(data_for_heat.columns)))
-    ax.set_yticklabels(data_for_heat.columns)
-    ax.set_title("Phase 24: Scheduler Comparison Heatmap (Normalized Performance)")
+        for j, (ax, panel) in enumerate(zip(axes, panel_titles)):
+            ax.barh(y, track, height=0.66, color=p["grid"])
+            ax.barh(y, scores[:, j], height=0.66, color=colors)
+            ax.set_title(panel, loc="left")
+            ax.set_xlim(0.0, 1.0)
+            ax.set_xticks([0.0, 0.5, 1.0])
+            bar_ends(ax, "h")
+            if j == 0:
+                for i in emphasized:
+                    value = scores[i, j]
+                    if value > 0.78:  # label would overflow the panel: put it inside
+                        ax.text(value - 0.025, y[i], f"{value:.2f}", ha="right",
+                                va="center", fontsize=8.5, color=p["surface"])
+                    else:
+                        ax.text(value + 0.025, y[i], f"{value:.2f}", ha="left",
+                                va="center", fontsize=8.5, color=p["ink_2"])
 
-    # Annotate with actual values
-    for i in range(len(data_for_heat)):
-        for j in range(len(data_for_heat.columns)):
-            value = data_for_heat.iloc[i, j]
-            text = ax.text(i, j, f"{value:.2f}", ha="center", va="center", color="black", fontsize=9)
+        axes[0].set_yticks(y)
+        axes[0].set_yticklabels([label_of(k) for k in policy_keys], fontsize=9)
+        axes[0].invert_yaxis()
+        axes[0].set_xlabel("normalized score (0 = worst, 1 = best of the field)")
+        legend_roles(axes[-1], mode, loc="upper right", bbox_to_anchor=(1.0, -0.075),
+                     ncol=3)
 
-    fig.tight_layout()
-    fig.savefig(OUTPUT_HEATMAP, dpi=220, bbox_inches="tight")
-    plt.close(fig)
+        fig.subplots_adjust(top=0.80, bottom=0.17, left=0.20, right=0.995)
+        finish(
+            fig,
+            mode,
+            title="Normalized scheduler performance: the ML policy tracks its "
+                  "ML-free control",
+            subtitle="Each metric is min-max normalized across the schedulers in "
+                     "the benchmark, so 1.00 is the best score observed and 0.00 "
+                     "the worst;\na metric that is identical for every scheduler "
+                     "is drawn at a neutral 0.50. Colour marks the policy's role, "
+                     "not its rank.",
+            source=FIGURE_SOURCE,
+        )
+        save_both(fig, OUTPUT_HEATMAP_STEM, mode)
 
 
 def write_novelty_claim(
@@ -384,7 +460,13 @@ def write_novelty_claim(
 
         f.write("DATA SOURCES\n")
         f.write("-" * 70 + "\n")
-        f.write(f"  • {MULTI_SCHEDULER_CSV}\n")
+        # Repo-relative, forward-slashed: the absolute path of whoever ran the
+        # script is machine-specific noise in a committed artefact.
+        f.write(
+            "  • "
+            + os.path.relpath(MULTI_SCHEDULER_CSV, PROJECT_ROOT).replace(os.sep, "/")
+            + "\n"
+        )
         f.write("    (15-run multi-scheduler benchmark, per-scheduler means)\n")
         if paired_stats is not None:
             f.write("  • 05_results/benchmark_statistical_results.csv\n")

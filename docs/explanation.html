@@ -342,7 +342,7 @@ nav.sidebar a.hidden, nav.sidebar .group.hidden { display: none; }
 <div id="progress" aria-hidden="true"></div>
 <header class="topbar">
   <button id="navToggle" type="button" aria-label="Open navigation">☰</button>
-  <span class="brand">Proactive Feasibility Scheduler <small>Complete Project Documentation · v3.2 · July 2026</small></span>
+  <span class="brand">Proactive Feasibility Scheduler <small>Complete Project Documentation · v3.4 · July 2026</small></span>
   <span class="spacer"></span>
   <button id="themeBtn" type="button">◐ Theme</button>
 </header>
@@ -400,7 +400,7 @@ nav.sidebar a.hidden, nav.sidebar .group.hidden { display: none; }
 
   <div class="callout bad hero-note">
     <div class="t">⚠ Read this first — the v3.4 result overturns the project's original conclusion</div>
-    <p>Earlier versions of this page said the proactive scheduler "works, modestly". It does not work for the reason it claimed to. <strong>At any dispatch instant every queued job observes the same cluster</strong>, so the ten cluster-state features are identical for every job waiting side by side — they shift all predictions by the same amount and <strong>cannot reorder anything</strong>. The only features that differ between two co-queued jobs are the job's requested size and quantities derived from it. So the learned score is a function of <em>requested size alone</em>, and the scheduler is a per-instant lookup table from size to priority.</p>
+    <p>Earlier versions of this page said the proactive scheduler "works, modestly". It does not work for the reason it claimed to. <strong>At any dispatch instant every queued job observes the same cluster</strong>, so the eight cluster-state features are identical for every job waiting side by side — they shift all predictions by the same amount and <strong>cannot reorder anything</strong>. The only features that differ between two co-queued jobs are the job's requested size and quantities derived from it. So the learned score is a function of <em>requested size alone</em>, and the scheduler is a per-instant lookup table from size to priority.</p>
     <p style="margin-bottom:0">Measured over <strong>25,306 real dispatch decisions with zero counterexamples</strong>: two equally-sized queued jobs never receive different scores. Consequently a one-line <code>sort by requested size</code> is statistically <strong>equivalent</strong> to the whole XGBoost pipeline, an MLP over the same features reproduces that sort <em>bit-identically</em>, and on real supercomputer traces the advantage over plain FCFS is machine-dependent and insignificant on LANL CM-5. See <a href="#degeneracy">the degeneracy section</a>.</p>
   </div>
 
@@ -423,7 +423,7 @@ nav.sidebar a.hidden, nav.sidebar .group.hidden { display: none; }
 gpu_fit_ratio     = min( free(S) / g , 1 )
 node_availability = |{ n : free_n(S) &gt;= g }| / N
 queue_pressure    = ( Σ_queue − g ) / ( free(S) + 1 )</code></pre>
-  <p>Therefore the score is <code>ŵ(job | S) = g<sub>S</sub>(size)</code> for some function determined entirely by the state, and the queue order it produces is just the order of <code>g<sub>S</sub></code> over the sizes present. <strong>The ten cluster-state features select which lookup table is used; they can never separate two jobs inside one.</strong> And a ranking consumes nothing else.</p>
+  <p>Therefore the score is <code>ŵ(job | S) = g<sub>S</sub>(size)</code> for some function determined entirely by the state, and the queue order it produces is just the order of <code>g<sub>S</sub></code> over the sizes present. <strong>The eight cluster-state features select which lookup table is used; they can never separate two jobs inside one.</strong> And a ranking consumes nothing else.</p>
 
   <h3>The measurement</h3>
   <p>Instrumenting every ranking decision in real simulations (<code>04_scheduler/ranking_degeneracy.py</code>):</p>
@@ -450,11 +450,16 @@ queue_pressure    = ( Σ_queue − g ) / ( free(S) + 1 )</code></pre>
       <tr><td>Synthetic</td><td>bounded slowdown</td><td>−0.05%</td><td>1×10⁻¹⁸</td><td><strong>equivalent</strong></td></tr>
       <tr><td>SDSC SP2</td><td>mean wait</td><td>−0.05%</td><td>1.8×10⁻¹²</td><td><strong>equivalent</strong></td></tr>
       <tr><td>SDSC SP2</td><td>bounded slowdown</td><td>+2.7%</td><td>7.4×10⁻⁴</td><td><strong>equivalent</strong></td></tr>
-      <tr><td>LANL CM-5</td><td>mean wait</td><td>+14.4%</td><td>0.77</td><td>not equivalent</td></tr>
+      <tr><td>LANL CM-5</td><td>mean wait</td><td>+14.4%</td><td>0.77</td><td>inconclusive</td></tr>
     </tbody>
   </table></div>
   <p>On the synthetic benchmark the difference is −0.029 ts with a 90% CI of [−0.137, +0.079] against a ±1.61 ts margin — the whole interval sits inside the margin, so this is a <em>positive</em> finding of equivalence, not an underpowered null. Sharper still: the <strong>MLP baseline and the size sort produce bit-identical results on every metric of all 20 runs</strong>. Two different model classes over the same features collapse to the same one-line sort.</p>
-  <p>On LANL the equivalence honestly fails — there the learned table is non-monotone often enough to beat a naive size sort by 14.4%. That does not rescue the method: it is a <em>better size table</em>, still a function of size alone, and on that same machine it fails to beat FCFS (p = 0.48).</p>
+  <p>On LANL the equivalence test does not fire, and the honest verdict there is <strong>inconclusive rather than "different"</strong>. The size sort is 14.4% worse on mean wait, but that difference does not survive Holm correction on the paired <em>t</em>-test (p = 0.25; the Wilcoxon test disagrees at p = 0.015), it shrinks to +7.3% at p = 0.60 on bounded slowdown, and TOST cannot certify equivalence either (p = 0.77). With 20 windows LANL is neither shown to be the same nor shown to differ. What is not in question on that machine is that the ML scheduler also fails to beat plain FCFS (p = 0.48).</p>
+
+  <div class="callout warn">
+    <div class="t">Correction, made during this release</div>
+    An earlier draft of this page explained the LANL result by saying its learned size table is "non-monotone often enough" to beat a naive size sort. <strong>That explanation is wrong and is retracted.</strong> The per-instant monotone fraction is <strong>51.9% on SDSC — where the equivalence <em>does</em> hold</strong> — against 61.5% on LANL, so monotonicity does not track where the equivalence fires. LANL is reported as underpowered, not mechanistically explained. (Relatedly, the jagged SDSC curve in the size→priority figure is mostly sampling noise: SDSC spans 51 distinct job sizes with few observations each, versus 6 on LANL and 8 on the synthetic generator.) The degeneracy result itself is unaffected — it is a property of the feature vector and holds in all three substrates.
+  </div>
 
   <div class="callout">
     <div class="t">What would make learning matter</div>
@@ -555,7 +560,7 @@ queue_pressure    = ( Σ_queue − g ) / ( free(S) + 1 )</code></pre>
       <tr><td><strong>FIFO</strong></td><td>First come, first served</td><td>Simple, predictable, <em>fair</em> — nobody is skipped</td><td>A hard-to-place job at the head blocks everyone (head-of-line blocking)</td></tr>
       <tr><td><strong>SJF</strong></td><td>Shortest job first</td><td>Provably minimises mean wait…</td><td>…but needs to <em>know each job's runtime in advance</em>, which real clusters don't; starves long jobs</td></tr>
       <tr><td><strong>Priority + aging</strong></td><td>Order by priority score, boosted with waiting time</td><td>Expresses business importance; aging prevents starvation</td><td>Priorities are manual; doesn't model cluster state</td></tr>
-      <tr><td><strong>Backfill (SLURM-style)</strong></td><td>Let small jobs jump ahead if they don't delay the head job</td><td>Industry standard; big utilisation gains</td><td>Needs runtime estimates; not implemented here yet (<a href="#future">future scope</a>)</td></tr>
+      <tr><td><strong>Backfill (SLURM-style)</strong></td><td>Let small jobs jump ahead if they don't delay the head job</td><td>Industry standard; big utilisation gains</td><td>Needs runtime estimates. Implemented and benchmarked here since v3.2 — EASY, conservative and a predicted-wait hybrid (<a href="#results">results</a>, <a href="#tracebench">on real traces</a>)</td></tr>
     </tbody>
   </table></div>
   <h3>The idea being tested</h3>
@@ -1235,7 +1240,7 @@ for job in queue:              # 4. dispatch ALL
   <div class="kicker">Outlook · 1</div>
   <h2>Honest limitations</h2>
   <ol>
-    <li><strong>Real-workload validation is partial (v3.2).</strong> Two real traces are now evaluated: retraining recovers strong signal on a batch machine (SDSC R²(log) 0.49) but weak signal on an interactive one (LANL 0.10), and zero-shot transfer is ≈ 0 on both. Still missing: a modern GPU-cluster trace (both PWA traces are 1990s CPU machines) and a <em>scheduling</em> benchmark on real workloads (only <em>prediction</em> has been validated on real data).</li>
+    <li><strong>Real-workload validation is partial (v3.2).</strong> Two real traces are now evaluated: retraining recovers strong signal on a batch machine (SDSC R²(log) 0.49) but weak signal on an interactive one (LANL 0.10), and zero-shot transfer is ≈ 0 on both. A trace-driven <em>scheduling</em> benchmark followed in v3.4 (<a href="#tracebench">12 policies on both traces</a>) and did not replicate the synthetic gain. Still missing: a modern GPU-cluster trace — both PWA traces are 1990s CPU machines — and a simulator faithful enough to reproduce SDSC's recorded wait tail.</li>
     <li><strong>The simulator is minimal.</strong> Uniform job sizes/runtimes, single job class, no preemption, no node failures, no placement constraints (jobs span nodes freely), no runtime uncertainty. Real waits have heavier tails and richer structure.</li>
     <li><strong>The effect is modest and noisy.</strong> 7.7% mean improvement with σ 8.9 — 7 of 40 runs went the other way. Statistically solid, operationally small.</li>
     <li><strong>Fairness/tail costs are real.</strong> Unmitigated, max wait doubles; the anti-starvation patch recovers only part of it and adds its own churn.</li>
@@ -1251,7 +1256,7 @@ for job in queue:              # 4. dispatch ALL
   <h2>Future scope — a concrete research roadmap</h2>
   <p>Ordered by scientific leverage per unit of effort. The first tier turns this from a strong coursework project into a publishable paper; the second makes the method competitive; the third is a research program.</p>
 
-  <h3>Tier 1 — Validity <span class="chip ok">all four delivered in v3.2</span></h3>
+  <h3>Tier 1 — Validity <span class="chip ok">items 1–3 delivered in v3.2</span></h3>
   <div class="cards c2">
     <div class="card"><h4 style="margin-top:0">1 · Validate on real traces <span class="chip ok">done — v3.2</span></h4><p style="font-size:0.85rem"><strong>Delivered:</strong> LANL CM-5 + SDSC SP2 evaluated; zero-shot ≈ 0, retrained R²(log) 0.49/0.10 — see <a href="#realtrace">the results</a>. Remaining upside: a modern GPU trace (Alibaba 2020) and per-trace scheduling replay.</p><details><summary style="cursor:pointer;color:var(--ink-3);font-size:0.82rem">original plan</summary>
       <p>Download 2–3 real workloads — LANL CM-5 / SDSC-SP2 SWF traces from the <a href="https://www.cs.huji.ac.il/labs/parallel/workload/" target="_blank">Parallel Workloads Archive</a> and the <a href="https://github.com/alibaba/clusterdata" target="_blank">Alibaba GPU cluster trace</a>. Replay them through the simulator, <strong>retrain per trace</strong>, and report within-trace holdout + cross-trace transfer. The SWF parser and preprocessing scaffold are already in place (<code>02_data/load_real_traces.py</code>, phase 25). Every other claim in the project gains or loses credibility with this one experiment.</p></details></div>
@@ -1268,7 +1273,7 @@ for job in queue:              # 4. dispatch ALL
     <div class="card"><h4 style="margin-top:0">5 · Uncertainty-aware scheduling <span class="chip ok">done — v3.2 (negative)</span></h4><p style="font-size:0.85rem"><strong>Delivered &amp; honestly negative:</strong> quantile XGBoost (q10/50/90) + UCB + spread-guarded fallback — parity in-distribution, but under-dispersed intervals (68% coverage) fail to flag the harmful regime. Next step if revisited: <em>conformal calibration</em> of the intervals before retrying the guard. See <a href="#robustness">the study</a>.</p></div>
     <div class="card"><h4 style="margin-top:0">6 · Smarter scoring than "sort by ŵ"</h4><p>Sorting by predicted wait conflates "easy to place" with "should go first". Try <em>impact-aware</em> scores — ŵ × requested GPUs (delay-cost), aging-weighted ŵ, or expected-slowdown (ŵ / runtime estimate) — and compare against SJF given <em>predicted</em> (not oracle) runtimes for a fair fight.</p></div>
     <div class="card"><h4 style="margin-top:0">7 · Close the online-learning loop</h4><p>Drift detection (7 correct triggers) and online retraining (MAE 6.98→6.88) exist as separate experiments. Wire them <em>into the scheduler</em>: drift trigger → FIFO fallback → incremental retrain → shadow-validate → re-promote. That's the production story DEPLOYMENT.md describes — implement and measure it.</p></div>
-    <div class="card"><h4 style="margin-top:0">8 · Engineering hardening</h4><p>Make it a git repo with CI (the audit found no version control). Extract the copy-pasted Job/Cluster/simulation code (10 near-duplicates) into a shared <code>simlib/</code> package with unit tests; add a config file for cluster/workload parameters; property-based tests for the allocator (allocation+rollback invariants).</p></div>
+    <div class="card"><h4 style="margin-top:0">8 · Engineering hardening</h4><p>Version control and a CI workflow (<code>.github/workflows/ci.yml</code>) now exist — the audit had found neither. Next: extract the copy-pasted Job/Cluster/simulation code (10 near-duplicates) into a shared <code>simlib/</code> package with unit tests; add a config file for cluster/workload parameters; property-based tests for the allocator (allocation+rollback invariants).</p></div>
   </div>
 
   <h3>Tier 3 — Research program</h3>
@@ -1310,7 +1315,7 @@ for job in queue:              # 4. dispatch ALL
   </table></div>
 
   <footer>
-    <p><strong>Proactive Feasibility Scheduler</strong> — complete project documentation · v3.2, July 2026 · full audit &amp; repair pass + research extensions (real traces, backfill, fairness budget, uncertainty) · all numbers regenerated by the seeded pipeline on Python 3.14 / Windows 11.<br>
+    <p><strong>Proactive Feasibility Scheduler</strong> — complete project documentation · v3.4, July 2026 · full audit &amp; repair pass + research extensions (real traces, backfill, fairness budget, uncertainty, classical-baseline landscape, ranking degeneracy) · all numbers regenerated by the seeded pipeline on Python 3.14 / Windows 11.<br>
     Companion docs: <code>README.md</code> · <code>RESULTS.md</code> · <code>METHODOLOGY.md</code> · <code>DEPLOYMENT.md</code> · <code>README_REPRODUCIBILITY.md</code> · manuscript draft in <code>phases_22_30/phase_28_manuscript/</code>.</p>
   </footer>
 </section>

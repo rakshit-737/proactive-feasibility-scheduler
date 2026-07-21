@@ -9,18 +9,18 @@ Validates that the method scales gracefully without breaking on larger systems.
 
 Generates:
   - scaling_benchmark.csv: metrics at 4/8/16/32 node scales
-  - inference_overhead_plot.png: latency vs. cluster size
+  - inference_overhead_plot.png (+ -dark.png): latency vs. cluster size
   - scaling_law_fit.txt: O(n) analysis and projected cost
 """
 
 import heapq
 import os
 import pickle
+import sys
 import time
 from typing import Dict, List
 
 import matplotlib
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -29,8 +29,23 @@ matplotlib.use("Agg")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 
+# PROJECT_ROOT is derived from __file__, so this import resolves whether the
+# script is launched from its own directory or from the repository root.
+sys.path.insert(0, PROJECT_ROOT)
+from vizstyle import (  # noqa: E402  (needs PROJECT_ROOT on sys.path first)
+    figure,
+    finish,
+    save_both,
+    PALETTE,
+    color_of,
+    bar_ends,
+)
+
 OUTPUT_CSV = os.path.join(SCRIPT_DIR, "scaling_benchmark.csv")
-OUTPUT_PLOT = os.path.join(SCRIPT_DIR, "inference_overhead_plot.png")
+# Stem, not a filename: save_both() writes '<stem>.png' (light) and
+# '<stem>-dark.png' (dark). The light path is byte-identical to the old output.
+OUTPUT_PLOT_STEM = os.path.join(SCRIPT_DIR, "inference_overhead_plot")
+OUTPUT_PLOT = OUTPUT_PLOT_STEM + ".png"
 OUTPUT_FIT = os.path.join(SCRIPT_DIR, "scaling_law_fit.txt")
 
 # Scaling points: (nodes, gpus_per_node, total_gpus)
@@ -231,58 +246,100 @@ def build_scaling_dataframe(scaling_configs: List[Dict]) -> pd.DataFrame:
 
 
 def plot_scaling_trends(scaling_df: pd.DataFrame) -> None:
-    """Plot scaling analysis: latency, overhead, performance."""
-    fig, axes = plt.subplots(2, 2, figsize=(12, 9))
+    """Plot scaling analysis: latency, overhead, performance.
 
-    x = scaling_df["total_gpus"].values
-    x_labels = scaling_df["cluster_name"].values
+    Encoding notes (repo data-viz standard):
+      * Every panel measures the SAME entity -- the proactive (ML) scheduler
+        running on a simulated cluster -- so the figure carries exactly one
+        series colour, the ML blue from color_of('PROACTIVE'). The old version
+        used blue/orange/green/purple, i.e. colour tracked the panel rather
+        than the entity, and orange is reserved for the ML-free control.
+      * The x axis is the named cluster scale, not a bare GPU count, so each
+        mark can be read back to the row of the CSV that produced it.
+      * Reference lines (5% threshold, mean utilisation) are annotation, not
+        data: solid hairlines in neutral ink, direct-labelled in place.
+    """
+    names = list(scaling_df["cluster_name"])
+    gpus = [int(g) for g in scaling_df["total_gpus"]]
+    x_labels = [f"{n}\n{g} GPUs" for n, g in zip(names, gpus)]
+    pos = np.arange(len(scaling_df))
 
-    # Plot 1: Inference latency vs. cluster size
-    ax = axes[0, 0]
     latency = scaling_df["inference_latency_ms"].values
-    ax.plot(x, latency, marker="o", linewidth=2, markersize=8, color="blue")
-    ax.set_xlabel("Total GPUs")
-    ax.set_ylabel("Inference Latency (ms)")
-    ax.set_title("Phase 26: Inference Latency Scaling")
-    ax.grid(True, alpha=0.3)
-    for i, label in enumerate(x_labels):
-        ax.text(x[i], latency[i] + 0.1, label, ha="center", fontsize=9)
-
-    # Plot 2: Throughput overhead
-    ax = axes[0, 1]
     overhead = scaling_df["throughput_overhead_pct"].values
-    ax.bar(range(len(x_labels)), overhead, color="orange", alpha=0.7)
-    ax.set_xticks(range(len(x_labels)))
-    ax.set_xticklabels(x_labels, rotation=45)
-    ax.set_ylabel("Scheduling Overhead (%)")
-    ax.set_title("Proactive Scheduler Overhead")
-    ax.axhline(y=5.0, linestyle="--", color="red", label="5% threshold")
-    ax.legend()
-
-    # Plot 3: Wait time across scales
-    ax = axes[1, 0]
     wait = scaling_df["mean_wait_time"].values
-    ax.plot(x, wait, marker="s", linewidth=2, markersize=8, color="green")
-    ax.set_xlabel("Total GPUs")
-    ax.set_ylabel("Mean Wait Time (timesteps)")
-    ax.set_title("Wait Time Across Cluster Scales")
-    ax.grid(True, alpha=0.3)
-
-    # Plot 4: GPU utilization consistency
-    ax = axes[1, 1]
     util = scaling_df["gpu_utilization_pct"].values
-    ax.plot(x, util, marker="^", linewidth=2, markersize=8, color="purple")
-    ax.axhline(y=np.mean(util), linestyle="--", color="gray", label=f"Mean: {np.mean(util):.1f}%")
-    ax.set_xlabel("Total GPUs")
-    ax.set_ylabel("GPU Utilization (%)")
-    ax.set_title("GPU Utilization Stability")
-    ax.set_ylim([0, 100])
-    ax.grid(True, alpha=0.3)
-    ax.legend()
+    batch = [int(b) for b in scaling_df["inference_batch_size"]]
+    mean_util = np.mean(util)
 
-    fig.tight_layout()
-    fig.savefig(OUTPUT_PLOT, dpi=220, bbox_inches="tight")
-    plt.close(fig)
+    subtitle = (
+        f"{int(scaling_df['n_runs'].iloc[0])} seeded runs x {SIMULATION_DURATION:,} timesteps per scale; "
+        "one predict call scores the whole queue "
+        f"(batch of {min(batch):,} to {max(batch):,} jobs).\n"
+        "Inference latency is wall-clock and re-measured on every execution, so that panel "
+        "carries timing jitter; the queue and utilisation panels are seeded and reproducible."
+    )
+
+    for mode in ("light", "dark"):
+        p = PALETTE[mode]
+        series = color_of("PROACTIVE", mode)  # the ML method: blue, in every panel
+        fig, axes = figure(mode, figsize=(12, 8.8), nrows=2, ncols=2)
+
+        # Panel 1: inference latency vs. cluster size -------------------------
+        ax = axes[0, 0]
+        ax.plot(pos, latency, marker="o", color=series)
+        ax.set_xticks(pos)
+        ax.set_xticklabels(x_labels)
+        ax.set_xlabel("Cluster scale")
+        ax.set_ylabel("Inference latency (ms)")
+        ax.set_title("Inference latency by cluster scale")
+        ax.set_ylim(bottom=0)
+
+        # Panel 2: scheduling overhead ---------------------------------------
+        ax = axes[0, 1]
+        ax.bar(pos, overhead, width=0.62, color=series)
+        bar_ends(ax, "v")
+        ax.set_xticks(pos)
+        ax.set_xticklabels(x_labels)
+        ax.set_xlabel("Cluster scale")
+        ax.set_ylabel("Scheduling overhead (%)")
+        ax.set_title("Scheduler cost per 1 s decision window, against the 5% budget")
+        ax.set_ylim(0, max(6.0, float(np.max(overhead)) * 1.25))
+        ax.axhline(y=5.0, color=p["ink_2"], linewidth=1.0, zorder=3)
+        ax.text(0.995, 5.0, "5% threshold", transform=ax.get_yaxis_transform(),
+                color=p["ink_2"], fontsize=9, ha="right", va="bottom")
+
+        # Panel 3: wait time across scales ------------------------------------
+        ax = axes[1, 0]
+        ax.plot(pos, wait, marker="s", color=series)
+        ax.set_xticks(pos)
+        ax.set_xticklabels(x_labels)
+        ax.set_xlabel("Cluster scale")
+        ax.set_ylabel("Mean wait time (timesteps)")
+        ax.set_title("Mean queue wait shrinks as the cluster grows")
+        ax.set_ylim(bottom=0)
+
+        # Panel 4: GPU utilisation consistency --------------------------------
+        ax = axes[1, 1]
+        ax.plot(pos, util, marker="^", color=series)
+        ax.axhline(y=mean_util, color=p["ink_2"], linewidth=1.0, zorder=3)
+        ax.text(0.5, mean_util, f"Mean: {mean_util:.1f}%",
+                transform=ax.get_yaxis_transform(), color=p["ink_2"],
+                fontsize=9, ha="center", va="top")
+        ax.set_xticks(pos)
+        ax.set_xticklabels(x_labels)
+        ax.set_xlabel("Cluster scale")
+        ax.set_ylabel("GPU utilization (%)")
+        ax.set_title("GPU utilization stability")
+        ax.set_ylim([0, 100])
+
+        fig.tight_layout(rect=(0, 0.025, 1, 0.855))
+        finish(
+            fig, mode,
+            title="Phase 26: what changes, and what does not, as the cluster scales",
+            subtitle=subtitle,
+            source="phases_22_30/phase_26_scaling/scaling_benchmark.csv",
+        )
+        save_both(fig, OUTPUT_PLOT_STEM, mode, dpi=220)
 
 
 def write_scaling_analysis(scaling_df: pd.DataFrame) -> None:

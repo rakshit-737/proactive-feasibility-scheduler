@@ -12,9 +12,10 @@ function of the requested size `g` given the state `S`:
 `can_fit_now = 1[free(S) >= g]`, `gpu_fit_ratio = min(free(S)/g, 1)`,
 `node_availability = |{n : free_n(S) >= g}|/N`, `queue_pressure = (Σ_Q − g)/(free(S)+1)`.
 Therefore the learned score is `ŵ(j | S) = g_S(size_j)` and the induced order is
-just the order of `g_S` over the queue's sizes. **The eleven cluster-state features
-shift every score by the same amount and cannot reorder anything.** The model, used
-as a ranking function, is a per-instant lookup table from requested size to priority.
+just the order of `g_S` over the queue's sizes. **The remaining eight features
+describe only the cluster, so they shift every score by the same amount and cannot
+reorder anything.** The model, used as a ranking function, is a per-instant lookup
+table from requested size to priority.
 
 **The measurement** (`05_results/degeneracy/`, `04_scheduler/ranking_degeneracy.py`),
 instrumenting real dispatch decisions in three settings:
@@ -54,10 +55,20 @@ positive equivalence finding, not an underpowered null. The **MLP baseline is
 bit-identical to the size sort on every metric of all 20 runs**: two model classes
 over the same features collapse to the same one-line sort.
 
-On LANL the equivalence honestly fails — the learned table is non-monotone often
-enough to beat a naive size sort by 14.4%. That does not rescue the method: it is a
-*better size table*, still a function of size alone, and on that same machine it
-does not beat FCFS (p = 0.48).
+**On LANL the honest verdict is *inconclusive*, not "different".** The size sort is
+14.4% worse on mean wait, but that difference does not survive Holm correction on the
+paired t-test (p = 0.25; the Wilcoxon test disagrees at p = 0.015), it shrinks to
++7.3% at p = 0.60 on bounded slowdown, and TOST cannot certify equivalence either
+(p = 0.77). With 20 windows LANL is neither shown equivalent nor shown different.
+
+An earlier draft of this section attributed the LANL result to its learned size table
+being less monotone. **That explanation is wrong and is retracted**: the per-instant
+monotone fraction is 51.9% on SDSC — where equivalence *does* hold — against 61.5% on
+LANL, so monotonicity does not track where the equivalence fires. (Relatedly, the
+jagged SDSC curve in `size_priority_table.png` is largely sampling noise: SDSC spans
+51 distinct job sizes with few observations each, versus 6 on LANL and 8 synthetic.)
+What is not in question on either machine is the degeneracy itself, and on LANL the
+ML scheduler also fails to beat plain FCFS (p = 0.48).
 
 ## v3.4: trace-driven re-evaluation on real workloads
 

@@ -22,10 +22,10 @@ score is a function of requested size ALONE:
     predicted_wait(job | state) = g_state(job_gpu)
 
 and the ranking it induces is the ranking of g_state over the queue's sizes.
-The eleven cluster-state features shift every score by the same amount and
-cannot reorder anything. The learned model, used this way, is a per-instant
-lookup table from requested size to priority -- not a policy that reasons
-about individual jobs.
+The remaining EIGHT features describe only the cluster, so they shift every
+score by the same amount and cannot reorder anything. The learned model, used
+this way, is a per-instant lookup table from requested size to priority -- not
+a policy that reasons about individual jobs.
 
 CONSEQUENCE
 -----------
@@ -74,6 +74,9 @@ from scipy import stats
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_ROOT)
+from vizstyle import figure, finish, save_both, bar_ends, PALETTE  # noqa: E402
+
 OUT_DIR = os.path.join(PROJECT_ROOT, '05_results', 'degeneracy')
 os.makedirs(OUT_DIR, exist_ok=True)
 
@@ -230,49 +233,130 @@ def run_trace(trace_key, n_windows, warmup_days, measure_days):
     return col
 
 
-def make_figure(summary, feats, curves, path):
-    fig, axes = plt.subplots(1, 3, figsize=(19, 5))
+def make_figure(summary, feats, curves, stem):
+    """The evidence figure, written as a light/dark pair.
 
-    s = summary.copy()
-    idx = np.arange(len(s))
-    axes[0].barh(idx - 0.2, s['pct_order_identical_to_size'], height=0.38,
-                 color='#f472b6', label='identical to smallest-size-first')
-    axes[0].barh(idx + 0.2, s['pct_order_identical_to_arrival'], height=0.38,
-                 color='#94a3b8', label='identical to arrival order (FCFS)')
-    axes[0].set_yticks(idx)
-    axes[0].set_yticklabels(s['setting'])
-    axes[0].set_xlabel('% of dispatch instants')
-    axes[0].set_xlim(0, 100)
-    axes[0].set_title('ML queue order vs ML-free orders')
-    axes[0].legend(loc='lower right')
-    axes[0].invert_yaxis()
+    Two panels, each with one job:
+      (a) the MECHANISM -- which features can differ between two jobs waiting
+          side by side. Features are named, never indexed; the eight that sit at
+          exactly 0.0% are the point, so their zero is direct-labelled rather
+          than rendered as an invisible bar.
+      (b) the CONSEQUENCE for ordering -- how often the ML order is literally the
+          smallest-first order, or literally arrival order.
 
-    for setting, grp in feats.groupby('setting', sort=False):
-        g = grp.sort_values('pct_instants_varying_across_queue', ascending=False)
-        axes[1].plot(range(len(g)), g['pct_instants_varying_across_queue'],
-                     marker='o', label=setting)
-    axes[1].set_xlabel('feature (sorted by variability)')
-    axes[1].set_ylabel('% of instants the feature differs across the queue')
-    axes[1].set_title('Only the size-derived features vary between co-queued jobs')
-    axes[1].set_ylim(-3, 103)
-    axes[1].legend(fontsize=8)
-    axes[1].grid(alpha=0.3)
+    Colour follows the entity across the whole repository: orange is the ML-free
+    control (smallest-first), grey is a classical baseline (arrival/FCFS).
+    """
+    for mode in ('light', 'dark'):
+        p = PALETTE[mode]
+        fig, axes = figure(mode, figsize=(14.5, 6.2), ncols=2,
+                           gridspec_kw={'width_ratios': [1.15, 1],
+                                        'wspace': 0.42})
 
-    for setting, grp in curves.groupby('setting', sort=False):
-        g = grp.sort_values('size')
-        axes[2].plot(g['size'], g['norm_score'], marker='o', ms=4, label=setting)
-    axes[2].set_xscale('symlog', linthresh=8)
-    axes[2].set_xlabel('requested size (processors / GPUs)')
-    axes[2].set_ylabel('normalised predicted-wait score')
-    axes[2].set_title('The recovered size $\\rightarrow$ priority table')
-    axes[2].legend(fontsize=8)
-    axes[2].grid(alpha=0.3)
+        # ── (a) which features can distinguish two co-queued jobs? ──────────
+        syn = feats[feats['setting'].str.startswith('synthetic')]
+        g = syn.sort_values('pct_instants_varying_across_queue', ascending=True)
+        vals = g['pct_instants_varying_across_queue'].to_numpy()
+        names = g['feature'].tolist()
+        colors = [p['series_1'] if v > 0 else p['muted'] for v in vals]
+        y = np.arange(len(g))
+        axes[0].barh(y, vals, height=0.66, color=colors)
+        axes[0].set_yticks(y)
+        axes[0].set_yticklabels(names, fontsize=9)
+        axes[0].set_xlim(0, 100)
+        axes[0].set_xlabel('% of dispatch instants the feature differs across the queue')
+        axes[0].set_title('(a) Only size-derived features vary between co-queued jobs',
+                          loc='left')
+        bar_ends(axes[0], 'h')
+        for yi, v in zip(y, vals):
+            zero = v <= 0
+            axes[0].text(v + 1.5, yi, '0.0%' if zero else f'{v:.1f}%',
+                         va='center', fontsize=8.5,
+                         color=p['muted'] if zero else p['ink_2'])
+        n_zero = int((vals <= 0).sum())
+        axes[0].text(0.99, 0.02,
+                     f'{n_zero} of {len(vals)} features are identical for every\n'
+                     'queued job — they cannot affect any ranking',
+                     transform=axes[0].transAxes, ha='right', va='bottom',
+                     fontsize=9, color=p['ink_2'])
 
-    fig.suptitle('Ranking degeneracy: a wait-time model used as a queue-ordering '
-                 'score is a function of requested size alone')
-    fig.tight_layout()
-    fig.savefig(path, dpi=150, bbox_inches='tight')
-    plt.close(fig)
+        # ── (b) does the ML order equal an ML-free order? ────────────────────
+        s = summary.copy()
+        idx = np.arange(len(s))
+        h = 0.34
+        axes[1].barh(idx - h / 2 - 0.02, s['pct_order_identical_to_size'],
+                     height=h, color=p['series_2'],
+                     label='identical to smallest-first order')
+        axes[1].barh(idx + h / 2 + 0.02, s['pct_order_identical_to_arrival'],
+                     height=h, color=p['muted'],
+                     label='identical to arrival order (FCFS)')
+        axes[1].set_yticks(idx)
+        axes[1].set_yticklabels([t.replace(' (', '\n(') for t in s['setting']],
+                                fontsize=9)
+        axes[1].set_xlim(0, 100)
+        axes[1].set_xlabel('% of dispatch instants')
+        axes[1].set_title('(b) The resulting queue order is an ML-free order',
+                          loc='left')
+        bar_ends(axes[1], 'h')
+        axes[1].invert_yaxis()
+        for i, (a, b) in enumerate(zip(s['pct_order_identical_to_size'],
+                                       s['pct_order_identical_to_arrival'])):
+            axes[1].text(a + 1.5, i - h / 2 - 0.02, f'{a:.0f}%', va='center',
+                         fontsize=8.5, color=p['ink_2'])
+            axes[1].text(b + 1.5, i + h / 2 + 0.02, f'{b:.0f}%', va='center',
+                         fontsize=8.5, color=p['ink_2'])
+        axes[1].legend(loc='lower right')
+
+        total = int(summary['ranking_instants'].sum())
+        viol = int(summary['equal_size_diff_pred_violations'].sum())
+        finish(fig, mode,
+               title='A learned wait-time score cannot tell two queued jobs apart '
+                     'by anything but size',
+               subtitle=f'Every queued job sees the same cluster, so only per-job '
+                        f'features can differ — and each of those is a function of '
+                        f'requested size.\nAcross {total:,} real dispatch instants, '
+                        f'two equally-sized jobs received different scores '
+                        f'{viol} times.',
+               source='05_results/degeneracy/ — 04_scheduler/ranking_degeneracy.py')
+        fig.subplots_adjust(top=0.78, bottom=0.11, left=0.135, right=0.985)
+        save_both(fig, stem, mode)
+
+
+def make_size_table_figure(curves, stem):
+    """The recovered size -> priority table, as small multiples.
+
+    One panel per trained model rather than three lines on shared axes: the
+    settings have different size domains, and small multiples let each keep a
+    single series colour instead of spending three hues on facets.
+    """
+    settings = list(dict.fromkeys(curves['setting']))
+    for mode in ('light', 'dark'):
+        p = PALETTE[mode]
+        fig, axes = figure(mode, figsize=(14.5, 3.9), ncols=len(settings),
+                           gridspec_kw={'wspace': 0.22})
+        axes = np.atleast_1d(axes)
+        for ax, setting in zip(axes, settings):
+            g = curves[curves['setting'] == setting].sort_values('size')
+            ax.plot(g['size'], g['norm_score'], marker='o', ms=4.5,
+                    color=p['series_1'], linewidth=1.8)
+            ax.set_xscale('log')
+            ax.set_title(setting, loc='left', fontsize=10)
+            ax.set_xlabel('requested size (processors)')
+            ax.set_ylim(-0.05, 1.08)
+            ax.set_axisbelow(True)
+        axes[0].set_ylabel('normalised predicted-wait score')
+        finish(fig, mode,
+               title='What the model actually learned: a lookup table from '
+                     'requested size to priority',
+               subtitle='Score against requested size, averaged over dispatch '
+                        'instants. Read the SHAPE, not the wiggle: SDSC spans 51 '
+                        'distinct sizes with few\nobservations each, so its mean '
+                        'curve is noisy — per-instant the table is monotone 52% of '
+                        'the time there vs 62% on LANL and 67% synthetic.',
+               source='05_results/degeneracy/size_priority_table.csv — '
+                      'monotone fractions in ranking_degeneracy.csv')
+        fig.subplots_adjust(top=0.70, bottom=0.15, left=0.055, right=0.99)
+        save_both(fig, stem, mode)
 
 
 def main():
@@ -280,9 +364,21 @@ def main():
     ap.add_argument('--runs', type=int, default=20, help='synthetic runs')
     ap.add_argument('--windows', type=int, default=6, help='trace windows')
     ap.add_argument('--quick', action='store_true')
+    ap.add_argument('--figures-only', action='store_true',
+                    help='re-render the figures from the saved CSVs without '
+                         're-running any simulation (for iterating on styling)')
     args = ap.parse_args()
     if args.quick:
         args.runs, args.windows = 5, 2
+
+    if args.figures_only:
+        summary = pd.read_csv(os.path.join(OUT_DIR, 'ranking_degeneracy.csv'))
+        feats = pd.read_csv(os.path.join(OUT_DIR, 'feature_variation.csv'))
+        curves = pd.read_csv(os.path.join(OUT_DIR, 'size_priority_table.csv'))
+        make_figure(summary, feats, curves, os.path.join(OUT_DIR, 'ranking_degeneracy'))
+        make_size_table_figure(curves, os.path.join(OUT_DIR, 'size_priority_table'))
+        print('Re-rendered figures from existing CSVs in', OUT_DIR)
+        return
 
     collectors = [run_synthetic(args.runs)]
     for key in ('sdsc', 'lanl'):
@@ -298,11 +394,14 @@ def main():
     sum_path = os.path.join(OUT_DIR, 'ranking_degeneracy.csv')
     feat_path = os.path.join(OUT_DIR, 'feature_variation.csv')
     curve_path = os.path.join(OUT_DIR, 'size_priority_table.csv')
-    fig_path = os.path.join(OUT_DIR, 'ranking_degeneracy.png')
+    fig_stem = os.path.join(OUT_DIR, 'ranking_degeneracy')
+    table_stem = os.path.join(OUT_DIR, 'size_priority_table')
+    fig_path = fig_stem + '.png'
     summary.to_csv(sum_path, index=False)
     feats.to_csv(feat_path, index=False)
     curves.to_csv(curve_path, index=False)
-    make_figure(summary, feats, curves, fig_path)
+    make_figure(summary, feats, curves, fig_stem)
+    make_size_table_figure(curves, table_stem)
 
     print('\n' + '=' * 78)
     print('RANKING DEGENERACY OF THE WAIT-TIME MODEL USED AS A QUEUE-ORDERING SCORE')
@@ -318,7 +417,8 @@ def main():
     viol = int(summary['equal_size_diff_pred_violations'].sum())
     print(f'\nEqual-size / different-prediction violations across all settings: {viol}')
     print('(zero => the score is exactly a function of requested size, as argued)')
-    for p in (sum_path, feat_path, curve_path, fig_path):
+    for p in (sum_path, feat_path, curve_path, fig_path,
+              table_stem + '.png'):
         print('Saved:', p)
 
 

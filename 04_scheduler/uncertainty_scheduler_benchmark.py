@@ -1,14 +1,18 @@
 import os
+import sys
 import random
 import pickle
 import numpy as np
 import pandas as pd
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 
 # ── Paths / config ───────────────────────────────────────────────────────────
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Shared figure style (works when run from this directory or from the repo root).
+sys.path.insert(0, PROJECT_ROOT)
+from vizstyle import (figure, finish, save_both, PALETTE, color_of, label_of,
+                      bar_ends, legend_roles)
+
 POINT_MODEL_PATH = os.path.join(PROJECT_ROOT, '03_models', 'wait_model_v2.pkl')
 QUANT_MODEL_PATH = os.path.join(PROJECT_ROOT, '03_models', 'wait_model_quantile.pkl')
 OUT_DIR = os.path.join(PROJECT_ROOT, '05_results', 'uncertainty')
@@ -30,6 +34,14 @@ SCENARIOS = [
     {'name': 'arr2.0_nodes16', 'nodes': 16, 'arrival_mult': 2.0},
 ]
 POLICIES = ['FIFO', 'PROACTIVE', 'UCB', 'GUARDED']
+
+# Presentation only: axis ticks name the regime instead of repeating the raw
+# scenario key, so the reader can read the shift straight off the axis.
+SCENARIO_LABEL = {
+    sc['name']: ('In-distribution' if sc['name'] == 'in_dist' else 'Shifted')
+                + f"\n{sc['nodes']} nodes · {sc['arrival_mult']:g}× arrivals"
+    for sc in SCENARIOS
+}
 
 # ── Load models ──────────────────────────────────────────────────────────────
 with open(POINT_MODEL_PATH, 'rb') as f:
@@ -277,58 +289,70 @@ def main():
     }))
 
     # ── Plot: improvement% vs FIFO, grouped by scenario ──────────────────────
-    # Colors are the first three slots of the validated categorical palette
-    # (dataviz skill); sub-3:1 contrast slots are relieved by direct labels.
+    # Colour follows the ENTITY, never the panel or the rank:
+    #   PROACTIVE  blue   = the ML method (vizstyle role 'ml')
+    #   GUARDED    orange = the uncertainty-aware policy under test (the guard
+    #                       is the mechanism this experiment exists to check)
+    #   UCB        muted  = the secondary variant, recessive like a baseline
+    # Two hues + neutrals only; FIFO is the zero rule, not a series.
     SERIES = ['PROACTIVE', 'UCB', 'GUARDED']
-    COLORS = {'PROACTIVE': '#2a78d6', 'UCB': '#1baf7a', 'GUARDED': '#eda100'}
-    SURFACE, INK, MUTED, GRID, BASELINE = '#fcfcfb', '#0b0b0b', '#898781', '#e1e0d9', '#c3c2b7'
+    SERIES_LABEL = {'PROACTIVE': label_of('PROACTIVE'),
+                    'UCB': 'UCB (q90 quantile)',
+                    'GUARDED': 'Guarded (q50 + FIFO fallback)'}
 
     piv = agg.pivot(index='scenario', columns='policy', values='improvement_vs_fifo_pct')
     piv = piv.reindex(scen_order)
-
-    fig, ax = plt.subplots(figsize=(11, 5.5))
-    fig.patch.set_facecolor(SURFACE)
-    ax.set_facecolor(SURFACE)
-    x = np.arange(len(scen_order))
-    width = 0.26
-
-    for k, pol in enumerate(SERIES):
-        vals = piv[pol].values.astype(float)
-        pos = x + (k - 1) * width
-        bars = ax.bar(pos, np.nan_to_num(vals), width=width * 0.92,
-                      color=COLORS[pol], label=pol, zorder=3)
-        for xi, v, b in zip(pos, vals, bars):
-            if np.isnan(v):
-                ax.text(xi, 0.5, 'n/a', ha='center', va='bottom',
-                        fontsize=8, color=MUTED, zorder=4)
-            else:
-                off = 0.4 if v >= 0 else -0.4
-                ax.text(xi, v + off, f'{v:.1f}%',
-                        ha='center', va='bottom' if v >= 0 else 'top',
-                        fontsize=8.5, color=INK, zorder=4)
-
-    ax.axhline(0, color=BASELINE, linewidth=1.2, zorder=2)
-    ax.set_xticks(x)
-    ax.set_xticklabels(scen_order, fontsize=9, color=INK)
-    ax.set_ylabel('Wait-time improvement vs FIFO (%)', fontsize=10, color=INK)
-    ax.set_title('Uncertainty-aware scheduling under distribution shift '
-                 f'({NUM_RUNS} paired runs/scenario; 0 = FIFO reference)',
-                 fontsize=11, color=INK)
-    ax.tick_params(colors=MUTED)
-    ax.grid(axis='y', color=GRID, linewidth=0.8, zorder=0)
-    for spine in ('top', 'right', 'left'):
-        ax.spines[spine].set_visible(False)
-    ax.spines['bottom'].set_color(BASELINE)
-    ax.legend(frameon=False, fontsize=9, loc='best')
-    # widen y-limits a touch so direct labels don't clip
-    lo, hi = ax.get_ylim()
-    ax.set_ylim(lo - 2, hi + 3)
-    plt.tight_layout()
     png_path = os.path.join(OUT_DIR, 'uncertainty_summary.png')
-    plt.savefig(png_path, dpi=160, facecolor=SURFACE)
+
+    for mode in ('light', 'dark'):
+        p = PALETTE[mode]
+        colors = {'PROACTIVE': color_of('PROACTIVE', mode),
+                  'UCB': p['muted'],
+                  'GUARDED': p['series_2']}
+
+        fig, ax = figure(mode, figsize=(11, 5.5))
+        x = np.arange(len(scen_order))
+        width = 0.26
+
+        for k, pol in enumerate(SERIES):
+            vals = piv[pol].values.astype(float)
+            pos = x + (k - 1) * width
+            ax.bar(pos, np.nan_to_num(vals), width=width * 0.92,
+                   color=colors[pol], label=SERIES_LABEL[pol], zorder=3)
+            for xi, v in zip(pos, vals):
+                # Direct-label selectively: the emphasised series only, plus any
+                # bar that rounds to zero (it has no height, so the text IS the
+                # mark and the group would otherwise read as missing data).
+                if np.isnan(v):
+                    ax.text(xi, 0.5, 'n/a', ha='center', va='bottom',
+                            fontsize=8, color=p['muted'], zorder=4)
+                elif pol == 'PROACTIVE' or abs(v) < 0.05:
+                    off = 0.6 if v >= 0 else -0.6
+                    ax.text(xi, v + off, f'{v:.1f}%',
+                            ha='center', va='bottom' if v >= 0 else 'top',
+                            fontsize=8.5, color=p['ink_2'], zorder=4)
+
+        bar_ends(ax, 'v')
+        ax.axhline(0, color=p['axis'], linewidth=1.0, zorder=2)
+        ax.set_xticks(x)
+        ax.set_xticklabels([SCENARIO_LABEL[s] for s in scen_order])
+        ax.set_ylabel('Mean-wait improvement vs FIFO (%)')
+        ax.legend(loc='upper left')
+        # widen y-limits a touch so direct labels don't clip
+        lo, hi = ax.get_ylim()
+        ax.set_ylim(lo - 2, hi + 3)
+
+        fig.tight_layout(rect=(0, 0.03, 1, 0.86))
+        finish(fig, mode,
+               title='Uncertainty-aware policies land on the point model in every regime',
+               subtitle=f'Mean wait vs FIFO over {NUM_RUNS} paired runs per scenario · '
+                        'above 0 = shorter waits than FIFO · labels mark the point model',
+               source='05_results/uncertainty/uncertainty_ood_benchmark.csv')
+        save_both(fig, os.path.join(OUT_DIR, 'uncertainty_summary'), mode)
 
     print('\nSaved:', csv_path)
     print('Saved:', png_path)
+    print('Saved:', png_path.replace('.png', '-dark.png'))
 
 if __name__ == '__main__':
     main()

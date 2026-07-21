@@ -1,12 +1,14 @@
 import os
 import random
 import pickle
+import sys
 import time
 import numpy as np
 import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 from sklearn.neural_network import MLPRegressor
 
 from sjf_scheduler import order_queue as order_sjf, order_queue_estimated as order_sjf_est
@@ -16,6 +18,10 @@ from size_scheduler import order_queue as order_smallest
 from neural_network_scheduler import order_queue as order_nn, build_feature_vector
 from backfill_scheduler import easy_backfill_dispatch, conservative_backfill_dispatch
 from simstats import gini, holm_correction, pairwise_significance, equivalence_table
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from vizstyle import (figure, finish, save_both, bar_ends, color_of,  # noqa: E402
+                      label_of, PALETTE)
 
 # Optional diagnostic hook: callable(policy, queue, feature_matrix, predictions)
 # invoked at every PROACTIVE ranking decision. Set by ranking_degeneracy.py to
@@ -417,17 +423,55 @@ def main():
     equiv_path = os.path.join(OUT_DIR, 'multi_scheduler_equivalence.csv')
     equiv.to_csv(equiv_path, index=False)
 
-    plt.figure(figsize=(13, 5))
-    x = np.arange(len(summary))
-    width = 0.35
-    plt.bar(x - width / 2, summary['mean_wait'], width=width, label='Mean wait', color='#38bdf8')
-    plt.bar(x + width / 2, summary['throughput'], width=width, label='Throughput', color='#34d399')
-    plt.xticks(x, summary['scheduler'], rotation=30, ha='right')
-    plt.title('Scheduler benchmark (full metrics incl. slowdown/tails in CSV)')
-    plt.legend()
-    plt.tight_layout()
-    plot_path = os.path.join(OUT_DIR, 'scheduler_comparison.png')
-    plt.savefig(plot_path, dpi=160)
+    # Previously this plotted mean wait (12-26 ts) and throughput (0.367
+    # jobs/ts) as adjacent bars on ONE axis, which rendered every throughput bar
+    # invisible. Throughput and utilisation are in fact IDENTICAL across all 14
+    # policies here (the workload and capacity are fixed; only the order
+    # changes), so they belong in the subtitle as a stated fact, not in a chart.
+    # The two panels now carry the two metrics that actually differ.
+    plot_stem = os.path.join(OUT_DIR, 'scheduler_comparison')
+    metrics = [('mean_wait', 'Mean wait (timesteps)'),
+               ('mean_bounded_slowdown', 'Mean bounded slowdown')]
+    for mode in ('light', 'dark'):
+        p = PALETTE[mode]
+        fig, axes = figure(mode, figsize=(14, 6.4), ncols=2,
+                           gridspec_kw={'wspace': 0.42})
+        for ax, (col, xlabel) in zip(axes, metrics):
+            sub = summary.sort_values(col)
+            vals = sub[col].to_numpy()
+            y = np.arange(len(sub))
+            ax.barh(y, vals, height=0.68,
+                    color=[color_of(s, mode) for s in sub['scheduler']])
+            ax.set_yticks(y)
+            ax.set_yticklabels([label_of(s) for s in sub['scheduler']], fontsize=9)
+            ax.set_xlabel(xlabel)
+            bar_ends(ax, 'h')
+            ax.invert_yaxis()
+            span = vals.max()
+            for yi, v in zip(y, vals):
+                ax.text(v + span * 0.012, yi, f'{v:.2f}', va='center',
+                        fontsize=8.2, color=p['ink_2'])
+            ax.set_xlim(0, span * 1.14)
+        fig.legend(handles=[
+            Patch(facecolor=p['series_1'], label='Proactive / NN (ML)'),
+            Patch(facecolor=p['series_2'], label='Smallest-first (no ML)'),
+            Patch(facecolor=p['muted'], label='Classical baselines')],
+            loc='upper left', bbox_to_anchor=(0.011, 0.885), ncol=3, fontsize=9,
+            frameon=False, handlelength=1.4, columnspacing=1.8)
+        finish(fig, mode,
+               title='Synthetic benchmark: the ML scheduler and a one-line size '
+                     'sort are statistically equivalent',
+               subtitle=f'{NUM_RUNS} paired seeded runs, {len(summary)} policies. '
+                        'Throughput and GPU utilisation are identical for every '
+                        'policy here (same workload, same capacity —\nonly the '
+                        'queue order changes), so only the two metrics that '
+                        'differ are plotted. Lower is better in both.',
+               source='05_results/schedulers/multi_scheduler_benchmark.csv — '
+                      '04_scheduler/multi_scheduler_benchmark.py',
+               title_y=0.985, subtitle_y=0.945)
+        fig.subplots_adjust(top=0.80, bottom=0.085, left=0.19, right=0.985)
+        save_both(fig, plot_stem, mode)
+    plot_path = plot_stem + '.png'
 
     print('\n=== Multi-scheduler summary ===')
     print(summary.to_string(index=False, formatters={

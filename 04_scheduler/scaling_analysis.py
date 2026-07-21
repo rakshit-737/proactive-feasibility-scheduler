@@ -1,4 +1,5 @@
 import os
+import sys
 import random
 import pickle
 import time
@@ -9,6 +10,10 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_ROOT)
+from vizstyle import (figure, finish, save_both, PALETTE, color_of, label_of,
+                      bar_ends, legend_roles)
+
 MODEL_PATH = os.path.join(PROJECT_ROOT, '03_models', 'wait_model_v2.pkl')
 OUT_DIR = os.path.join(PROJECT_ROOT, '05_results', 'scaling')
 os.makedirs(OUT_DIR, exist_ok=True)
@@ -176,19 +181,74 @@ def main():
     out_csv = os.path.join(OUT_DIR, 'scaling_analysis.csv')
     summary.to_csv(out_csv, index=False)
 
-    plt.figure(figsize=(9, 5.2))
-    plt.plot(summary['gpus'], summary['wait_advantage_pct'], marker='o', color='#38bdf8', label='Proactive wait advantage %')
-    plt.plot(summary['gpus'], summary['scheduler_overhead_sec'], marker='s', color='#fb923c', label='Scheduler overhead (sec)')
-    plt.xlabel('Cluster size (total GPUs)')
-    plt.title('Scaling curves: performance and overhead vs cluster size')
-    plt.grid(alpha=0.25)
-    plt.legend()
-    plt.tight_layout()
-    out_plot = os.path.join(OUT_DIR, 'scaling_curves.png')
-    plt.savefig(out_plot, dpi=160)
+    # ── Figure: scaling curves ────────────────────────────────────────────────
+    # The old chart drew a percentage and a duration against ONE y-axis, so the
+    # two units were silently made comparable. They are split into stacked
+    # panels sharing the cluster-size axis. Both panels describe the SAME entity
+    # (the proactive ML scheduler), so both wear that entity's colour.
+    stem = os.path.join(OUT_DIR, 'scaling_curves')
+    gpus = summary['gpus'].tolist()
+    advantage = summary['wait_advantage_pct'].tolist()
+    overhead = summary['scheduler_overhead_sec'].tolist()
+    tick_labels = [f'{int(g)}\n({int(n)} nodes)'
+                   for g, n in zip(gpus, summary['nodes'].tolist())]
+
+    for mode in ('light', 'dark'):
+        fig, (ax_gain, ax_cost) = figure(mode, figsize=(9, 6.8),
+                                         nrows=2, ncols=1, sharex=True)
+        p = PALETTE[mode]
+        proactive = color_of('PROACTIVE', mode)
+
+        ax_gain.plot(gpus, advantage, marker='o', color=proactive)
+        ax_gain.axhline(0, color=p['axis'], linewidth=0.8, zorder=1)
+        ax_gain.set_title(f'Wait-time advantage of {label_of("PROACTIVE")} over '
+                          f'{label_of("FIFO")}', loc='left')
+        ax_gain.set_ylabel('Mean wait reduction (%)')
+        ax_gain.margins(y=0.22)
+        ax_gain.annotate(f'{advantage[0]:+.1f}%', xy=(gpus[0], advantage[0]),
+                         xytext=(8, 2), textcoords='offset points',
+                         color=p['ink_2'], fontsize=9)
+        ax_gain.annotate('no job waits at 128+ GPUs',
+                         xy=(gpus[-1], advantage[-1]), xytext=(-6, 26),
+                         textcoords='offset points', ha='right',
+                         color=p['muted'], fontsize=9)
+
+        ax_cost.plot(gpus, overhead, marker='o', color=proactive)
+        ax_cost.set_title(f'Cost of the ranking step in {label_of("PROACTIVE")}',
+                          loc='left')
+        ax_cost.set_ylabel('Scheduler overhead (s per 300-tick run)')
+        ax_cost.set_xlabel('Cluster size (total GPUs)')
+        ax_cost.margins(y=0.22)
+        ax_cost.annotate(f'{overhead[0]:.1f} s', xy=(gpus[0], overhead[0]),
+                         xytext=(8, -2), textcoords='offset points',
+                         color=p['ink_2'], fontsize=9)
+        ax_cost.annotate(f'{overhead[-1]:.2f} s', xy=(gpus[-1], overhead[-1]),
+                         xytext=(-6, 10), textcoords='offset points',
+                         ha='right', color=p['ink_2'], fontsize=9)
+
+        for ax in (ax_gain, ax_cost):
+            ax.set_xscale('log', base=2)
+            ax.set_xticks(gpus)
+            ax.set_xticks([], minor=True)
+            ax.set_xticklabels(tick_labels)
+            ax.set_axisbelow(True)
+
+        fig.tight_layout(rect=(0, 0.02, 1, 0.87))
+        finish(fig, mode,
+               title='Proactive scheduling across four cluster sizes',
+               subtitle='Mean of 8 runs per size. The advantage and the ranking '
+                        'cost both come from queue length, so both fade as the '
+                        'cluster grows.',
+               source='05_results/scaling/scaling_analysis.csv')
+        out_plot = save_both(fig, stem, mode)
+        if mode == 'light':
+            light_plot = out_plot
+        else:
+            dark_plot = out_plot
 
     print('\nSaved:', out_csv)
-    print('Saved:', out_plot)
+    print('Saved:', light_plot)
+    print('Saved:', dark_plot)
 
 if __name__ == '__main__':
     main()
