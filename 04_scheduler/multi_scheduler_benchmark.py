@@ -9,10 +9,18 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from sklearn.neural_network import MLPRegressor
 
-from sjf_scheduler import order_queue as order_sjf
+from sjf_scheduler import order_queue as order_sjf, order_queue_estimated as order_sjf_est
 from priority_scheduler import order_queue as order_priority
+from hrrn_scheduler import order_queue as order_hrrn
+from size_scheduler import order_queue as order_smallest
 from neural_network_scheduler import order_queue as order_nn, build_feature_vector
-from backfill_scheduler import easy_backfill_dispatch
+from backfill_scheduler import easy_backfill_dispatch, conservative_backfill_dispatch
+from simstats import gini, holm_correction, pairwise_significance, equivalence_table
+
+# Optional diagnostic hook: callable(policy, queue, feature_matrix, predictions)
+# invoked at every PROACTIVE ranking decision. Set by ranking_degeneracy.py to
+# instrument real dispatch instants without duplicating the simulation loop.
+RANK_OBSERVER = None
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_PATH = os.path.join(PROJECT_ROOT, '03_models', 'wait_model_v2.pkl')
@@ -26,18 +34,36 @@ NUM_NODES = 8
 GPUS_PER_NODE = 4
 CAPACITY = NUM_NODES * GPUS_PER_NODE
 
+# User runtime-estimate model ("f-model", Mu'alem & Feitelson 2001):
+# est = runtime * (1 + (C-1)*u), u ~ U(0,1)  =>  factor uniform on [1, C].
+# C=5 means users over-estimate by 3x on average — the empirically dominant
+# regime (real estimates inflate up to an order of magnitude). C=1 recovers
+# the perfect-information oracle; estimate_sensitivity.py sweeps C.
+EST_OVER_FACTOR = 5.0
+# Seed base for the estimate RNG. MUST be a dedicated Random instance so the
+# global stream that generates the paired workloads stays untouched (existing
+# scheduler results remain bit-identical).
+EST_SEED_BASE = 20000
+
+# SRPT preemption cost: checkpoint/restore penalty in ticks added to a job's
+# remaining work each time it is preempted.
+PREEMPT_OVERHEAD = 1
+
 with open(MODEL_PATH, 'rb') as f:
     bundle = pickle.load(f)
 wait_model = bundle['model']
 FEATURES = bundle['features']
 
 class Job:
-    def __init__(self, job_id, arrival_time, num_gpus, runtime, priority_score):
+    def __init__(self, job_id, arrival_time, num_gpus, runtime, priority_score,
+                 est_runtime=None):
         self.job_id = job_id
         self.arrival_time = arrival_time
         self.num_gpus = num_gpus
         self.runtime = runtime
         self.priority_score = priority_score
+        # user-supplied runtime estimate (assign_estimates); None until set
+        self.est_runtime = est_runtime
         self.start_time = None
         self.end_time = None
         self.allocated_nodes = []
@@ -93,15 +119,6 @@ def get_features(job, cluster, queue, running):
         tf / cluster.num_nodes,
     ])
 
-def gini(vals):
-    x = np.array([v for v in vals if v >= 0], dtype=float)
-    if len(x) == 0 or np.sum(x) == 0:
-        return 0.0
-    x = np.sort(x)
-    n = len(x)
-    cum = np.cumsum(x)
-    return float((n + 1 - 2 * np.sum(cum) / cum[-1]) / n)
-
 def generate_jobs(n=110):
     jobs = []
     for i in range(n):
@@ -114,6 +131,18 @@ def generate_jobs(n=110):
         ))
     return sorted(jobs, key=lambda j: j.arrival_time)
 
+def assign_estimates(jobs, rng, over_factor=EST_OVER_FACTOR):
+    """Attach user runtime estimates: est = runtime * (1 + (C-1)*u), u~U(0,1).
+
+    Takes a dedicated `rng` (random.Random) so the global workload stream is
+    untouched. Drawing u once and scaling by (C-1) couples estimates across
+    over_factor values — the sensitivity sweep varies estimate QUALITY, not
+    the noise realisation.
+    """
+    for job in jobs:
+        u = rng.random()
+        job.est_runtime = job.runtime * (1.0 + (over_factor - 1.0) * u)
+
 def train_nn_predictor():
     df = pd.read_csv(DATA_PATH)
     x = df[FEATURES].values
@@ -123,23 +152,67 @@ def train_nn_predictor():
     return nn
 
 def rank_queue(queue, t, cluster, running, scheduler, nn_model):
-    if scheduler in ('fifo', 'backfill', 'proactive_bf'):
-        # backfill schedulers keep the queue in arrival order; the EASY
-        # dispatch helper handles head reservation + backfill scan itself
+    if scheduler in ('fifo', 'fifo_strict', 'backfill', 'backfill_est',
+                     'cons_bf', 'proactive_bf'):
+        # arrival order. NOTE: 'fifo' dispatches ANY fitting job per tick
+        # (FCFS + unrestricted first-fit backfilling — the label predates
+        # v3.3 and is kept for continuity); 'fifo_strict' blocks on the
+        # queue head (textbook FIFO). The backfill dispatch helpers handle
+        # reservation + backfill scan themselves.
         return queue
     if scheduler == 'sjf':
         return order_sjf(queue, t)
+    if scheduler == 'sjf_est':
+        return order_sjf_est(queue, t)
     if scheduler == 'priority':
         return order_priority(queue, t)
+    if scheduler == 'hrrn':
+        return order_hrrn(queue, t)
+    if scheduler == 'smallest':
+        return order_smallest(queue, t)
     if scheduler == 'proactive':
-        scored = [(float(wait_model.predict(get_features(j, cluster, queue, running).reshape(1, -1))[0]), j) for j in queue]
-        scored.sort(key=lambda x: (x[0], x[1].arrival_time, x[1].job_id))
-        return [j for _, j in scored]
+        x = np.array([get_features(j, cluster, queue, running) for j in queue])
+        pred = wait_model.predict(x)
+        if RANK_OBSERVER is not None:
+            RANK_OBSERVER('proactive', queue, x, pred)
+        idx = sorted(range(len(queue)),
+                     key=lambda i: (float(pred[i]), queue[i].arrival_time,
+                                    queue[i].job_id))
+        return [queue[i] for i in idx]
     return order_nn(queue, cluster, running, nn_model)
+
+def summarize(completed, util, mae_samples, preemptions=0):
+    # Unified wait definition: total delay = turnaround - true runtime.
+    # For non-preemptive schedulers this equals start - arrival exactly
+    # (end = start + runtime), preserving pre-v3.3 numbers bit-for-bit.
+    # For preemptive SRPT it honestly counts post-preemption requeue time
+    # AND checkpoint-overhead ticks as waiting (time-to-first-dispatch
+    # would hide ~29% of SRPT's queueing delay).
+    waits = [j.end_time - j.arrival_time - j.runtime
+             for j in completed if j.end_time is not None]
+    turnarounds = [j.end_time - j.arrival_time for j in completed if j.end_time is not None]
+    # bounded slowdown, standard backfill-literature metric: turnaround over
+    # true runtime (bound tau=1 tick), >= 1 by construction
+    slowdowns = [max((j.end_time - j.arrival_time) / max(j.runtime, 1), 1.0)
+                 for j in completed if j.end_time is not None]
+    return {
+        'mean_wait': float(np.mean(waits)) if waits else float('nan'),
+        'max_wait': float(np.max(waits)) if waits else float('nan'),
+        'p95_wait': float(np.percentile(waits, 95)) if waits else float('nan'),
+        'mean_turnaround': float(np.mean(turnarounds)) if turnarounds else float('nan'),
+        'mean_bounded_slowdown': float(np.mean(slowdowns)) if slowdowns else float('nan'),
+        'throughput': len(completed) / SIM_TIME,
+        'fairness_gini': gini(waits),
+        'gpu_util': float(np.mean(util)) if util else 0.0,
+        'preemptions': int(preemptions),
+        # wait-prediction MAE at dispatch time; NaN for non-ML schedulers
+        'pred_wait_mae': float(np.mean(mae_samples)) if mae_samples else float('nan'),
+    }
 
 def run_once(jobs_in, scheduler, nn_model):
     cluster = Cluster(NUM_NODES, GPUS_PER_NODE)
-    jobs = [Job(j.job_id, j.arrival_time, j.num_gpus, j.runtime, j.priority_score) for j in jobs_in]
+    jobs = [Job(j.job_id, j.arrival_time, j.num_gpus, j.runtime, j.priority_score,
+                est_runtime=j.est_runtime) for j in jobs_in]
     queue, running, completed = [], [], []
     util, mae_samples = [], []
 
@@ -157,11 +230,13 @@ def run_once(jobs_in, scheduler, nn_model):
         if queue:
             queue = rank_queue(queue, t, cluster, running, scheduler, nn_model)
 
-        if scheduler in ('backfill', 'proactive_bf'):
+        if scheduler in ('backfill', 'backfill_est', 'proactive_bf'):
             # EASY backfill: arrival-order head with a reservation guarantee
             # (anti-starvation); backfill jobs may never delay the head.
+            # 'backfill_est' plans with user estimates instead of true runtimes.
             bf_order = None
             hook = None
+            est_fn = (lambda j: j.est_runtime) if scheduler == 'backfill_est' else None
             if scheduler == 'proactive_bf':
                 # Backfill scan ordered by wait_model_v2 predicted wait
                 # (shortest first); head stays arrival order.
@@ -181,12 +256,22 @@ def run_once(jobs_in, scheduler, nn_model):
 
             started = easy_backfill_dispatch(cluster, queue, running, t,
                                              backfill_order=bf_order,
-                                             pre_dispatch_hook=hook)
+                                             pre_dispatch_hook=hook,
+                                             est_runtime_of=est_fn)
+            for job in started:
+                queue.remove(job)
+                running.append(job)
+        elif scheduler == 'cons_bf':
+            # Conservative backfill: reservation for EVERY queued job in
+            # arrival order (perfect estimates — strongest version).
+            started = conservative_backfill_dispatch(cluster, queue, running, t)
             for job in started:
                 queue.remove(job)
                 running.append(job)
         else:
             for job in queue[:]:
+                if cluster.total_free_gpus() < job.num_gpus and scheduler == 'fifo_strict':
+                    break   # textbook FIFO: a blocked head blocks the queue
                 if cluster.total_free_gpus() >= job.num_gpus:
                     # Predicted wait at the dispatch decision point, from the
                     # PRE-allocation cluster state (only ML schedulers predict
@@ -206,20 +291,73 @@ def run_once(jobs_in, scheduler, nn_model):
 
         util.append((CAPACITY - cluster.total_free_gpus()) / CAPACITY)
 
-    waits = [j.start_time - j.arrival_time for j in completed if j.start_time is not None]
-    return {
-        'mean_wait': float(np.mean(waits)) if waits else float('nan'),
-        'max_wait': float(np.max(waits)) if waits else float('nan'),
-        'throughput': len(completed) / SIM_TIME,
-        'fairness_gini': gini(waits),
-        'gpu_util': float(np.mean(util)) if util else 0.0,
-        # wait-prediction MAE at dispatch time; NaN for non-ML schedulers
-        'pred_wait_mae': float(np.mean(mae_samples)) if mae_samples else float('nan'),
-    }
+    return summarize(completed, util, mae_samples)
+
+def run_once_preemptive(jobs_in, overhead=PREEMPT_OVERHEAD):
+    """Preemptive SRPT (shortest remaining processing time) with a checkpoint
+    penalty: every tick the jobs with the least remaining work get the GPUs
+    (greedy pack in remaining-time order); a running job that loses its slot
+    is preempted and pays `overhead` extra ticks of remaining work. Runtime
+    oracle (true remaining time) — the strongest preemptive classical
+    baseline. Deterministic: ties broken by (remaining, arrival, id), so the
+    selection is stable across ticks and jobs do not ping-pong.
+    """
+    jobs = [Job(j.job_id, j.arrival_time, j.num_gpus, j.runtime, j.priority_score,
+                est_runtime=j.est_runtime) for j in jobs_in]
+    for j in jobs:
+        j.remaining = float(j.runtime)
+    queued, running, completed = [], [], []
+    util = []
+    preemptions = 0
+
+    for t in range(SIM_TIME):
+        # completions first (a job that ran its last tick at t-1 releases now,
+        # matching the non-preemptive convention end_time = start + runtime)
+        for job in running[:]:
+            if job.remaining <= 0:
+                job.end_time = t
+                running.remove(job)
+                completed.append(job)
+
+        for job in jobs:
+            if job.arrival_time == t:
+                queued.append(job)
+
+        # SRPT selection: greedy pack by remaining work over ALL active jobs
+        candidates = sorted(running + queued,
+                            key=lambda j: (j.remaining, j.arrival_time, j.job_id))
+        free = CAPACITY
+        selected = set()
+        for job in candidates:
+            if job.num_gpus <= free:
+                selected.add(job.job_id)
+                free -= job.num_gpus
+
+        for job in running[:]:
+            if job.job_id not in selected:
+                running.remove(job)
+                queued.append(job)
+                job.remaining += overhead   # checkpoint/restore penalty
+                preemptions += 1
+        for job in queued[:]:
+            if job.job_id in selected:
+                queued.remove(job)
+                running.append(job)
+                if job.start_time is None:
+                    job.start_time = t      # first dispatch, defines wait
+
+        for job in running:
+            job.remaining -= 1.0
+        util.append(sum(j.num_gpus for j in running) / CAPACITY)
+
+    return summarize(completed, util, [], preemptions=preemptions)
 
 def main():
     nn_model = train_nn_predictor()
-    schedulers = ['fifo', 'sjf', 'priority', 'proactive', 'nn', 'backfill', 'proactive_bf']
+    schedulers = ['fifo', 'fifo_strict', 'sjf', 'sjf_est', 'priority', 'hrrn',
+                  'smallest', 'proactive', 'nn',
+                  'backfill', 'backfill_est', 'cons_bf', 'proactive_bf',
+                  'srpt']
     rows = []
 
     for run in range(NUM_RUNS):
@@ -230,33 +368,62 @@ def main():
         random.seed(1000 + run)
         np.random.seed(1000 + run)
         jobs = generate_jobs()
+        # runtime estimates from a DEDICATED rng: global stream untouched, so
+        # pre-v3.3 scheduler results reproduce bit-identically
+        assign_estimates(jobs, random.Random(EST_SEED_BASE + run))
         for sch in schedulers:
-            out = run_once(jobs, sch, nn_model)
+            if sch == 'srpt':
+                out = run_once_preemptive(jobs)
+            else:
+                out = run_once(jobs, sch, nn_model)
             out['run'] = run + 1
             out['scheduler'] = sch.upper()
             rows.append(out)
             print(f"Run {run+1:02d} | {sch.upper():12s} wait={out['mean_wait']:.2f} throughput={out['throughput']:.3f}")
 
     df = pd.DataFrame(rows)
+    runs_path = os.path.join(OUT_DIR, 'multi_scheduler_runs.csv')
+    df.to_csv(runs_path, index=False)
+
     summary = df.groupby('scheduler', as_index=False).agg({
         'pred_wait_mae': 'mean',
         'mean_wait': 'mean',
         'max_wait': 'mean',
+        'p95_wait': 'mean',
+        'mean_turnaround': 'mean',
+        'mean_bounded_slowdown': 'mean',
         'fairness_gini': 'mean',
         'throughput': 'mean',
         'gpu_util': 'mean',
+        'preemptions': 'mean',
     }).sort_values('mean_wait')
 
     summary_path = os.path.join(OUT_DIR, 'multi_scheduler_benchmark.csv')
     summary.to_csv(summary_path, index=False)
 
-    plt.figure(figsize=(11, 5))
+    sig = pairwise_significance(df)
+    sig_path = os.path.join(OUT_DIR, 'multi_scheduler_significance.csv')
+    sig.to_csv(sig_path, index=False)
+
+    # Equivalence (TOST): a non-significant difference is not sameness. The
+    # SMALLEST-vs-PROACTIVE pair is the ranking-degeneracy claim's test.
+    equiv = pd.concat(
+        [equivalence_table(df, [('SMALLEST', 'PROACTIVE'),
+                                ('NN', 'PROACTIVE'),
+                                ('SMALLEST', 'NN')],
+                           metric=m, unit='run', margin_frac=0.10)
+         for m in ('mean_wait', 'mean_bounded_slowdown')],
+        ignore_index=True)
+    equiv_path = os.path.join(OUT_DIR, 'multi_scheduler_equivalence.csv')
+    equiv.to_csv(equiv_path, index=False)
+
+    plt.figure(figsize=(13, 5))
     x = np.arange(len(summary))
     width = 0.35
     plt.bar(x - width / 2, summary['mean_wait'], width=width, label='Mean wait', color='#38bdf8')
     plt.bar(x + width / 2, summary['throughput'], width=width, label='Throughput', color='#34d399')
-    plt.xticks(x, summary['scheduler'])
-    plt.title('Scheduler benchmark (pred-wait MAE, wait, fairness, throughput in CSV)')
+    plt.xticks(x, summary['scheduler'], rotation=30, ha='right')
+    plt.title('Scheduler benchmark (full metrics incl. slowdown/tails in CSV)')
     plt.legend()
     plt.tight_layout()
     plot_path = os.path.join(OUT_DIR, 'scheduler_comparison.png')
@@ -267,11 +434,35 @@ def main():
         'pred_wait_mae': '{:.3f}'.format,
         'mean_wait': '{:.3f}'.format,
         'max_wait': '{:.3f}'.format,
+        'p95_wait': '{:.3f}'.format,
+        'mean_turnaround': '{:.3f}'.format,
+        'mean_bounded_slowdown': '{:.3f}'.format,
         'fairness_gini': '{:.3f}'.format,
         'throughput': '{:.3f}'.format,
         'gpu_util': '{:.3f}'.format,
+        'preemptions': '{:.1f}'.format,
     }))
+    print('\n=== Paired significance (mean wait, Holm-adjusted) ===')
+    print(sig.to_string(index=False, formatters={
+        'mean_wait_sched': '{:.3f}'.format,
+        'mean_wait_ref': '{:.3f}'.format,
+        'mean_diff': '{:+.3f}'.format,
+        'pct_vs_ref': '{:+.2f}'.format,
+        'cohens_dz': '{:+.3f}'.format,
+        'ttest_p': '{:.3g}'.format,
+        'wilcoxon_p': '{:.3g}'.format,
+        'ttest_p_holm': '{:.3g}'.format,
+        'wilcoxon_p_holm': '{:.3g}'.format,
+    }))
+    print('\n=== Equivalence (paired TOST, margin = 10% of the reference) ===')
+    print(equiv[['scheduler_a', 'scheduler_b', 'metric', 'mean_a', 'mean_b',
+                 'pct_diff', 'ci_low', 'ci_high', 'margin', 'p_tost',
+                 'equivalent']]
+          .to_string(index=False, float_format=lambda v: f'{v:.4g}'))
+    print('Saved:', runs_path)
     print('Saved:', summary_path)
+    print('Saved:', sig_path)
+    print('Saved:', equiv_path)
     print('Saved:', plot_path)
 
 if __name__ == '__main__':

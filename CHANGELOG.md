@@ -1,5 +1,169 @@
 # Changelog
 
+## v3.4 — July 2026 · Ranking degeneracy, trace-driven re-evaluation, and a reframed manuscript
+
+v3.3 established that any runtime signal beats the proactive scheduler on mean
+wait, leaving it a claimed niche in the *zero-runtime-information* regime. v3.4
+tests that niche and removes it, and moves the scheduler evaluation off the
+synthetic generator onto real workloads.
+
+### The headline: the ML score cannot distinguish co-queued jobs
+At a fixed dispatch instant every queued job observes the same cluster, so only
+per-job features can differ — and in this feature set each of those
+(`can_fit_now`, `gpu_fit_ratio`, `node_availability`, `queue_pressure`) is a
+deterministic function of the requested size given the state. The predicted
+score is therefore `g_S(size)` and the ranking is a permutation of the size
+order; the eleven cluster-state features shift all scores equally and **cannot
+reorder anything**.
+
+- **NEW `04_scheduler/ranking_degeneracy.py`** — instruments real dispatch
+  decisions via a `RANK_OBSERVER` hook added to both benchmarks (no simulator
+  duplication). Over **25,306 instants in three settings: zero counterexamples**
+  — two equally-sized co-queued jobs never receive different scores. 8 of the 12
+  synthetic features vary across the queue in **0.0%** of instants. A ~9-job
+  queue receives only 2.3–3.1 distinct priority levels, and in 18–26% of instants
+  every score ties, so the policy silently *is* FCFS. Recovers and plots the
+  size→priority lookup table (monotone in 52–67% of instants).
+- **NEW `04_scheduler/size_scheduler.py`** — `SMALLEST` / `SMALLEST_FIRST`: sort
+  by requested size, no model. The ML-free control the feature set implies.
+- **Result**: statistically **equivalent** to the XGBoost pipeline — synthetic
+  −0.18%, paired TOST p=2e-16, diff CI [−0.14,+0.08] ts vs a ±1.61 margin; SDSC
+  SP2 −0.05%, TOST p=1.8e-12. The **MLP baseline is bit-identical to the size
+  sort on every metric of all 20 runs**. On LANL the equivalence honestly fails
+  (+14.4%): the learned table is non-monotone often enough to beat a naive size
+  sort — a *better size table*, still a function of size alone, and on that same
+  machine it does not beat FCFS (p=0.48).
+
+### Trace-driven scheduler benchmark on real workloads
+- **NEW `04_scheduler/trace_driven_benchmark.py`** — event-driven, second-exact
+  replay of LANL CM-5 and SDSC SP2 through **12 policies**, 20 paired windows per
+  trace (3-day warm-up not measured + 7 measured days), offered load ≈0.70,
+  windows spaced evenly rather than selected by load. Capacity-only allocator
+  (SWF records no per-node placement). The ML scheduler is given its best case:
+  a model **retrained on the same machine's earlier data** (chronological 60%
+  split, no leakage).
+- Uses the **real user runtime estimates the traces contain** (SWF field 9)
+  instead of the simulated f-model. Missing estimates fall back to the trace
+  median, deliberately *not* the true runtime, so estimate-driven policies get no
+  free oracle.
+- **The synthetic gain does not replicate**: Proactive vs FCFS is −20.4% on SDSC
+  (p=0.042) but **−4.5%, p=0.48 on LANL**. SJF on real user estimates beats
+  Proactive by 20.2% (SDSC, Holm p=0.009) and 15.3% (LANL). `PROACTIVE_EST` —
+  the model retrained *with* the estimate as a feature — still loses to plain SJF
+  on both machines (+7.9% / +17.5%): the pipeline's ceiling is the sort it is
+  trying to learn.
+
+### Real estimate error vs the f-model
+- Measured, not simulated: SDSC median 6.91× over-estimate with 0.1%
+  under-estimates; LANL median 1.51× but **36.3% under-estimates** — which the
+  over-estimate-only f-model (`est = runtime·U(1,C)`) **cannot produce at all**.
+- v3.3 concluded from the f-model that EASY is "near-insensitive to estimate
+  quality". On the traces real estimate error costs EASY **+6.2% on SDSC but
+  +74% on LANL** (p=0.025) versus perfect estimates: under-estimates break the
+  reservation guarantee, and over-estimate-only noise cannot reveal it. The
+  f-model should not be the sole estimate-error model in backfill studies.
+
+### Methodology hardening
+- **Equivalence testing** (`simstats.tost_equivalence`, `equivalence_table`):
+  claims of *sameness* now use paired TOST with a 10%-of-reference margin,
+  reporting both one-sided p-values and the 90% CI of the difference. Without
+  it, the p=0.65 size-sort comparison reads as "no significant difference" and
+  gets discarded instead of recognised as the result.
+- **Mean bounded slowdown** `max(turnaround/max(runtime,τ),1)` promoted to a
+  first-class reported metric everywhere (it was computed but never surfaced).
+- **NEW `04_scheduler/simstats.py`** — shared Gini / Holm / paired-significance /
+  TOST helpers, so the synthetic and trace studies apply identical statistical
+  machinery; removes the duplicated copies from `multi_scheduler_benchmark.py`.
+- `hrrn_scheduler.py` gains `order_queue_estimated` (deployable HRRN on user
+  estimates), mirroring `sjf_scheduler.py`.
+- Synthetic benchmark now batches PROACTIVE's per-queue predictions into one
+  call — **verified bit-identical** to the previous per-job loop (max change in
+  `mean_wait` across all pre-existing schedulers: 0.0).
+- `run_all_experiments.sh` extended to 14 steps (adds the degeneracy diagnostic
+  and the trace-driven benchmark); phase 24 positioning statement regenerated
+  with the SMALLEST control.
+
+### Manuscript reframed
+`phases_22_30/phase_28_manuscript/manuscript.tex` rewritten from "we propose an
+ML scheduler that beats FIFO" to what the evidence supports: **"Ranking
+Degeneracy: A Learned Wait-Time Model Schedules No Better Than Sorting by
+Requested Size"** — an evaluation study and a negative result, with a stated
+non-degeneracy condition for feature sets and two methodological
+recommendations. Also fixes two long-standing manuscript defects: a stale
+in-sample `R² ≈ 0.937` presented as holdout quality, and a claim that runtimes
+were "sampled from real distributions (LANL, Alibaba traces)" when the synthetic
+generator uses `randint(5,20)`.
+
+### Known limitation (stated, not hidden)
+Simulator fidelity against recorded waits is good on LANL (38.8 vs 33.2 min mean;
+the simulator is slightly pessimistic) but permissive on SDSC (174.6 vs 630.9 min
+mean, recorded **median** 19.3 min) — SDSC's mean is dominated by a tail our
+capacity-only model cannot reproduce, since SWF records no placement or site
+policy. SDSC results read as "a correctly-loaded 128-processor machine driven by
+real distributions", not a replay of SDSC's queue. The degeneracy result does not
+depend on this: it is a property of the feature vector and holds in all three
+substrates.
+
+## v3.3 — July 2026 · Classical-baseline landscape: estimated SJF, canonical EASY, conservative BF, HRRN, preemptive SRPT
+
+Response to faculty review: "add EASY/reservation backfill, SJF with perfect or
+estimated lengths, and preemption/starvation-aware policies — do they explain
+the improvement?" The 20-run paired benchmark now covers **13 schedulers**
+with Holm-adjusted pairwise significance (t + Wilcoxon) against both
+PROACTIVE and FCFS (`05_results/schedulers/multi_scheduler_{runs,benchmark,significance}.csv`).
+
+### New classical baselines
+- **SJF-EST** — SJF on user estimates (f-model, Mu'alem & Feitelson 2001:
+  est = runtime·f, f~U(1,C), C=5) and **SJF-MODAL** (estimates rounded up to a
+  {10, 20}-tick menu — the rank-destroying regime of Tsafrir & Feitelson 2005).
+- **Canonical EASY** — added the missing second backfill condition (a candidate
+  fitting in the shadow-time surplus may start even if it outlives the shadow);
+  `04_scheduler/backfill_scheduler.py` now takes `est_runtime_of` so EASY also
+  runs on estimates (**EASY-EST**). Verified: 300-trial property test that a
+  reserved head is never delayed.
+- **Conservative backfill (CONS-BF)** — a reservation for EVERY queued job via
+  a future free-capacity profile (helper property-tested against a brute-force
+  oracle on 3000 random instances).
+- **HRRN** — highest response ratio next (starvation-aware aging built into the
+  dispatch ratio).
+- **Preemptive SRPT** — shortest-remaining-processing-time with a 1-tick
+  checkpoint penalty per preemption (runtime oracle; ~41.5 preemptions/run).
+- **Strict FIFO** — textbook head-blocking FIFO, exposing that the historical
+  'FIFO' baseline is FCFS + unrestricted first-fit dispatch (label kept, now
+  documented; strict FIFO is the honest EASY reference).
+- **Estimate-quality sweep** — `04_scheduler/estimate_sensitivity.py` sweeps
+  f-model C ∈ {1,2,3,5,10} + modal estimates with coupled noise and per-C
+  paired CIs vs PROACTIVE (`05_results/schedulers/estimate_sensitivity*.csv/png`).
+
+### Headline findings (honest)
+- **Any runtime signal beats the wait-prediction scheduler on mean wait**:
+  SJF-oracle 12.34 < SJF-EST 13.32 < SRPT 14.02 < HRRN 15.55 < PROACTIVE 16.10
+  ts; even modal SJF (two estimate classes) reaches 14.06. Runtime-ordered
+  policies pay in tails (SJF max 146 ts / Gini 0.79; SRPT 151 / 0.81); HRRN is
+  the classical all-rounder (15.55 / max 65 / Gini 0.54, beating PROACTIVE's
+  tail by 2×). PROACTIVE's defensible niche: **zero-runtime-information**
+  (−6.5% vs FCFS, Holm p=0.0012, no estimates required).
+- **Canonical EASY re-prices the reservation guarantee**: +11.8% mean wait vs
+  FCFS/first-fit (v3.2's non-canonical variant overstated it as ~45%), −26% vs
+  strict FIFO, and near-insensitive to estimate quality (19.0–19.8 ts across
+  perfect/f-model/modal). Hybrid predicted-wait backfill still ties plain EASY.
+
+### Metric & statistics fixes (from a 13-agent adversarial review; 7 confirmed)
+- **Unified wait = turnaround − runtime** for all schedulers: bit-identical for
+  the non-preemptive ones, but closes SRPT's time-to-first-dispatch artifact
+  that hid ~29% of its queueing delay (SRPT mean wait 10.66 → honest 14.02,
+  which flips its ranking vs SJF).
+- New metrics for every scheduler: p95 wait, mean turnaround, mean bounded
+  slowdown, preemption count.
+- Holm correction no longer converts NaN p-values into finite ones; Wilcoxon
+  p-values now get their own Holm column instead of being reported raw next to
+  adjusted t-tests; HRRN docstring no longer overclaims "cannot starve".
+- Pre-existing schedulers (FIFO/FCFS, SJF, Priority, Proactive, NN) verified
+  **bit-identical** to v3.2 outputs; estimate RNG uses a dedicated stream
+  (seed 20000+run) so workload pairing is untouched.
+
+---
+
 ## v3.2 — July 2026 · Research extensions: real traces, backfill, fairness budget, uncertainty
 
 The four highest-leverage items from the v3.1 future-scope roadmap, implemented,

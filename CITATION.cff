@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 title: >-
-  Proactive Feasibility Scheduler: Simulation-Driven GPU Job
-  Scheduling with ML-Based Wait-Time Prediction
+  Proactive Feasibility Scheduler: An Evaluation Study of
+  ML-Based GPU Job Scheduling
 message: >-
   If you use this software, its results, or its methodology in
   your work, please cite it using the metadata below.
@@ -16,15 +16,22 @@ repository-code: >-
 url: >-
   https://github.com/rakshit-737/proactive-feasibility-scheduler
 abstract: >-
-  A simulation-driven study of proactive GPU-cluster job scheduling that uses a
-  machine-learning wait-time predictor to reorder the queue. The repository
-  contains a 30-phase research pipeline: discrete-time cluster simulation,
-  wait-time regression modelling, a five-scheduler benchmark (FIFO, SJF,
-  Priority, Proactive, and a neural-network scheduler), ablation and SHAP
-  explainability, fairness and starvation analysis, an EASY-backfill baseline
-  with a tunable fairness budget, uncertainty-aware scheduling, scaling and
-  concept-drift studies, real-trace validation on Parallel Workloads Archive
-  traces (LANL CM-5, SDSC SP2), ROI analysis, and a one-command
+  An evaluation study of proactive GPU-cluster job scheduling driven by a
+  machine-learning wait-time predictor, reporting a negative result: used as a
+  queue-ordering score, such a model is structurally degenerate. At any dispatch
+  instant all queued jobs share the cluster state, so every per-job feature in
+  the standard feature set is a deterministic function of the job's requested
+  size — the learned score therefore cannot distinguish two co-queued jobs by
+  anything else. This is verified over 25,306 real dispatch instants with zero
+  counterexamples, and an ML-free sort by requested size is shown statistically
+  equivalent (paired TOST) to the full pipeline. The repository contains a
+  30-phase research pipeline: discrete-time cluster simulation, wait-time
+  regression modelling, a 14-scheduler synthetic benchmark and a trace-driven
+  benchmark replaying Parallel Workloads Archive traces (LANL CM-5, SDSC SP2)
+  with their real user runtime estimates, canonical EASY and conservative
+  backfill, preemptive SRPT, HRRN, ablation and SHAP explainability, fairness
+  and starvation analysis with a tunable fairness budget, uncertainty-aware
+  scheduling, scaling and concept-drift studies, ROI analysis, and a one-command
   reproducibility kit.
 keywords:
   - job scheduling
@@ -34,7 +41,9 @@ keywords:
   - wait-time prediction
   - backfilling
   - reproducible research
+  - negative results
+  - evaluation methodology
   - queue optimization
 license: MIT
-version: "3.2"
-date-released: "2026-07-04"
+version: "3.4"
+date-released: "2026-07-21"

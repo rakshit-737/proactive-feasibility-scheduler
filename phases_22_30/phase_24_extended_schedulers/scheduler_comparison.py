@@ -48,19 +48,66 @@ OUTPUT_CLAIM = os.path.join(SCRIPT_DIR, "novelty_claim.txt")
 # 05_results/schedulers/multi_scheduler_benchmark.csv)
 SCHEDULERS = {
     "FIFO": {
-        "name": "FIFO",
+        "name": "FCFS + first-fit (liberal dispatch)",
         "type": "baseline",
-        "reference": "04_scheduler/multi_scheduler_benchmark.py (arrival order)",
+        "reference": "04_scheduler/multi_scheduler_benchmark.py (any fitting job starts; label kept for continuity)",
+    },
+    "FIFO_STRICT": {
+        "name": "FIFO (head-blocking)",
+        "type": "baseline",
+        "reference": "04_scheduler/multi_scheduler_benchmark.py (textbook FIFO, blocked head blocks queue)",
     },
     "SJF": {
-        "name": "Shortest Job First",
+        "name": "Shortest Job First (oracle)",
         "type": "heuristic_baseline",
-        "reference": "04_scheduler/sjf_scheduler.py",
+        "reference": "04_scheduler/sjf_scheduler.py (true runtimes)",
+    },
+    "SJF_EST": {
+        "name": "SJF (user estimates)",
+        "type": "heuristic_baseline",
+        "reference": "04_scheduler/sjf_scheduler.py (f-model estimates, C=5)",
     },
     "PRIORITY": {
         "name": "Priority",
         "type": "heuristic_baseline",
         "reference": "04_scheduler/priority_scheduler.py",
+    },
+    "HRRN": {
+        "name": "Highest Response Ratio Next",
+        "type": "heuristic_baseline",
+        "reference": "04_scheduler/hrrn_scheduler.py (starvation-aware)",
+    },
+    "SMALLEST": {
+        "name": "Smallest requested size first (no ML)",
+        "type": "degeneracy_control",
+        "reference": "04_scheduler/size_scheduler.py (the ML-free control implied "
+                     "by ranking_degeneracy.py: the wait model's per-job features "
+                     "are all functions of requested size)",
+    },
+    "BACKFILL": {
+        "name": "EASY backfill (oracle)",
+        "type": "heuristic_baseline",
+        "reference": "04_scheduler/backfill_scheduler.py (true runtimes)",
+    },
+    "BACKFILL_EST": {
+        "name": "EASY backfill (user estimates)",
+        "type": "heuristic_baseline",
+        "reference": "04_scheduler/backfill_scheduler.py (f-model estimates, C=5)",
+    },
+    "CONS_BF": {
+        "name": "Conservative backfill",
+        "type": "heuristic_baseline",
+        "reference": "04_scheduler/backfill_scheduler.py (reservation per queued job)",
+    },
+    "SRPT": {
+        "name": "Preemptive SRPT (+1 tick overhead)",
+        "type": "heuristic_baseline",
+        "reference": "04_scheduler/multi_scheduler_benchmark.py (run_once_preemptive)",
+    },
+    "PROACTIVE_BF": {
+        "name": "EASY backfill + predicted-wait scan",
+        "type": "ml_hybrid",
+        "reference": "04_scheduler/multi_scheduler_benchmark.py (proactive_bf)",
     },
     "NN": {
         "name": "Neural Network (MLP)",

@@ -1,5 +1,10 @@
-% Phase 28: Proactive Feasibility Scheduling for Multi-GPU Heterogeneous Clusters
-% Manuscript Template (LaTeX)
+% Proactive Feasibility Scheduling -- v3.4 manuscript
+%
+% REFRAMED (v3.4). Earlier versions presented this work as "we propose an ML
+% scheduler that beats FIFO". The v3.3 baseline study and the v3.4 experiments
+% below no longer support that framing, so the paper is now what the evidence
+% actually is: an evaluation study and a negative result about using a learned
+% wait-time regressor as a queue-ordering score.
 
 \documentclass[11pt,twocolumn]{article}
 
@@ -18,11 +23,11 @@
 
 \pagestyle{fancy}
 \fancyhf{}
-\fancyhead[C]{\small Proactive Feasibility Scheduling for Multi-GPU Clusters}
+\fancyhead[C]{\small Ranking Degeneracy in ML-Based Job Scheduling}
 \fancyfoot[C]{\thepage}
 
-\title{Proactive Feasibility Prediction for Multi-GPU Job Scheduling \\
-        in Heterogeneous Clusters Using XGBoost}
+\title{Ranking Degeneracy: A Learned Wait-Time Model Schedules\\
+       No Better Than Sorting by Requested Size}
 
 \author{
   Author(s) \\
@@ -36,366 +41,486 @@
 \maketitle
 
 \begin{abstract}
-Modern HPC and cloud clusters hosting GPU-intensive workloads face significant scheduling challenges: job wait times are unpredictable due to heterogeneous resource requests, cluster fragmentation, and queue dynamics. We propose \emph{Proactive}, an ML-based scheduling approach that predicts job wait time using XGBoost trained on cluster-state features, enabling proactive queue reordering to reduce mean wait time. On a seeded 40-run paired benchmark against FIFO, Proactive reduces mean wait time by 7.7\% (bootstrap 95\% CI [5.0\%, 10.3\%], paired $t$-test $p = 1.4\times10^{-6}$) at identical GPU utilisation. The gain is not free: tail latency (max wait $\sim$58 $\rightarrow$ $\sim$125 ts) and per-job fairness (Gini 0.53 $\rightarrow$ 0.80) worsen, and an anti-starvation variant recovers part of the fairness cost (Gini 0.69). The wait-time model reaches $R^2 \approx 0.84$ on a proper holdout, but degrades sharply out-of-distribution (mean $R^2 < 0$ across 72 domain-shift scenarios). We validate on two real Parallel Workloads Archive traces: zero-shot sim-to-real transfer fails ($R^2 \approx 0$ on both), while per-trace retraining recovers strong signal on batch workloads ($R^2$ on log-wait $= 0.494$ on SDSC SP2). We further evaluate EASY-backfill baselines, a bounded-fairness wait budget, and an uncertainty-aware variant, and report these trade-offs and failure modes explicitly, together with a scaling analysis (scheduling overhead $< 5\%$) and a deployment guide with FIFO-fallback safeguards for HPC operators.
+A common recipe in ``ML for systems'' is to train a regressor that predicts job
+wait time from cluster-state features and then use its predictions to order the
+queue. We report that this recipe is \emph{structurally degenerate}. At any
+single dispatch instant every queued job observes the same cluster, so in the
+feature vector only the job's own attributes differ, and in the standard
+cluster-state feature set every such attribute is a deterministic function of
+the job's requested size. The learned score is therefore a function of
+requested size alone, and the ordering it induces is a per-instant lookup table
+from size to priority: the cluster-state features shift all scores equally and
+cannot reorder anything. We verify this over $25{,}306$ real dispatch instants
+in three settings (a synthetic generator and two Parallel Workloads Archive
+traces) and find zero counterexamples --- two jobs of equal size never receive
+different scores. The consequences are measurable. On the synthetic benchmark a
+one-line sort by requested size is statistically \emph{equivalent} to the full
+XGBoost pipeline (paired TOST $p = 2\times10^{-16}$, difference CI
+$[-0.14, +0.08]$ ts against a $\pm 1.61$ ts margin), and an MLP on the same
+features reproduces the size sort exactly. We then re-ask the whole scheduler
+comparison on two real traces, replacing the simulated user-estimate model with
+the estimates the traces actually contain. The synthetic $7.7\%$ mean-wait gain
+over FCFS does not replicate: the ML scheduler is indistinguishable from FCFS on
+LANL CM-5 ($p = 0.48$) and any classical policy with a runtime estimate beats it
+on both machines. We also find that real estimate error is far more damaging to
+backfill than the over-estimate-only $f$-model predicts ($+74\%$ mean wait on
+LANL, where $36\%$ of user estimates are \emph{under}-estimates that the
+$f$-model cannot generate). We argue the failure is one of feature design rather
+than model class, state the condition a wait-time feature set must satisfy to be
+non-degenerate, and release the harness, traces, and seeds.
 \end{abstract}
 
 \section{Introduction}
 
-\subsection{Motivation}
-GPU clusters are critical infrastructure for machine learning and scientific computing. However, poor scheduling decisions lead to:
-\begin{itemize}
-  \item Long job wait times (avg. 18 timesteps in benchmarks)
-  \item Resource fragmentation and underutilization
-  \item Unfair treatment (Gini coefficient 0.42+, some jobs starve)
-  \item Operational overhead for manual queue tuning
-\end{itemize}
+Machine learning for cluster scheduling is an active area, and a recurring
+design is: (i) log cluster state, (ii) train a regressor to predict a job's wait
+time, (iii) at each scheduling decision, score the queued jobs with the
+regressor and dispatch in ascending predicted wait. The intuition is that a
+model which has seen how the queue evolves can anticipate contention better than
+a fixed heuristic.
 
-Existing schedulers (FIFO, SLURM backfill, Kubernetes QoS) use greedy heuristics that cannot anticipate cluster state evolution. We propose \emph{Proactive}, which uses machine learning to predict job feasibility and optimize queue ordering.
+This paper reports that step (iii) does not do what it appears to do. The
+argument is elementary but, as far as we can tell, not stated in the literature
+we build on, and it invalidates the natural reading of any improvement measured
+this way.
 
-\subsection{Contributions}
+\paragraph{The degeneracy.}
+Fix a dispatch instant $t$ with cluster state $S_t$ and queue $Q_t$. The feature
+vector for job $j$ splits into two groups: features of the machine (free
+processors, queue length, number of running jobs, fragmentation, queue pressure)
+and features of the job (requested size, and quantities derived from it such as
+``does it fit now''). The first group is \emph{identical for every job in
+$Q_t$} --- it describes $S_t$, not $j$. So for two jobs $j_1, j_2 \in Q_t$ the
+predicted waits can differ only through the second group. In the 12-feature set
+used here (and in the 8-feature set reconstructible from a Standard Workload
+Format trace) every member of the second group is a deterministic function of the
+requested size $g_j$ once $S_t$ is fixed:
+\begin{align*}
+\texttt{can\_fit\_now} &= \mathbb{1}[\,\text{free}(S_t) \ge g_j\,] \\
+\texttt{gpu\_fit\_ratio} &= \min(\text{free}(S_t)/g_j,\; 1) \\
+\texttt{node\_availability} &= |\{n : \text{free}_n(S_t) \ge g_j\}| / N \\
+\texttt{queue\_pressure} &= (\Sigma_{Q_t} - g_j)/(\text{free}(S_t)+1).
+\end{align*}
+Hence the score satisfies
+\[
+  \widehat{w}(j \mid S_t) \;=\; g_{S_t}(g_j)
+\]
+for some function $g_{S_t}$ determined entirely by the state, and the induced
+queue order is the order of $g_{S_t}$ over the sizes present in $Q_t$. The model
+is, at each instant, a \emph{lookup table from requested size to priority}. The
+eleven cluster-state features are not useless --- they select \emph{which} table
+is used --- but they cannot distinguish two co-queued jobs, which is the only
+thing a ranking consumes.
+
+\paragraph{Why this matters.}
+If the argument holds, then a reported improvement of an ML wait-time scheduler
+over FCFS is evidence about size-based ordering, not about learning. The correct
+control is not FIFO; it is \emph{sorting by requested size}, which needs no
+dataset, no training, no inference, no SHAP explanation, and no drift monitor.
+To our knowledge that control is absent from the ML-scheduling evaluations we
+are aware of, including our own earlier versions of this work.
+
+\paragraph{Contributions.}
 \begin{enumerate}
-  \item \textbf{ML-Based Wait-Time Prediction}: XGBoost model trained on 12 non-leaky cluster-state features (queue pressure, GPU availability, fragmentation, etc.), reaching $R^2 \approx 0.84$ / MAE $\approx 4.7$ ts on a 20\% holdout (5-fold CV MAE $4.74 \pm 0.42$).
-  \item \textbf{Proactive Scheduler}: Reorders the queue by predicted wait, achieving a 7.7\% mean wait-time reduction vs.\ FIFO (95\% CI [5.0\%, 10.3\%], $p = 1.4\times10^{-6}$) at unchanged GPU utilisation.
-  \item \textbf{Honest Fairness Analysis}: Formal fairness metrics (Gini, Jain Index, SLA compliance) show the mean-wait gain \emph{costs} per-job equity (Gini 0.53 $\rightarrow$ 0.80); we quantify the trade-off and evaluate an anti-starvation mitigation (Gini 0.69).
-  \item \textbf{OOD and Real-Trace Diagnostics}: A 72-scenario domain-shift study shows prediction quality collapses out-of-distribution (mean $R^2 < 0$). On two real Parallel Workloads Archive traces, zero-shot sim-to-real transfer fails ($R^2 \approx 0$), while per-trace retraining recovers $R^2$ on log-wait of 0.494 (SDSC SP2) and 0.101 (LANL CM-5) --- the signal is machine-dependent.
-  \item \textbf{Scaling \& Operations}: Benchmarks at 32--256 GPU scales with $< 5\%$ scheduling overhead; deployment guide with FIFO-fallback safeguards for HPC operators.
+  \item \textbf{The degeneracy, stated and measured} (\S\ref{sec:degeneracy}).
+        Over $25{,}306$ dispatch instants across a synthetic generator and two
+        real traces, two equally-sized co-queued jobs never receive different
+        scores (0 violations). Eight of the twelve features vary across the
+        queue in $0.0\%$ of instants. A ten-job queue receives only $2.3$--$3.1$
+        distinct priority levels.
+  \item \textbf{An equivalence result, not a null result}
+        (\S\ref{sec:equivalence}). Using paired TOST rather than a failure to
+        reject, sorting by requested size is statistically equivalent to the
+        XGBoost scheduler on the synthetic benchmark
+        ($p_{\mathrm{TOST}} = 2\times10^{-16}$) and on SDSC SP2
+        ($p_{\mathrm{TOST}} = 1.8\times10^{-12}$). An MLP over the same features
+        reproduces the size sort \emph{exactly} on all 20 paired runs.
+  \item \textbf{A trace-driven re-evaluation} (\S\ref{sec:traces}). Replaying
+        LANL CM-5 and SDSC SP2 through twelve policies, with the real user
+        runtime estimates the traces contain, the synthetic $7.7\%$ gain over
+        FCFS does not replicate, and every policy with access to a runtime
+        estimate beats the ML scheduler on both machines.
+  \item \textbf{Real estimate error breaks backfill far more than the
+        $f$-model suggests} (\S\ref{sec:estimates}). Real estimates are
+        $6.9\times$ the runtime at the median on SDSC but only $1.5\times$ on
+        LANL, where $36\%$ are \emph{under}-estimates --- a case the standard
+        over-estimate-only $f$-model cannot produce. Backfill costs $+74\%$ mean
+        wait on LANL under real estimates versus perfect ones, against near-zero
+        sensitivity under the $f$-model.
+  \item \textbf{A non-degeneracy condition and a reproducible harness}
+        (\S\ref{sec:fix}). We state what a feature set must contain to make
+        learning matter for ranking, and release code, traces, and seeds.
 \end{enumerate}
 
 \section{Related Work}
 
-\textbf{Cluster Scheduling:}
-Classical schedulers (FIFO, SJF, Priority) are simple but suboptimal \cite{Feitelson1997}. 
-SLURM backfill \cite{SLURM2003} improves utilization but is still reactive.
-Recent ML approaches \cite{ML-Scheduling1, ML-Scheduling2} use RNNs or DQN; our XGBoost is simpler and faster.
+Wait-time prediction for batch queues is long-standing: Downey's log-uniform
+lifetime models, template-based prediction from historical similar jobs, and the
+QBETS/Karnak line of quantile-based bound predictors all predate modern ML
+pipelines \cite{Feitelson1997, Feitelson2011}. Our contribution is not a better
+predictor; it is an observation about how such predictors behave when used as a
+\emph{ranking} score.
 
-\textbf{Fairness in Scheduling:}
-Jain's fairness index \cite{Jain1984} measures equity; we extend it to GPU scheduling.
-Starvation prevention \cite{Feitelson2000} is critical; proactive includes anti-starvation bumping.
+Backfilling \cite{SLURM2003} is the dominant production technique. EASY
+\cite{Mualem2001} reserves capacity for the queue head and backfills jobs that
+either finish before the reservation or fit in the surplus beyond the head's
+requirement. Conservative backfill reserves for every queued job. Both depend on
+user runtime estimates, whose inaccuracy is well documented; the standard model
+in the literature is the $f$-model, $\hat{r} = r \cdot f$ with $f \sim U(1, C)$
+\cite{Mualem2001}, and the observation that over-estimation can paradoxically
+\emph{help} backfill \cite{Tsafrir2005}. \S\ref{sec:estimates} shows this model
+misses a failure mode that real traces exhibit.
 
-\textbf{Simulation \& Validation:}
-DES (discrete-event simulation) is standard for cluster evaluation \cite{Feitelson2011}.
-Cross-dataset validation bridges sim-to-real gaps \cite{Sim2Real2021}.
+Learning-based schedulers, including deep-RL approaches
+\cite{ML-Scheduling1, ML-Scheduling2}, generally learn a policy end-to-end
+rather than fitting a regressor and sorting by it, and so are not subject to the
+degeneracy as stated --- though the same question (what is the ML-free control?)
+applies to them. Bounded slowdown \cite{Feitelson2000} and Jain's index
+\cite{Jain1984} are the standard evaluation metrics; we report both, having
+found that mean wait alone hides the effect on short jobs.
 
-\section{Methodology}
+\section{Experimental Setup}
 
-\subsection{Cluster Model}
-We model an HPC cluster as:
-\begin{itemize}
-  \item $N$ nodes, each with $G$ GPUs per node
-  \item Jobs have variable GPU requirements $(1 \text{ to } 8)$
-  \item Runtime sampled from real distributions (LANL, Alibaba traces)
-  \item Queue managed as FIFO with reordering capability
-\end{itemize}
+\subsection{Two evaluation substrates}
 
-\subsection{Cluster-State Features}
-The ML model ingests 12 engineered features:
+\paragraph{Synthetic (for continuity).}
+A discrete-time simulator: 8 nodes $\times$ 4 GPUs, 110 jobs arriving uniformly
+over the first 150 of 300 timesteps, sizes $U\{1,8\}$, runtimes $U\{5,20\}$. 20
+paired runs (seeds $1000{+}i$, disjoint from the model's training seeds
+$42{+}i$). This is the substrate all earlier versions of this work used, and we
+keep it only so the new controls can be compared against the previously
+published numbers.
 
-\begin{table}[h]
-\centering
-\begin{tabular}{ll}
-\toprule
-Feature & Description \\
-\midrule
-\texttt{job\_gpu} & GPUs requested by current job \\
-\texttt{total\_free} & Free GPUs across all nodes \\
-\texttt{queue\_length} & Number of jobs in queue \\
-\texttt{running\_jobs} & Currently executing jobs \\
-\texttt{max\_free\_node} & Max free GPUs on any single node \\
-\texttt{variance\_free} & Variance in free GPUs across nodes \\
-\texttt{can\_fit\_now} & Binary: job fits in available GPUs \\
-\texttt{gpu\_fit\_ratio} & Ratio of free to required GPUs \\
-\texttt{fragmentation} & Measure of memory fragmentation \\
-\texttt{queue\_pressure} & Load indicator (high = risky) \\
-\texttt{node\_availability} & Fraction of nodes with resources \\
-\texttt{avg\_free\_per\_node} & Average free GPUs per node \\
-\bottomrule
-\end{tabular}
-\end{table}
+\paragraph{Trace-driven (for validity).}
+Two cleaned Parallel Workloads Archive traces: LANL CM-5 (1994, 1024
+processors, $122{,}060$ kept jobs) and SDSC SP2 (1998, 128 processors,
+$43{,}117$ kept jobs). We reserve the first $60\%$ of each trace's time span for
+model training and carve 20 evenly spaced evaluation windows from the remainder,
+each 3 simulated days of warm-up (not measured) followed by 7 measured days.
+Mean offered load is $0.72$ (SDSC) and $0.68$ (LANL). Windows are evenly spaced,
+\emph{not} selected by load, to avoid cherry-picking congestion.
 
-\subsection{Model: XGBoost Wait-Time Regression}
-We train XGBoost with:
-\begin{itemize}
-  \item Target: job wait time (ground truth from simulation)
-  \item Features: 12 cluster-state attributes
-  \item Training set: $\sim100k$ samples from synthetic workload
-  \item Hyperparameters: max\_depth=5, learning\_rate=0.1, n\_estimators=100
-  \item Validation: holdout test set, $R^2 \approx 0.937$
-\end{itemize}
+The trace simulator is event-driven and exact to the second: state changes only
+at arrivals and completions, so there is no tick-quantisation bias. Because SWF
+records no per-node placement, we model capacity only; inventing node-level
+fragmentation would be fabricating data. \S\ref{sec:threats} reports the
+resulting fidelity gap.
 
-\subsection{Proactive Scheduler Algorithm}
-\begin{figure}[h]
-\centering
-\textbf{Algorithm: Proactive Reordering}
-\begin{verbatim}
-1. At each timestep:
-2.   For each job in queue:
-3.     Predict wait time using XGBoost model
-4.   Sort queue by predicted wait (ascending)
-5.   Allocate jobs greedily (smaller wait first)
-6.   Anti-starvation: bump long-waiting jobs
-7. Update cluster state; move to next step
-\end{verbatim}
-\end{figure}
+\subsection{Policies}
 
-Key insight: jobs predicted to have short wait are scheduled first, reducing fragmentation and average wait.
+Twelve policies. \textsc{FCFS} (first-come first-served with unrestricted
+first-fit), \textsc{Fifo\_Strict} (a blocked head blocks the queue),
+\textsc{Sjf\_Oracle} (true runtimes; unattainable), \textsc{Sjf\_UserEst} (the
+trace's real requested time), \textsc{Hrrn\_UserEst}, \textsc{Smallest\_First}
+(sort by requested size --- the degeneracy control), \textsc{Easy\_UserEst} and
+\textsc{Easy\_Oracle} (canonical two-condition EASY),
+\textsc{Cons\_Bf\_UserEst}, \textsc{Srpt\_Oracle} (preemptive, with a
+checkpoint penalty charged as waiting), \textsc{Proactive} (the XGBoost
+wait-time model, retrained per trace, no runtime information), and
+\textsc{Proactive\_Est} (the same model retrained with the user estimate as an
+extra feature --- the control for ``does ML add anything beyond the estimate?'').
 
-\section{Experiments}
+The ML scheduler is given its best case throughout: a model retrained on the
+same machine's own earlier data. Zero-shot transfer from the synthetic generator
+to these traces yields $R^2 \approx 0$ and is not a competitive configuration.
 
-\subsection{Benchmark Setup}
-\begin{itemize}
-  \item Discrete-time simulator (Python, custom; seeded and reproducible)
-  \item Cluster: 8 nodes, 32 GPUs, 4 GPUs/node
-  \item Workload: 110 jobs arriving over the first 150 of 300 timesteps per run
-  \item Job size: 1--8 GPUs (uniform); runtime: 5--20 timesteps (uniform)
-  \item Schedulers: FIFO, SJF, Priority (with aging), Neural Network (MLP), Proactive (XGBoost)
-  \item Metrics: mean/max wait, throughput, GPU util, fairness (Gini, JFI), SLA compliance
-  \item Statistical treatment: 40 seeded paired runs (FIFO vs.\ Proactive), paired $t$-test, Wilcoxon signed-rank, bootstrap 95\% CIs
-\end{itemize}
+\subsection{Metrics and statistics}
 
-\subsection{Results (Phase 22–27)}
+We report mean wait, p95 wait, \textbf{mean bounded slowdown}
+$\max(\text{turnaround}/\max(r, \tau), 1)$ with $\tau = 60$s
+\cite{Feitelson2000}, the Gini coefficient of waits, and utilisation. Wait is
+defined uniformly as turnaround minus true runtime, so preemptive requeue time
+and checkpoint overhead are charged to the preemptive policy rather than hidden.
 
-\subsubsection{Wait-Time Reduction (Phase 22)}
-On the 40-run paired benchmark, Proactive reduces mean wait from 18.27 to 16.70 ts
-(\textbf{+7.71\%}; bootstrap 95\% CI on improvement [4.95\%, 10.34\%]; paired
-$t$-test $p = 1.4\times10^{-6}$, Wilcoxon $p = 7.1\times10^{-6}$) at identical
-GPU utilisation ($\approx$64\%). The 20-run five-scheduler comparison
-(Table below) places Proactive ahead of Priority and FIFO on mean wait but
-behind SJF, which exploits known runtimes that Proactive does not require.
+Comparisons are paired (same workload, every policy) with Holm-adjusted
+$t$-tests and Wilcoxon signed-rank tests. Crucially, claims that two policies
+perform \emph{the same} use paired TOST equivalence tests with a margin of
+$10\%$ of the reference mean; a large $p$-value from a difference test is not
+evidence of equivalence, and treating it as such is how a degenerate policy
+survives review.
+
+\section{The Ranking Degeneracy, Measured}
+\label{sec:degeneracy}
+
+We instrumented every \textsc{Proactive} ranking decision in real simulations
+($25{,}306$ instants with $\ge 2$ queued jobs) and recorded, per instant, which
+features differ across the queue and how the resulting order compares with
+ML-free orders. Table~\ref{tab:degeneracy} summarises.
 
 \begin{table}[h]
 \centering
+\small
 \begin{tabular}{lrrr}
 \toprule
-Scheduler & Mean Wait (ts) & Max Wait (ts) & Gini \\
+ & Synthetic & SDSC & LANL \\
 \midrule
-SJF & 12.00 & 143.5 & 0.782 \\
-Neural Network & 15.69 & 134.2 & 0.796 \\
-Proactive & 15.71 & 125.7 & 0.790 \\
-Priority & 16.34 & 127.7 & 0.739 \\
-FIFO & 16.65 & \textbf{53.9} & \textbf{0.518} \\
+Ranking instants        & 3{,}648 & 4{,}800 & 16{,}858 \\
+Features (total)        & 12 & 8 & 8 \\
+Features varying (mean) & 1.82 & 2.79 & 2.71 \\
+Equal size, diff.\ score & \textbf{0} & \textbf{0} & \textbf{0} \\
+Distinct scores / queue & 2.81 & 3.07 & 2.29 \\
+Kendall $\tau$ vs.\ size & 0.77 & 0.73 & 0.71 \\
+Order $=$ smallest-first & 83.1\% & 69.1\% & 81.6\% \\
+Order $=$ arrival (FCFS) & 18.2\% & 21.7\% & 26.4\% \\
+Size table monotone     & 66.9\% & 51.9\% & 61.5\% \\
 \bottomrule
 \end{tabular}
+\caption{The learned score never distinguishes two equally-sized co-queued jobs.
+Cluster-state features vary across the queue in $0.0\%$ of instants.}
+\label{tab:degeneracy}
 \end{table}
 
-\subsubsection{Sensitivity \& OOD Robustness (Phase 23)}
-Under 72 domain-shift scenarios (arrival rate 0.5--2.0$\times$, cluster size
-4--32 nodes, three job-size distributions), scoring the \emph{trained} model on
-freshly simulated shifted workloads:
-\begin{itemize}
-  \item Prediction quality collapses out-of-distribution: mean $R^2 \approx -0.31$
-        (range $-2.32$ to $+0.85$); only near-training configurations stay positive.
-  \item Scheduling improvement becomes erratic: per-scenario improvement ranges
-        $-14\%$ to $+50\%$, with a mean failure rate (jobs slower than FIFO) of
-        $\approx 32\%$.
-  \item Conclusion: the model must be retrained per deployment regime; a fallback
-        heuristic or FIFO is required for safety in shifted regimes.
-\end{itemize}
+Three observations. First, the \emph{zero} in row four is the claim: across
+$25{,}306$ instants there is no counterexample, exactly as the argument in
+\S1 requires. Second, of the twelve synthetic features only four ever differ
+between co-queued jobs (\texttt{job\_gpu}, \texttt{gpu\_fit\_ratio},
+\texttt{can\_fit\_now}, \texttt{node\_availability}) and all four are functions
+of the requested size; the remaining eight vary in $0.0\%$ of instants and are
+therefore incapable of affecting any ranking. Third, the resolution is very
+coarse: a queue of $\sim$9 jobs is partitioned into only $2.3$--$3.1$ priority
+classes, and in $18$--$26\%$ of instants \emph{every} queued job receives the
+same score, so the policy silently reduces to FCFS.
 
-\paragraph{Uncertainty-aware variant (negative result).}
-We additionally trained quantile XGBoost models (q10/q50/q90; q50 MAE 4.61 vs.\
-4.69 for the point model) and tested whether prediction-interval width can serve
-as an in-situ OOD alarm (10 paired runs per scenario, seeds $7000{+}i$). The
-intervals are under-dispersed: empirical $[q10, q90]$ coverage is 68\% against
-80\% nominal. In-distribution, an interval-based UCB policy (order by q90) and a
-spread-guarded policy match plain Proactive ($+6.1$\% to $+6.5$\% vs.\ FIFO ---
-parity at no cost). Under overload ($2\times$ arrivals, 4 nodes) all smart
-policies gain $+38.7$\% to $+39.0$\% among started jobs (a horizon-censored
-metric; they also \emph{started} more jobs, 131 vs.\ 114). But in a light-load
-small-cluster regime ($0.5\times$ arrivals, 4 nodes) \emph{every} smart policy
-is worse than FIFO ($-4.3$\% to $-5.0$\%) while the spread guard fires on only
-0.2\% of ticks: interval width fails to detect exactly the regime it was meant
-to catch. We therefore retain the drift-triggered FIFO fallback (rolling
-prediction MAE) as the deployment safeguard, not interval width.
+The recovered size$\rightarrow$priority table is monotone increasing in only
+$52$--$67\%$ of instants. Where it is monotone the policy \emph{is}
+smallest-job-first; where it is not, the model has learned a non-trivial size
+preference (for instance, favouring the power-of-two sizes that historically
+cleared fastest on that machine). This distinction turns out to matter, and it
+is why the equivalence in \S\ref{sec:equivalence} holds on two of the three
+substrates rather than all three.
 
-\subsubsection{Fairness \& SLA (Phase 27)}
+\section{Sorting by Size Is Equivalent to the Model}
+\label{sec:equivalence}
+
+Table~\ref{tab:equiv} gives the paired TOST results.
+
 \begin{table}[h]
 \centering
-\begin{tabular}{lrr}
+\small
+\begin{tabular}{llrrl}
 \toprule
-Scheduler & Per-job Gini & SLA Compliance \\
+Substrate & Metric & $\Delta$ & $p_{\mathrm{TOST}}$ & Verdict \\
 \midrule
-FIFO & \textbf{0.526} & 0.933 \\
-Proactive & 0.796 & \textbf{0.945} \\
-Proactive + Anti-Starvation & 0.688 & 0.863 \\
+Synthetic & mean wait & $-0.18\%$ & $2\times10^{-16}$ & equivalent \\
+Synthetic & bnd.\ slow. & $-0.05\%$ & $1\times10^{-18}$ & equivalent \\
+SDSC SP2  & mean wait & $-0.05\%$ & $1.8\times10^{-12}$ & equivalent \\
+SDSC SP2  & bnd.\ slow. & $+2.7\%$ & $7.4\times10^{-4}$ & equivalent \\
+LANL CM-5 & mean wait & $+14.4\%$ & $0.77$ & not equiv. \\
+LANL CM-5 & bnd.\ slow. & $+7.3\%$ & $0.30$ & not equiv. \\
 \bottomrule
 \end{tabular}
+\caption{\textsc{Smallest\_First} versus \textsc{Proactive}. $\Delta$ is the
+difference in the metric (positive $=$ the size sort is worse). Equivalence
+margin $10\%$ of the reference.}
+\label{tab:equiv}
 \end{table}
 
-Proactive \emph{worsens} per-job wait-time equity (Gini 0.53 $\rightarrow$ 0.80,
-max wait 58 $\rightarrow$ 125 ts) while modestly raising aggregate SLA
-compliance; run-level Jain indices are comparable (0.918 vs.\ 0.922). The
-anti-starvation variant recovers part of the equity loss (Gini 0.69, max wait
-87 ts) at a small compliance cost. The mean-wait gain is therefore a
-\emph{trade-off}, not a Pareto improvement.
+On the synthetic benchmark the difference in mean wait is $-0.029$ ts with a
+$90\%$ CI of $[-0.137, +0.079]$ against a $\pm 1.61$ ts margin: the entire
+interval sits well inside the margin, so this is a positive finding of
+equivalence, not an underpowered null. The MLP baseline is a sharper version of
+the same point --- \textsc{NN} and \textsc{Smallest\_First} produce
+\emph{bit-identical} results on every metric of all 20 runs. Two different model
+classes over the same features collapse to the same one-line sort.
 
-\subsubsection{Scaling (Phase 26)}
-\begin{itemize}
-  \item Saturated stress test (10{,}000 queued jobs): GPU utilisation stays
-        $> 99.7\%$ at 32--256 GPUs; batched inference latency 10--48 ms per
-        scheduling decision; scheduling overhead $< 5\%$ of simulated
-        throughput at every scale.
-  \item Moderate-load study (Phase 17): the wait-time advantage is largest on
-        small, contended clusters (14.4\% at 8 GPUs) and vanishes when capacity
-        removes queueing entirely (0\% at 128--256 GPUs under the same workload).
-  \item Implication: Proactive pays off in the contended regime; on
-        over-provisioned clusters there is nothing to reorder.
-\end{itemize}
+On LANL the equivalence fails, and honestly so: the learned table is
+non-monotone often enough that \textsc{Proactive} beats a naive size sort by
+$14.4\%$. This does not rescue the method. The learned policy is still only a
+function of requested size --- it is a \emph{better} size table, not a different
+kind of policy --- and as \S\ref{sec:traces} shows, on that same machine it
+fails to beat FCFS.
 
-\subsubsection{Backfill Baselines}
-We implemented an EASY-backfill baseline (hard reservation for the head-of-queue
-job, which is never delayed; runtime estimates are perfect, making this the
-strongest-baseline setting) and a hybrid, \textsc{Proactive-BF}, that orders
-backfill candidates by predicted wait. Table~\ref{tab:seven-sched} reports 20
-paired runs on out-of-training seeds ($1000{+}i$); GPU utilisation (0.637) and
-throughput are identical across all seven schedulers.
+\section{Trace-Driven Re-Evaluation}
+\label{sec:traces}
+
+Table~\ref{tab:traces} reports the twelve policies on both traces.
 
 \begin{table}[h]
 \centering
-\caption{Seven-scheduler benchmark (20 paired runs, out-of-training seeds).}
-\label{tab:seven-sched}
+\small
+\begin{tabular}{lrrrr}
+\toprule
+& \multicolumn{2}{c}{SDSC SP2} & \multicolumn{2}{c}{LANL CM-5} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+Policy & wait & bsld & wait & bsld \\
+\midrule
+\textsc{Srpt\_Oracle}    &  60.1 &   1.1 &  14.6 &  1.1 \\
+\textsc{Sjf\_Oracle}     & 110.8 &  13.2 &  23.0 &  2.8 \\
+\textsc{Sjf\_UserEst}    & 115.8 &  14.7 &  31.5 &  4.5 \\
+\textsc{Hrrn\_UserEst}   & 126.3 &  16.8 &  29.5 &  5.0 \\
+\textsc{Proactive\_Est}  & 125.0 &  14.7 &  37.0 &  5.8 \\
+\textsc{Smallest\_First} & 145.0 &  19.0 &  42.5 &  6.6 \\
+\textsc{Proactive}       & 145.0 &  18.5 &  37.2 &  6.1 \\
+\textsc{FCFS}            & 174.6 &  34.7 &  38.8 &  8.2 \\
+\textsc{Easy\_Oracle}    & 183.7 &  35.7 &  46.0 &  8.5 \\
+\textsc{Easy\_UserEst}   & 195.1 &  42.5 &  80.2 & 20.6 \\
+\textsc{Cons\_Bf\_UserEst}& 207.5 &  40.5 & 113.6 & 28.4 \\
+\textsc{Fifo\_Strict}    & 755.1 & 281.5 & 205.7 & 71.4 \\
+\bottomrule
+\end{tabular}
+\caption{Mean wait (minutes) and mean bounded slowdown, averaged over 20 paired
+7-day windows per trace at offered load $\approx 0.70$.}
+\label{tab:traces}
+\end{table}
+
+\paragraph{The synthetic gain does not replicate.}
+On the synthetic benchmark \textsc{Proactive} beats FCFS by $6.5\%$ (and by
+$7.7\%$ in the older 40-run paired study). On SDSC it beats FCFS by $20.4\%$
+($p = 0.042$, Holm $0.084$); on LANL the difference is $4.5\%$ in
+\textsc{Proactive}'s favour but not distinguishable from zero
+($p = 0.48$). A method whose advantage over doing nothing is machine-dependent
+and insignificant on one of two real machines is not established.
+
+\paragraph{Any runtime signal dominates.}
+\textsc{Sjf\_UserEst} --- shortest-job-first on the estimate the user actually
+typed --- beats \textsc{Proactive} by $20.2\%$ on SDSC (Holm $p = 0.009$) and
+$15.3\%$ on LANL. This is the same conclusion the synthetic study reached, now
+on real workloads with real estimate error.
+
+\paragraph{ML adds nothing on top of the estimate.}
+\textsc{Proactive\_Est}, which is given the user estimate as a feature and can
+therefore in principle learn everything SJF exploits \emph{plus} the cluster
+state, does not beat \textsc{Sjf\_UserEst} on either machine ($+7.9\%$ worse on
+SDSC, $+17.5\%$ on LANL). The ML pipeline's ceiling here is the sort it is
+trying to learn.
+
+\paragraph{Tails and fairness.}
+Bounded slowdown separates the policies far more sharply than mean wait, and in
+the same direction: \textsc{Proactive} sits at $18.5$ (SDSC) where
+\textsc{Sjf\_UserEst} reaches $14.7$ and \textsc{Srpt\_Oracle} $1.1$. The
+reordering policies all buy mean wait with equity (Gini $0.88$--$0.89$ versus
+$0.83$ for FCFS and $0.45$ for strict FIFO), reproducing the trade-off the
+earlier versions of this work reported.
+
+\section{Real Estimate Error Versus the $f$-Model}
+\label{sec:estimates}
+
+Because SWF records the user's requested time, the traces let us measure
+estimate error instead of simulating it. Table~\ref{tab:est} contrasts the two
+machines with the $f$-model at $C = 5$ that our synthetic study (and much of the
+backfill literature) assumes.
+
+\begin{table}[h]
+\centering
+\small
 \begin{tabular}{lrrr}
 \toprule
-Scheduler & Mean Wait (ts) & Max Wait (ts) & Gini \\
+ & SDSC & LANL & $f$-model \\
 \midrule
-SJF & 12.34 & 145.7 & 0.785 \\
-Neural Network & 16.07 & 136.4 & 0.797 \\
-Proactive & 16.10 & 127.3 & 0.791 \\
-Priority & 16.53 & 131.7 & 0.743 \\
-FIFO & 17.22 & 54.7 & 0.516 \\
-Proactive-BF & 24.91 & 55.5 & \textbf{0.365} \\
-EASY Backfill & 24.94 & \textbf{55.4} & \textbf{0.365} \\
+Estimate present      & 99.9\% & 90.8\% & --- \\
+Median $\hat r / r$   & 6.91 & 1.51 & 3.00 \\
+Mean $\hat r / r$     & 61.4 & 23.8 & 3.00 \\
+Within $2\times$      & 24.0\% & 41.7\% & --- \\
+\textbf{Under-estimates} & 0.1\% & \textbf{36.3\%} & \textbf{0\%} \\
 \bottomrule
 \end{tabular}
+\caption{Real user runtime estimates versus the standard $f$-model.}
+\label{tab:est}
 \end{table}
 
-Two semantic points are essential to read this table honestly. First, our
-``FIFO'' dispatches every fitting job at each tick, i.e.\ it is already
-\emph{unrestricted no-reservation backfilling}; EASY differs only by adding the
-head-job reservation. Second, that reservation is expensive on mean wait
-($\sim$45\% worse than FIFO) but buys the \emph{best fairness in the entire
-study} (Gini 0.365, max wait $\sim$55 ts) --- the reservation is a fairness
-mechanism, priced in mean wait. The hybrid \textsc{Proactive-BF} ties EASY on
-every metric: an honest null result --- predicted-wait backfill ordering adds
-nothing once the reservation constraint dominates. On these fresh seeds
-Proactive beats FIFO by 6.5\% (vs.\ 7.7\% near-training --- good
-generalization).
+The two machines occupy opposite regimes and neither is the $f$-model. SDSC is
+extreme over-estimation (median $6.9\times$, nearly no under-estimates); LANL is
+roughly calibrated at the median but with a third of jobs under-estimated. The
+$f$-model, being $\hat r = r \cdot U(1, C)$, cannot produce an under-estimate at
+all.
 
-\subsubsection{Bounded-Fairness Wait Budget}
-To bound the tail-latency cost of reordering, we add a hard per-job wait budget
-$B$: any job whose wait reaches $B$ escalates to the head of the queue. Over 20
-paired runs (seeds $5000{+}i$; FIFO reference mean wait 22.4 ts), sweeping $B$
-traces a smooth Pareto frontier between the pure-proactive gain and FIFO-like
-tails (Table~\ref{tab:budget}).
+This is not a cosmetic difference. Our synthetic study concluded that EASY is
+``nearly insensitive to estimate quality'' (mean wait $19.0$--$19.8$ ts across
+perfect, $f$-model, and modal estimates). On the traces, EASY with real
+estimates costs $+6.2\%$ mean wait versus perfect estimates on SDSC --- but
+$+74\%$ on LANL ($p = 0.025$). Under-estimates break the mechanism EASY depends
+on: a job that claims it will finish before the reservation and does not
+\emph{does} delay the head, so the guarantee the reservation is supposed to
+provide fails exactly when it matters. An evaluation using only over-estimate
+noise cannot observe this. We therefore think the $f$-model should not be used
+as the sole estimate-error model in backfill studies.
 
-\begin{table}[h]
-\centering
-\caption{Wait-budget sweep (gain vs.\ FIFO; 20 paired runs).}
-\label{tab:budget}
-\begin{tabular}{lrrr}
-\toprule
-Budget $B$ (ts) & Mean-wait gain & Max Wait (ts) & Gini \\
-\midrule
-0 & $-0.4\%$ & 63 & 0.49 \\
-40 & $+1.8\%$ & 67 & 0.60 \\
-60 & $+7.1\%$ & 81 & 0.69 \\
-80 & $+10.2\%$ & 96 & 0.74 \\
-$\infty$ (pure proactive) & $+13.2\%$ & 136 & 0.79 \\
-\bottomrule
-\end{tabular}
-\end{table}
+\section{What Would Make Learning Matter}
+\label{sec:fix}
 
-$B=60$ is a reasonable operating point: it keeps over half the mean-wait gain
-while capping max wait at 81 ts (vs.\ 136 unbounded). Notably, tiny budgets
-($B \le 30$) are slightly \emph{worse} than FIFO ($-0.1$\% to $-1.7$\%) ---
-constant escalation churn without reordering freedom --- so the knob must not
-be set blindly tight.
+The degeneracy is a property of the feature set, not of XGBoost. A wait-time
+model can only produce a non-degenerate ranking if its features distinguish
+co-queued jobs by something other than requested size. Concretely, the feature
+vector must contain at least one per-job attribute that is (a) not a function of
+size given the state, and (b) predictive of wait. Candidates: a runtime estimate
+(which is precisely what SJF uses, and which \S\ref{sec:traces} shows the model
+then merely reproduces); job-level history such as the submitting user's recent
+runtimes; queue/partition identity; dependency structure; or interaction terms
+between a per-job attribute and the state (e.g.\ predicted fit against the
+future capacity profile rather than the current one).
 
-\subsubsection{Real-Trace Validation}
-We evaluate on two real Parallel Workloads Archive traces: LANL CM-5 (1024
-processors, 1994--96, 122{,}055 usable jobs; median wait $\sim$4 s --- largely
-interactive) and SDSC SP2 (128 nodes, 1998, 42{,}117 evaluated arrivals;
-heavy-tailed batch queue, p90 wait $\sim$15 h). Chronological replay of each
-recorded schedule reconstructs eight honestly-derivable cluster-state features
-at every arrival; we test (i) \emph{transfer} of the synthetic-trained model
-via a rescaled 12-feature mapping with best-case affine calibration, and (ii)
-\emph{retraining} on the trace with a chronological 80/20 split, predicting
-$\log(1+\text{wait minutes})$.
+More broadly, we suggest two evaluation practices. First, \textbf{report the
+ML-free control that the model's own feature set implies}: if only the size
+feature varies across the queue, the control is sorting by size, and FIFO is not
+an adequate comparison. Second, \textbf{use equivalence tests} when arguing that
+a component matters --- had we only run difference tests, the $p = 0.65$
+comparison between the size sort and the XGBoost pipeline would have been
+reported as ``no significant difference'' and quietly dropped, rather than as
+the finding it is.
 
-Zero-shot transfer fails on both machines: $R^2 \approx -0.001$ on LANL (MAE 41
-min) and $R^2 = 0.072$ on SDSC (MAE 452 min). Retraining recovers strong signal
-where queueing dominates: on SDSC SP2 the retrained model reaches $R^2$ on
-log-wait of \textbf{0.494} (MAE 622 min), against $-0.694$ (684 min) for a
-median baseline and $0.016$ (1009 min) for a rolling mean --- cluster-state
-features explain roughly half the log-wait variance on a real batch
-supercomputer. On LANL the retrained model reaches only $R^2 = 0.101$ (MAE 33.7
-min, vs.\ 33.5 min for the median baseline): a weak-signal, largely interactive
-machine, which we report as an honest partial negative. The conclusion is now
-evidence-backed rather than a caveat: sim-to-real transfer is $\approx 0$, the
-model must be retrained per deployment, and the achievable signal is
-machine-dependent --- strong on batch workloads, weak on interactive ones.
+\section{Threats to Validity}
+\label{sec:threats}
 
-\subsection{Threats to Validity}
+\paragraph{Simulator fidelity.}
+The capacity-only model omits node-level placement and site policy (partitions,
+per-user limits, administrative holds), which SWF does not record. Against the
+recorded waits our simulated FCFS is close on LANL ($38.8$ vs.\ $33.2$ min mean;
+the simulator is slightly \emph{pessimistic}) but far more permissive on SDSC
+($174.6$ vs.\ $630.9$ min mean, against a recorded \emph{median} of $19.3$ min).
+SDSC's recorded mean is dominated by an extreme tail our model cannot reproduce.
+SDSC results should therefore be read as ``a correctly-loaded 128-processor
+machine driven by the real arrival, size, runtime and estimate distributions'',
+not as a replay of SDSC's actual queue. The degeneracy result does not depend on
+this: it is a property of the feature vector, and holds in all three substrates.
 
-\subsubsection{Simulation-to-Reality Gap}
-Real cluster dynamics (node failures, complex job dependencies, preemption) are
-not modeled. The sim-to-real question is now \emph{measured} rather than open:
-on two real Parallel Workloads Archive traces, zero-shot transfer of the
-synthetic-trained model fails ($R^2 \approx -0.001$ on LANL CM-5, $0.072$ on
-SDSC SP2), while per-trace retraining recovers $R^2$ on log-wait of 0.494 on
-SDSC SP2 but only 0.101 on the largely interactive LANL CM-5. The remaining
-threats are that prediction quality is machine-dependent and that we validate
-prediction, not closed-loop scheduling, on real traces (the recorded schedules
-cannot be counterfactually re-executed). \textit{Mitigation}: retrain per
-deployment from shadow-mode logs and gate promotion on holdout quality, as in
-the deployment guide.
+\paragraph{Statistical power.}
+Twenty windows per trace gives limited power; after Holm correction across
+eleven comparisons many individually plausible differences are not significant,
+particularly on LANL. We therefore lean on effect sizes, on the consistency of
+the ordering across both machines, and --- for the sameness claims --- on
+equivalence tests rather than on failures to reject.
 
-\subsubsection{OOD Failure Modes (Phase 23)}
-Prediction quality collapses under distribution shift (mean $R^2 < 0$ across 72
-scenarios) and scheduling gains become erratic. \textit{Mitigation}: adaptive
-fallback to FIFO with drift-triggered retraining (Phase 19); operators can
-configure thresholds.
+\paragraph{Covariate shift in the retrained model.}
+The per-trace model is trained on features reconstructed from the \emph{recorded}
+schedule, produced by the site's real scheduler. When \textsc{Proactive} runs it
+induces different states than those it was trained on. This is inherent to the
+approach rather than an artefact of our setup, but it means the model is
+evaluated slightly off-distribution even after retraining.
 
-\subsubsection{Fairness Cost}
-The mean-wait improvement worsens tail latency and per-job Gini; unmitigated,
-this is operationally unacceptable in shared clusters. \textit{Mitigation}:
-anti-starvation bumping recovers part of the equity loss, and the wait-budget
-knob $B$ (Table~\ref{tab:budget}) makes the trade-off explicitly tunable
-($B=60$ keeps over half the mean-wait gain with max wait capped at 81 ts).
-
-\section{Deployment Guide}
-
-See \texttt{DEPLOYMENT.md} for production considerations:
-\begin{itemize}
-  \item Monitoring thresholds for quality degradation
-  \item Fallback to FIFO under stress
-  \item Cost-benefit analysis (GPU-hour savings vs. compute overhead)
-  \item Configuration tuning per cluster type
-\end{itemize}
+\paragraph{Vintage of the traces.}
+LANL CM-5 (1994) and SDSC SP2 (1998) are batch HPC machines. Their users supply
+runtime estimates, which is exactly the regime in which the ML scheduler has no
+niche. Modern deep-learning clusters, where job durations are often genuinely
+unknown at submit time, are the setting in which a zero-runtime-information
+policy could still be worth something; validating there is the clearest next
+step, and we make no claim about it here.
 
 \section{Conclusion}
 
-Proactive feasibility scheduling delivers a small but statistically robust
-mean wait-time reduction (7.7\%, CI [5.0\%, 10.3\%]) on contended GPU clusters
-at no utilisation cost, using a wait-time model that is cheap to train and
-explainable. The gain trades off against tail latency and per-job fairness ---
-a trade-off the wait-budget knob makes tunable --- and prediction quality does
-not survive distribution shift: on two real Parallel Workloads Archive traces,
-zero-shot transfer fails ($R^2 \approx 0$) while per-trace retraining recovers
-strong signal on batch workloads ($R^2$ on log-wait 0.494 on SDSC SP2) but not
-on interactive ones (0.101 on LANL CM-5). We report each of these limitations
---- including the EASY-backfill fairness advantage, the \textsc{Proactive-BF}
-null result, and the failure of interval width as an OOD alarm --- with
-quantitative evidence rather than claiming a Pareto improvement. The value of
-this work lies as much in its honest, fully reproducible evaluation harness
-(seeded pipeline, paired statistics, OOD diagnostics) as in the scheduler
-itself.
+We set out to find where an ML wait-time scheduler adds value and found that,
+as constructed, it cannot add value to queue ordering: its score is a function
+of requested size alone, verified over $25{,}306$ dispatch instants without a
+single counterexample. A one-line sort is statistically equivalent to it on two
+of three substrates, an MLP over the same features reproduces the sort exactly,
+its synthetic advantage over FCFS does not replicate on real traces, and any
+classical policy holding a runtime estimate beats it on both real machines.
+Alongside this we report that real user-estimate error damages backfill far more
+than the standard $f$-model predicts, because a third of LANL's estimates are
+under-estimates that the $f$-model cannot generate.
 
-\textbf{Future work}: closed-loop scheduling evaluation on real-trace replays,
-better-calibrated uncertainty for OOD detection, online learning under concept
-drift, and multi-objective optimization (latency + fairness + energy).
+We report these as negative results because they are the results. The
+constructive content is the non-degeneracy condition of \S\ref{sec:fix} and the
+methodological point that an ML systems component should be compared against the
+ML-free control its own feature set implies --- with an equivalence test, not a
+failed difference test.
 
-\section*{Acknowledgments}
-Thanks to [funding, advisors, etc.].
+\section*{Artifact Availability}
+Code, both SWF traces, the seeded pipeline
+(\texttt{run\_all\_experiments.sh}), and every CSV behind the tables are in the
+repository. \texttt{04\_scheduler/ranking\_degeneracy.py} reproduces
+\S\ref{sec:degeneracy}, \texttt{trace\_driven\_benchmark.py} reproduces
+\S\ref{sec:traces}--\ref{sec:estimates}, and
+\texttt{multi\_scheduler\_benchmark.py} reproduces \S\ref{sec:equivalence}.
 
 \begin{thebibliography}{99}
 
@@ -405,30 +530,18 @@ Thanks to [funding, advisors, etc.].
 
 \bibitem{Jain1984} R. Jain et al., \emph{A Quantitative Measure of Fairness and Discrimination for Resource Allocation in Shared Computer Systems}, DEC-TR 506, 1984.
 
-\bibitem{Feitelson2000} D. G. Feitelson, \emph{Packing Schemes for List Scheduling}, JSSPP 2000.
+\bibitem{Feitelson2000} D. G. Feitelson, \emph{Metrics for Parallel Job Scheduling and Their Convergence}, JSSPP 2001.
 
-\bibitem{Feitelson2011} D. G. Feitelson et al., \emph{Parallel Workloads Archive}, CMU, 2011.
+\bibitem{Feitelson2011} D. G. Feitelson et al., \emph{Parallel Workloads Archive}, https://www.cs.huji.ac.il/labs/parallel/workload/.
+
+\bibitem{Mualem2001} A. W. Mu'alem and D. G. Feitelson, \emph{Utilization, Predictability, Workloads, and User Runtime Estimates in Scheduling the IBM SP2 with Backfilling}, IEEE TPDS 12(6), 2001.
+
+\bibitem{Tsafrir2005} D. Tsafrir, Y. Etsion, and D. G. Feitelson, \emph{Modeling User Runtime Estimates}, JSSPP 2005.
 
 \bibitem{ML-Scheduling1} H. Mao, M. Alizadeh, I. Menache, and S. Kandula, \emph{Resource Management with Deep Reinforcement Learning}, HotNets 2016.
 
 \bibitem{ML-Scheduling2} H. Mao, M. Schwarzkopf, S. B. Venkatakrishnan, Z. Meng, and M. Alizadeh, \emph{Learning Scheduling Algorithms for Data Processing Clusters}, SIGCOMM 2019.
 
-\bibitem{Sim2Real2021} W. Zhao, J. P. Queralta, and T. Westerlund, \emph{Sim-to-Real Transfer in Deep Reinforcement Learning: A Survey}, IEEE SSCI 2020.
-
 \end{thebibliography}
-
-\appendix
-
-\section{Feature Engineering Details}
-
-[Expand on each feature's computation and importance ranking via SHAP.]
-
-\section{Hyperparameter Tuning}
-
-[GridSearch results, sensitivity analysis.]
-
-\section{Additional Plots}
-
-[SHAP force plots, fairness forest plots, OOD heatmaps.]
 
 \end{document}
