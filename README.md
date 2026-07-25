@@ -25,20 +25,21 @@
 > sees the same cluster, so only the job's own features differ — and in the
 > standard cluster-state feature set every one of those is a deterministic
 > function of the job's requested size. The learned score is therefore a
-> function of requested size alone. Verified over **25,306 real dispatch
+> function of requested size alone. Verified over **45,432 real dispatch
 > instants with zero counterexamples**: two equally-sized queued jobs *never*
-> receive different scores, and 8 of the 12 features vary across the queue in
-> **0.0%** of instants. Consequently a one-line `sort by requested size`
-> is statistically **equivalent** to the full XGBoost pipeline (paired TOST
-> p = 2e-16), an MLP over the same features reproduces that sort *bit-identically*,
-> and the synthetic 7.7% gain over FCFS does not replicate on real traces.
+> receive different scores, and 7 of the 12 features vary across the queue in
+> **0.0%** of instants (every feature that does vary is itself a function of
+> size). Consequently a one-line `sort by requested size` is statistically
+> **equivalent** to the full XGBoost pipeline (paired TOST p = 2.6e-16), an MLP
+> over the same features reproduces that sort *bit-identically*, and the
+> synthetic 7.9% gain over FCFS does not replicate on real traces.
 >
 > See [`04_scheduler/ranking_degeneracy.py`](04_scheduler/ranking_degeneracy.py)
 > and [the manuscript](phases_22_30/phase_28_manuscript/manuscript.tex).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="05_results/degeneracy/ranking_degeneracy-dark.png">
-  <img alt="Left: of the 12 cluster-state features, only the four derived from requested size ever differ between two jobs waiting side by side; the other eight differ in 0.0% of dispatch instants. Right: the resulting ML queue order is identical to the smallest-first order in 69-83% of instants and identical to plain arrival order in 18-26%." src="05_results/degeneracy/ranking_degeneracy.png">
+  <img alt="Left: of the 12 cluster-state features, only the five derived from requested size ever differ between two jobs waiting side by side; the other seven differ in 0.0% of dispatch instants. Right: the resulting ML queue order is identical to the smallest-first order in 72-80% of instants and identical to plain arrival order in 18-27%." src="05_results/degeneracy/ranking_degeneracy.png">
 </picture>
 
 ### Why the score can only see job size
@@ -55,9 +56,10 @@ queue_pressure     = ( Σ_queue − g ) / ( free(S) + 1 )
 ```
 
 So the learned score is `ŵ(job | S) = g_S(size)` — a per-instant **lookup table from
-requested size to priority**. The remaining **eight** features describe only the
+requested size to priority**. The remaining **seven** features describe only the
 cluster, so they choose *which* table is used but can never distinguish two jobs
-inside one. And a ranking consumes nothing else.
+inside one. And a ranking consumes nothing else. (`queue_pressure` differs between
+co-queued jobs only through its `−g` term, so it is also just a function of size.)
 
 The honest control is therefore not FIFO — it is *sorting by requested size*, which
 needs no dataset, no training, no inference, no SHAP explanation and no drift monitor.
@@ -72,7 +74,7 @@ The pipeline bootstraps itself: step 0 of `run_all_experiments.sh` regenerates `
 Just the v3.4 headline experiments:
 ```bash
 cd 04_scheduler
-python ranking_degeneracy.py        # the degeneracy result (25,306 instants)
+python ranking_degeneracy.py        # the degeneracy result (45,432 instants)
 python trace_driven_benchmark.py    # 12 policies x 2 real traces x 20 windows
 python multi_scheduler_benchmark.py # 14-scheduler synthetic study + TOST
 ```
@@ -92,9 +94,9 @@ python multi_scheduler_benchmark.py # 14-scheduler synthetic study + TOST
 
 | | | |
 |---|---|---|
-| **0** | counterexamples in **25,306** real dispatch instants | two equally-sized queued jobs never received different scores |
-| **0.0%** | of instants in which any of the 8 cluster-state features differs across the queue | they cannot affect a ranking, by construction |
-| **p = 2×10⁻¹⁶** | paired TOST: `sort by requested size` ≡ the XGBoost pipeline | difference CI [−0.14, +0.08] ts against a ±1.61 margin |
+| **0** | counterexamples in **45,432** real dispatch instants | two equally-sized queued jobs never received different scores |
+| **0.0%** | of instants in which any of the 7 cluster-state features differs across the queue | they cannot affect a ranking, by construction |
+| **p = 2.6×10⁻¹⁶** | paired TOST: `sort by requested size` ≡ the XGBoost pipeline | difference CI [+0.03, +0.23] ts against a ±1.59 margin |
 
 ### On real workloads it does not replicate
 
@@ -108,7 +110,7 @@ Twelve policies replayed through two Parallel Workloads Archive traces (20 paire
 traces record** rather than a simulated estimate model. The ML scheduler is given its
 best case: a model retrained on that machine's own earlier data.
 
-- The synthetic **7.7% gain over FCFS does not replicate** — Proactive vs FCFS is
+- The synthetic **7.9% gain over FCFS does not replicate** — Proactive vs FCFS is
   −20.4% on SDSC (p=0.042) but **−4.5%, p=0.48 on LANL CM-5**: indistinguishable
   from doing nothing.
 - **Any runtime signal dominates.** SJF on the estimate the user actually typed beats
@@ -146,26 +148,26 @@ All figures come from a proper 20% holdout / 5-fold CV (model) and seeded paired
 | Metric | Value | Notes |
 |---|---|---|
 | Wait-time model quality | **R² ≈ 0.84, MAE ≈ 4.69** (20% holdout) | 5-fold CV MAE 4.74 ± 0.42. Never quote in-sample numbers as model quality. |
-| Mean wait-time reduction | **7.7% ± 8.9%** vs FIFO | 40-run paired benchmark, paired t-test p = 1.4e-06, bootstrap 95% CI [5.0%, 10.3%] |
+| Mean wait-time reduction | **7.9% ± 9.4%** vs FIFO | 40-run paired benchmark, paired t-test p = 2.0e-06, bootstrap 95% CI [4.9%, 10.9%] |
 | GPU utilisation | **Unchanged** (≈64%) | Improvement is from queue ordering only |
-| Tail latency (max wait) | **Worse: ~58 → 125 ts** | Trade-off: proactive reordering increases tail latency |
-| Fairness (Gini of waits) | **Worse: 0.53 → 0.80** | Mean-wait gain comes at a fairness cost; anti-starvation variant recovers to 0.69 |
+| Tail latency (max wait) | **Worse: ~58 → 123 ts** | Trade-off: proactive reordering increases tail latency |
+| Fairness (Gini of waits) | **Worse: 0.53 → 0.79** | Mean-wait gain comes at a fairness cost; anti-starvation variant recovers to 0.69 |
 | Real-trace transfer, zero-shot | **R² ≈ 0** (both traces) | Synthetic-trained model does not transfer to LANL CM-5 or SDSC SP2 — quantified on real data (v3.2) |
 | Real-trace, **retrained** | **R²(log) 0.49** on SDSC SP2 | Chronological holdout, vs −0.69 median baseline; LANL CM-5 (interactive machine) only 0.10 — signal is machine-dependent |
-| Classical-baseline landscape (v3.3) | **Any runtime signal beats Proactive on mean wait** | SJF-oracle 12.34 / SJF-est 13.32 / SJF-modal 14.06 / SRPT 14.02 / HRRN 15.55 vs Proactive 16.10 ts — but at 2× worse tails (SJF max 146, Gini 0.79 vs HRRN 65 / 0.54) |
-| **Ranking degeneracy (v3.4)** | **0 counterexamples in 25,306 dispatch instants** | Two equally-sized co-queued jobs never get different scores. 8/12 features vary across the queue in 0.0% of instants; a ~9-job queue gets only 2.3–3.1 distinct priority levels; in 18–26% of instants all scores tie and the policy silently *is* FCFS |
-| **ML-free control (v3.4)** | **`sort by requested size` ≡ XGBoost pipeline** | Synthetic: −0.18%, paired TOST p=2e-16, diff CI [−0.14,+0.08] ts vs ±1.61 margin. SDSC SP2: −0.05%, TOST p=1.8e-12. The MLP baseline reproduces the size sort **bit-identically** on all 20 runs |
+| Classical-baseline landscape (v3.3) | **Any runtime signal beats Proactive on mean wait** | SJF-oracle 12.34 / SJF-est 13.32 / SJF-modal 14.06 / SRPT 14.02 / HRRN 15.55 vs Proactive 15.95 ts — but at 2× worse tails (SJF max 146, Gini 0.79 vs HRRN 65 / 0.54) |
+| **Ranking degeneracy (v3.4)** | **0 counterexamples in 45,432 dispatch instants** | Two equally-sized co-queued jobs never get different scores. 7/12 features vary across the queue in 0.0% of instants; a ~9-job queue gets only 2.3–3.1 distinct priority levels; in 18–27% of instants all scores tie and the policy silently *is* FCFS |
+| **ML-free control (v3.4)** | **`sort by requested size` ≡ XGBoost pipeline** | Synthetic: +0.80%, paired TOST p=2.6e-16, diff CI [+0.03,+0.23] ts vs ±1.59 margin. SDSC SP2: −0.05%, TOST p=1.8e-12. The MLP baseline reproduces the size sort **bit-identically** on all 20 runs |
 | **Trace-driven benchmark (v3.4)** | **The synthetic gain does not replicate** | 20 paired 7-day windows/trace at load ≈0.70. Proactive vs FCFS: −20.4% on SDSC (p=0.042) but **−4.5%, p=0.48 on LANL**. SJF on *real* user estimates beats Proactive by 20.2% (SDSC, Holm p=0.009) and 15.3% (LANL) |
 | **Real estimate error (v3.4)** | **The f-model understates it badly** | Real: SDSC median 6.9× over-estimate, 0.1% under; LANL median 1.5× but **36.3% under-estimates** — which the over-estimate-only f-model cannot produce. Cost to EASY vs perfect estimates: +6.2% (SDSC) but **+74% (LANL, p=0.025)**, against "near-insensitive" under the f-model |
 | Backfill baseline (canonical EASY, v3.3) | **+11.8% mean wait vs FCFS/first-fit, −26% vs strict FIFO** | Reservation price re-measured after implementing the full two-condition EASY rule (v3.2's stricter variant overstated it at ~45%); Gini 0.45, max 52 ts |
-| Fairness budget B | **B=60: +7.1% wait gain, max 81 ts** | Tunable Pareto dial between pure proactive (+13.2%, max 136) and FIFO (v3.2) |
+| Fairness budget B | **B=60: +7.4% wait gain, max 81 ts** | Tunable Pareto dial between pure proactive (+13.1%, max 138) and FIFO (v3.2) |
 | OOD robustness | **Mean R² < 0** across 72 shifted scenarios | Retrain per regime; interval-width guards tested and **not** reliable (68% coverage) — use the drift trigger |
 
 </details>
 
-**Honest summary (v3.4).** The v3.3 study established that any runtime signal beats the proactive scheduler on mean wait, leaving it a claimed niche in the *zero-runtime-information* regime. v3.4 removes that niche. The learned score cannot distinguish two co-queued jobs by anything except requested size — this is a property of the feature set, provable by construction and confirmed with zero counterexamples over 25,306 real dispatch decisions — so the policy is a per-instant lookup table from size to priority. An ML-free size sort is statistically equivalent to it, an MLP over the same features *is* that sort, and on real traces its advantage over plain FCFS is machine-dependent and insignificant on LANL CM-5. The measured improvement was evidence about size-based ordering, not about learning.
+**Honest summary (v3.4).** The v3.3 study established that any runtime signal beats the proactive scheduler on mean wait, leaving it a claimed niche in the *zero-runtime-information* regime. v3.4 removes that niche. The learned score cannot distinguish two co-queued jobs by anything except requested size — this is a property of the feature set, provable by construction and confirmed with zero counterexamples over 45,432 real dispatch decisions — so the policy is a per-instant lookup table from size to priority. An ML-free size sort is statistically equivalent to it, an MLP over the same features *is* that sort, and on real traces its advantage over plain FCFS is machine-dependent and insignificant on LANL CM-5. The measured improvement was evidence about size-based ordering, not about learning.
 
-The constructive takeaways: (1) the **non-degeneracy condition** — a wait-time feature set can only produce a meaningful ranking if it contains a per-job attribute that is *not* a function of size given the state (a runtime estimate, user history, partition identity, dependency structure); (2) report the **ML-free control the feature set implies**, not FIFO; (3) use **equivalence tests** — with difference tests alone, the p=0.65 size-sort comparison reads as "no significant difference" and gets dropped instead of being recognised as the finding. See `RESULTS.md`, the [manuscript](phases_22_30/phase_28_manuscript/manuscript.tex), and `docs/explanation.html`.
+The constructive takeaways: (1) the **non-degeneracy condition** — a wait-time feature set can only produce a meaningful ranking if it contains a per-job attribute that is *not* a function of size given the state (a runtime estimate, user history, partition identity, dependency structure); (2) report the **ML-free control the feature set implies**, not FIFO; (3) use **equivalence tests** — with difference tests alone, the Holm-adjusted p=0.17 size-sort comparison reads as "no significant difference" and gets dropped instead of being recognised as the finding. See `RESULTS.md`, the [manuscript](phases_22_30/phase_28_manuscript/manuscript.tex), and `docs/explanation.html`.
 
 ## Repository map
 

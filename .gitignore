@@ -39,3 +39,4 @@ desktop.ini
 # extractions and the per-trace datasets they generate are not.
 *.swf
 real_trace_dataset_*.csv
+.opencode

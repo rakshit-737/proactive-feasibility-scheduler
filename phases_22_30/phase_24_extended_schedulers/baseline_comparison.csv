@@ -3,12 +3,12 @@ SJF,Shortest Job First (oracle),heuristic_baseline,04_scheduler/sjf_scheduler.py
 SJF_EST,SJF (user estimates),heuristic_baseline,"04_scheduler/sjf_scheduler.py (f-model estimates, C=5)",13.317727272727272,149.65,0.7868457689086877,0.3666666666666666,0.6374895833333334,
 SRPT,Preemptive SRPT (+1 tick overhead),heuristic_baseline,04_scheduler/multi_scheduler_benchmark.py (run_once_preemptive),14.02318181818182,150.95,0.8102613314572313,0.3666666666666666,0.6544791666666667,
 HRRN,Highest Response Ratio Next,heuristic_baseline,04_scheduler/hrrn_scheduler.py (starvation-aware),15.553636363636365,65.2,0.537721717745117,0.3666666666666666,0.6374895833333334,
+PROACTIVE,Proactive (XGBoost),proposed,Phase 09 proactive feasibility scheduler,15.947727272727272,128.75,0.7934379227503998,0.3666666666666666,0.6374895833333334,17.075071267851005
+NN,Neural Network (MLP),ml_baseline,04_scheduler/neural_network_scheduler.py (Phase 14),16.074545454545454,136.35,0.7965479878427846,0.3666666666666666,0.6374895833333334,17.38951314558437
 SMALLEST,Smallest requested size first (no ML),degeneracy_control,04_scheduler/size_scheduler.py (the ML-free control implied by ranking_degeneracy.py: the wait model's per-job features are all functions of requested size),16.074545454545454,136.35,0.7965479878427846,0.3666666666666666,0.6374895833333334,
-NN,Neural Network (MLP),ml_baseline,04_scheduler/neural_network_scheduler.py (Phase 14),16.074545454545454,136.35,0.7965479878427846,0.3666666666666666,0.6374895833333334,17.94641190384734
-PROACTIVE,Proactive (XGBoost),proposed,Phase 09 proactive feasibility scheduler,16.10363636363636,127.25,0.7914760476908896,0.3666666666666666,0.6374895833333334,17.671925839930136
 PRIORITY,Priority,heuristic_baseline,04_scheduler/priority_scheduler.py,16.53181818181818,131.7,0.743463234265281,0.3666666666666666,0.6374895833333334,
 FIFO,FCFS + first-fit (liberal dispatch),baseline,04_scheduler/multi_scheduler_benchmark.py (any fitting job starts; label kept for continuity),17.21590909090909,54.65,0.5160252338296477,0.3666666666666666,0.6374895833333334,
-PROACTIVE_BF,EASY backfill + predicted-wait scan,ml_hybrid,04_scheduler/multi_scheduler_benchmark.py (proactive_bf),19.19409090909091,53.55,0.4781786487738453,0.3666666666666666,0.6374895833333334,9.63444223424007
+PROACTIVE_BF,EASY backfill + predicted-wait scan,ml_hybrid,04_scheduler/multi_scheduler_benchmark.py (proactive_bf),19.201363636363634,53.8,0.4785905444320978,0.3666666666666666,0.6374895833333334,9.304598725916744
 BACKFILL_EST,EASY backfill (user estimates),heuristic_baseline,"04_scheduler/backfill_scheduler.py (f-model estimates, C=5)",19.22772727272727,53.8,0.4721178824072943,0.3666666666666666,0.6374895833333334,
 BACKFILL,EASY backfill (oracle),heuristic_baseline,04_scheduler/backfill_scheduler.py (true runtimes),19.24772727272727,51.55,0.4514832969944593,0.3666666666666666,0.6374895833333334,
 CONS_BF,Conservative backfill,heuristic_baseline,04_scheduler/backfill_scheduler.py (reservation per queued job),21.843636363636364,50.25,0.3744382797638779,0.3666666666666666,0.6374895833333334,

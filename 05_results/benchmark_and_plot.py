@@ -83,13 +83,15 @@ def generate_jobs(n=110, max_t=300):
     return sorted(jobs, key=lambda x: x.arrival_time)
 
 def get_features(job, cluster, queue, running):
-    """Matches generate_improved_dataset.py exactly."""
+    """Matches generate_improved_dataset.py exactly. `queue` includes the scored
+    job at dispatch time; training rows exclude it (snapshot at arrival, before
+    enqueue), so queue_length/queue_pressure subtract the job's own share."""
     tf=cluster.total_free_gpus(); mf=max(cluster.nodes); vf=np.var(cluster.nodes)
-    return [job.num_gpus, tf, len(queue), len(running), mf, vf,
+    return [job.num_gpus, tf, len(queue)-1, len(running), mf, vf,
             int(tf>=job.num_gpus),
             min(tf/(job.num_gpus+1e-6), 1.0),
             float(np.std(cluster.nodes)),
-            sum(q.num_gpus for q in queue)/(tf+1),
+            (sum(q.num_gpus for q in queue)-job.num_gpus)/(tf+1),
             sum(1 for n in cluster.nodes if n>=job.num_gpus)/cluster.num_nodes,
             tf/cluster.num_nodes]
 

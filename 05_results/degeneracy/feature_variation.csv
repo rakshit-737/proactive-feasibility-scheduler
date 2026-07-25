@@ -1,29 +1,29 @@
 setting,feature,pct_instants_varying_across_queue
-synthetic (12 features),job_gpu,83.82675438596492
+synthetic (12 features),job_gpu,82.88535381239714
 synthetic (12 features),total_free,0.0
 synthetic (12 features),queue_length,0.0
 synthetic (12 features),running_jobs,0.0
 synthetic (12 features),max_free_node,0.0
 synthetic (12 features),variance_free,0.0
-synthetic (12 features),can_fit_now,20.17543859649123
-synthetic (12 features),gpu_fit_ratio,59.29276315789474
+synthetic (12 features),can_fit_now,20.15907844212836
+synthetic (12 features),gpu_fit_ratio,58.337904552934724
 synthetic (12 features),fragmentation,0.0
-synthetic (12 features),queue_pressure,0.0
-synthetic (12 features),node_availability,18.174342105263158
+synthetic (12 features),queue_pressure,82.88535381239714
+synthetic (12 features),node_availability,17.93746571585299
 synthetic (12 features),avg_free_per_node,0.0
-SDSC SP2 (1998) (8 features),job_procs,82.83333333333333
+SDSC SP2 (1998) (8 features),job_procs,85.58642235919953
 SDSC SP2 (1998) (8 features),total_free,0.0
 SDSC SP2 (1998) (8 features),queue_length,0.0
 SDSC SP2 (1998) (8 features),running_jobs,0.0
-SDSC SP2 (1998) (8 features),can_fit_now,42.291666666666664
-SDSC SP2 (1998) (8 features),fit_ratio,71.33333333333333
-SDSC SP2 (1998) (8 features),queue_pressure,82.83333333333333
+SDSC SP2 (1998) (8 features),can_fit_now,42.4807903402854
+SDSC SP2 (1998) (8 features),fit_ratio,73.16558304483661
+SDSC SP2 (1998) (8 features),queue_pressure,85.58642235919953
 SDSC SP2 (1998) (8 features),free_frac,0.0
-LANL CM-5 (1994) (8 features),job_procs,79.95610392691897
+LANL CM-5 (1994) (8 features),job_procs,79.27061416691714
 LANL CM-5 (1994) (8 features),total_free,0.0
 LANL CM-5 (1994) (8 features),queue_length,0.0
 LANL CM-5 (1994) (8 features),running_jobs,0.0
-LANL CM-5 (1994) (8 features),can_fit_now,45.782417843160516
-LANL CM-5 (1994) (8 features),fit_ratio,65.66615256851347
-LANL CM-5 (1994) (8 features),queue_pressure,79.95610392691897
+LANL CM-5 (1994) (8 features),can_fit_now,44.73833617206025
+LANL CM-5 (1994) (8 features),fit_ratio,65.27736031793741
+LANL CM-5 (1994) (8 features),queue_pressure,79.27061416691714
 LANL CM-5 (1994) (8 features),free_frac,0.0

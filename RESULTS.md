@@ -12,45 +12,50 @@ function of the requested size `g` given the state `S`:
 `can_fit_now = 1[free(S) >= g]`, `gpu_fit_ratio = min(free(S)/g, 1)`,
 `node_availability = |{n : free_n(S) >= g}|/N`, `queue_pressure = (Σ_Q − g)/(free(S)+1)`.
 Therefore the learned score is `ŵ(j | S) = g_S(size_j)` and the induced order is
-just the order of `g_S` over the queue's sizes. **The remaining eight features
+just the order of `g_S` over the queue's sizes. **The remaining seven features
 describe only the cluster, so they shift every score by the same amount and cannot
-reorder anything.** The model, used as a ranking function, is a per-instant lookup
-table from requested size to priority.
+reorder anything.** (`queue_pressure` does vary between co-queued jobs, but only
+because it subtracts the job's own size — it is itself a deterministic function of
+size given the state, so it cannot break the degeneracy.) The model, used as a
+ranking function, is a per-instant lookup table from requested size to priority.
 
 **The measurement** (`05_results/degeneracy/`, `04_scheduler/ranking_degeneracy.py`),
 instrumenting real dispatch decisions in three settings:
 
 | | Synthetic | SDSC SP2 | LANL CM-5 |
 |---|---|---|---|
-| Ranking instants (≥2 queued) | 3,648 | 4,800 | 16,858 |
+| Ranking instants (≥2 queued) | 3,646 | 11,843 | 29,943 |
 | Features total | 12 | 8 | 8 |
-| Features varying across queue (mean) | 1.82 | 2.79 | 2.71 |
+| Features varying across queue (mean) | 2.62 | 2.87 | 2.69 |
 | **Equal size → different score** | **0** | **0** | **0** |
-| Distinct scores per queue | 2.81 | 3.07 | 2.29 |
-| Kendall τ vs size order | 0.77 | 0.73 | 0.71 |
-| Order identical to smallest-first | 83.1% | 69.1% | 81.6% |
-| Order identical to arrival (= FCFS) | 18.2% | 21.7% | 26.4% |
-| Size→priority table monotone | 66.9% | 51.9% | 61.5% |
+| Distinct scores per queue | 2.81 | 3.09 | 2.28 |
+| Kendall τ vs size order | 0.71 | 0.75 | 0.62 |
+| Order identical to smallest-first | 80.3% | 71.5% | 77.6% |
+| Order identical to arrival (= FCFS) | 19.7% | 18.1% | 27.5% |
+| Size→priority table monotone | 63.1% | 57.1% | 56.9% |
 
-Zero counterexamples in 25,306 instants. The 8 cluster-state features vary across
-the queue in **0.0%** of instants. A ~9-job queue is partitioned into only 2.3–3.1
-priority classes, and in 18–26% of instants *all* scores tie, so the policy
-silently reduces to FCFS.
+Zero counterexamples in 45,432 instants. The 7 synthetic cluster-state features
+(and 4 of 8 on the traces) vary across the queue in **0.0%** of instants; every
+feature that does vary (`job_gpu`/`job_procs`, `can_fit_now`, `gpu_fit_ratio`,
+`node_availability`, `queue_pressure`) is a deterministic function of the
+requested size. A ~9-job queue is partitioned into only 2.3–3.1 priority classes,
+and in 18–27% of instants *all* scores tie, so the policy silently reduces to
+FCFS.
 
 **The consequence — equivalence, tested properly** (paired TOST, margin 10% of
 reference; `multi_scheduler_equivalence.csv`, `trace_scheduler_equivalence.csv`):
 
 | Substrate | Metric | Δ (size sort vs ML) | p_TOST | Verdict |
 |---|---|---|---|---|
-| Synthetic | mean wait | −0.18% | 2e-16 | **equivalent** |
-| Synthetic | bounded slowdown | −0.05% | 1e-18 | **equivalent** |
+| Synthetic | mean wait | +0.80% | 2.6e-16 | **equivalent** |
+| Synthetic | bounded slowdown | +0.69% | 3.8e-18 | **equivalent** |
 | SDSC SP2 | mean wait | −0.05% | 1.8e-12 | **equivalent** |
 | SDSC SP2 | bounded slowdown | +2.7% | 7.4e-04 | **equivalent** |
 | LANL CM-5 | mean wait | +14.4% | 0.77 | not equivalent |
 | LANL CM-5 | bounded slowdown | +7.3% | 0.30 | not equivalent |
 
-On the synthetic benchmark the difference is −0.029 ts with 90% CI [−0.137, +0.079]
-against a ±1.61 ts margin — the whole interval is inside the margin, so this is a
+On the synthetic benchmark the difference is +0.127 ts with 90% CI [+0.025, +0.228]
+against a ±1.59 ts margin — the whole interval is inside the margin, so this is a
 positive equivalence finding, not an underpowered null. The **MLP baseline is
 bit-identical to the size sort on every metric of all 20 runs**: two model classes
 over the same features collapse to the same one-line sort.
@@ -63,10 +68,11 @@ paired t-test (p = 0.25; the Wilcoxon test disagrees at p = 0.015), it shrinks t
 
 An earlier draft of this section attributed the LANL result to its learned size table
 being less monotone. **That explanation is wrong and is retracted**: the per-instant
-monotone fraction is 51.9% on SDSC — where equivalence *does* hold — against 61.5% on
-LANL, so monotonicity does not track where the equivalence fires. (Relatedly, the
-jagged SDSC curve in `size_priority_table.png` is largely sampling noise: SDSC spans
-51 distinct job sizes with few observations each, versus 6 on LANL and 8 synthetic.)
+monotone fraction is 57.1% on SDSC — where equivalence *does* hold — against 56.9% on
+LANL, statistically indistinguishable, so monotonicity does not track where the
+equivalence fires. (Relatedly, the jagged SDSC curve in `size_priority_table.png` is
+largely sampling noise: SDSC spans dozens of distinct job sizes with few observations
+each, versus 6 on LANL and 8 synthetic.)
 What is not in question on either machine is the degeneracy itself, and on LANL the
 ML scheduler also fails to beat plain FCFS (p = 0.48).
 
@@ -145,20 +151,20 @@ substrates. See `trace_fidelity.csv`.
 
 ## High-level findings
 - Model quality: **R² ≈ 0.84, MAE ≈ 4.69 ts** on a proper 20% holdout (5-fold CV MAE 4.74 ± 0.42). In-sample (full-data) evaluations overstate generalisation and must not be quoted as model quality.
-- Proactive scheduling: **7.7% mean wait-time reduction** vs FIFO (40-run seeded paired benchmark, paired t-test p = 1.4e-06, Wilcoxon p = 7.1e-06, bootstrap 95% CI on improvement [5.0%, 10.3%]), at **identical GPU utilisation** (≈64%).
-- Trade-off: proactive reordering **worsens tail latency** (mean max-wait ~58 → ~125 ts) and **per-job fairness** (Gini 0.53 → 0.80). The anti-starvation variant recovers part of the equity loss (Gini 0.69, max wait ~87 ts) at a small mean-wait/SLA cost. The mean-wait gain is not free.
+- Proactive scheduling: **7.9% mean wait-time reduction** vs FIFO (40-run seeded paired benchmark, paired t-test p = 2.0e-06, Wilcoxon p = 2.7e-06, bootstrap 95% CI on improvement [4.9%, 10.9%]), at **identical GPU utilisation** (≈64%).
+- Trade-off: proactive reordering **worsens tail latency** (mean max-wait ~58 → ~123 ts) and **per-job fairness** (Gini 0.53 → 0.79). The anti-starvation variant recovers part of the equity loss (Gini 0.69, max wait ~88 ts) at a small mean-wait/SLA cost. The mean-wait gain is not free.
 - **Real-trace validation (v3.2)** — two genuine Parallel Workloads Archive traces (`.swf.gz` committed): zero-shot transfer of the synthetic model is **R² ≈ 0 on both** (SDSC SP2 0.072, LANL CM-5 −0.001, even with best-case affine calibration). **Retrained on the trace itself** (chronological 80/20 split, log-wait target): **SDSC SP2 R²(log) = 0.494** / MAE 622 min (vs −0.694 / 684 min median baseline) — cluster-state features explain ~half the log-wait variance on a real batch supercomputer; LANL CM-5 only 0.101 (median wait ~4 s; largely interactive — honest partial negative). Signal is machine-dependent; retrain-per-deployment is now evidence-backed. Pipeline: `02_data/build_real_trace_datasets.py` → `02_data/real_trace_validation.py`.
-- OOD robustness (Phase 23, 72 shifted scenarios, real model, real simulations): mean R² ≈ −0.31 (range −2.3 to +0.85); scheduling improvement swings −14% to +50% with ≈32% mean failure rate. Retraining per deployment regime plus a FIFO fallback is required.
+- OOD robustness (Phase 23, 72 shifted scenarios, real model, real simulations): mean R² ≈ −0.31 (range −2.3 to +0.85); scheduling improvement swings −10% to +53% with ≈32% mean failure rate. Retraining per deployment regime plus a FIFO fallback is required.
 - Model comparison (Table 1): LightGBM 4.61/0.848 ≥ CatBoost 4.62/0.845 ≥ XGBoost 4.69/0.837 ≈ RF ≈ MLP; linear regression trails (6.32/0.761). Gradient-boosted trees are the right model family; the specific library is a wash.
 - Phase 12 ablation: `job_gpu` dominates (R² drop 0.201), then `queue_pressure` (0.027) and `queue_length` (0.021); the remaining features contribute marginally on this workload.
 - Phase 13/27 fairness: quantified above; SLA compliance FIFO 0.933 vs Proactive 0.945 vs anti-starvation 0.863.
-- Phase 14/24 benchmark, now **14 schedulers** (v3.4 adds SMALLEST; 20 paired runs, out-of-training seeds, unified wait = turnaround − runtime, canonical two-condition EASY): mean wait **SJF-oracle 12.34 < SJF-EST 13.32 < SRPT 14.02 < HRRN 15.55 < NN 16.07 = SMALLEST 16.07 ≈ Proactive 16.10 < Priority 16.53 < FCFS/first-fit 17.22 < Hybrid-BF 19.19 ≈ EASY-EST 19.23 ≈ EASY 19.25 < Conservative-BF 21.84 < strict FIFO 26.17 ts**. All gaps vs Proactive are Holm-significant except HRRN (t p=0.080, Wilcoxon p=0.036 — borderline), Priority, and **NN/SMALLEST, which tie with Proactive and with each other exactly** (see the degeneracy section). Labels: "FCFS/first-fit" is the historical 'FIFO' key (any fitting job starts per tick); strict FIFO blocks on the queue head.
-- **The guide-requested baseline landscape (v3.3)** answers "does the ML model beat classical logic?" honestly: **any runtime signal beats it on mean wait** — even SJF on rank-destroying modal estimates (everyone writes 10 or 20 ts) gets 14.06 vs Proactive's 16.10, and the estimate-quality sweep (f-model C=1→10, `05_results/schedulers/estimate_sensitivity.csv`) only degrades SJF-EST from 12.34 to 13.49. But runtime-ordered policies pay in tails/equity (SJF max 146 ts, Gini 0.79; SRPT max 151, Gini 0.81, 41.5 preemptions/run at 1-tick checkpoint cost), where HRRN (aging built into the ratio) is the strongest classical all-rounder: mean 15.55, max 65, Gini 0.54. **Proactive's niche is the zero-runtime-information regime**: −6.5% mean wait vs FCFS/first-fit (Holm p=0.0012) using only observable cluster/queue state, no estimates. Per-run rows + Holm-adjusted pairwise tests (t + Wilcoxon): `multi_scheduler_runs.csv`, `multi_scheduler_significance.csv`.
-- **Backfill, canonically (v3.3)**: the v3.2 EASY implementation omitted Mu'alem & Feitelson's second backfill condition (candidates fitting in the shadow-time surplus may run past it) and overstated the reservation price at ~45%; the canonical rule costs **+11.8% mean wait vs FCFS/first-fit** (19.25 vs 17.22) while beating strict FIFO by 26% — and is nearly insensitive to estimate quality (19.0–19.8 across perfect/f-model/modal estimates; mild over-estimation even helps, reproducing the known paradox). Conservative backfill (reservation for every queued job) trades +13% further mean wait for the study's best tail (max 50 ts) short of strict FIFO's Gini. The predicted-wait backfill hybrid still ties plain EASY (19.19 vs 19.25, n.s.) — the honest null result stands.
-- **Bounded-fairness wait-budget (v3.2)**: sweeping a hard escalation budget B traces a smooth Pareto frontier — B=60 keeps +7.1% mean-wait gain (of +13.2% unbounded) while capping max wait at 81 ts (vs 136) and Gini at 0.69; B≤30 is slightly worse than FIFO (escalation churn). `05_results/fairness/budget_sweep.csv`.
-- **Uncertainty-aware scheduling (v3.2, honest negative)**: quantile XGBoost (q10/50/90; holdout q50 MAE 4.61) has under-dispersed intervals (68% coverage vs 80% nominal); UCB and spread-guarded variants match the point model everywhere and fail to detect the one regime where reordering hurts (0.5× arrivals / 4 nodes: all −4…−5% vs FIFO, guard fired on 0.2% of ticks). Rolling-MAE drift triggering remains the deployment mechanism. `05_results/uncertainty/`.
+- Phase 14/24 benchmark, now **14 schedulers** (v3.4 adds SMALLEST; 20 paired runs, out-of-training seeds, unified wait = turnaround − runtime, canonical two-condition EASY): mean wait **SJF-oracle 12.34 < SJF-EST 13.32 < SRPT 14.02 < HRRN 15.55 < Proactive 15.95 < NN 16.07 = SMALLEST 16.07 < Priority 16.53 < FCFS/first-fit 17.22 < Hybrid-BF 19.20 ≈ EASY-EST 19.23 ≈ EASY 19.25 < Conservative-BF 21.84 < strict FIFO 26.17 ts**. All gaps vs Proactive are Holm-significant except HRRN (−2.5%, t p=0.17 Holm), Priority, and **NN/SMALLEST (+0.8%, Holm n.s., TOST-equivalent; NN and SMALLEST tie with each other exactly** — see the degeneracy section). Labels: "FCFS/first-fit" is the historical 'FIFO' key (any fitting job starts per tick); strict FIFO blocks on the queue head.
+- **The guide-requested baseline landscape (v3.3)** answers "does the ML model beat classical logic?" honestly: **any runtime signal beats it on mean wait** — even SJF on rank-destroying modal estimates (everyone writes 10 or 20 ts) gets 14.06 vs Proactive's 16.10, and the estimate-quality sweep (f-model C=1→10, `05_results/schedulers/estimate_sensitivity.csv`) only degrades SJF-EST from 12.34 to 13.49. But runtime-ordered policies pay in tails/equity (SJF max 146 ts, Gini 0.79; SRPT max 151, Gini 0.81, 41.5 preemptions/run at 1-tick checkpoint cost), where HRRN (aging built into the ratio) is the strongest classical all-rounder: mean 15.55, max 65, Gini 0.54. **Proactive's niche is the zero-runtime-information regime**: −7.4% mean wait vs FCFS/first-fit (Holm p=4.0e-04) using only observable cluster/queue state, no estimates. Per-run rows + Holm-adjusted pairwise tests (t + Wilcoxon): `multi_scheduler_runs.csv`, `multi_scheduler_significance.csv`.
+- **Backfill, canonically (v3.3)**: the v3.2 EASY implementation omitted Mu'alem & Feitelson's second backfill condition (candidates fitting in the shadow-time surplus may run past it) and overstated the reservation price at ~45%; the canonical rule costs **+11.8% mean wait vs FCFS/first-fit** (19.25 vs 17.22) while beating strict FIFO by 26% — and is nearly insensitive to estimate quality (19.0–19.8 across perfect/f-model/modal estimates; mild over-estimation even helps, reproducing the known paradox). Conservative backfill (reservation for every queued job) trades +13% further mean wait for the study's best tail (max 50 ts) short of strict FIFO's Gini. The predicted-wait backfill hybrid still ties plain EASY (19.20 vs 19.25, n.s.) — the honest null result stands.
+- **Bounded-fairness wait-budget (v3.2)**: sweeping a hard escalation budget B traces a smooth Pareto frontier — B=60 keeps +7.4% mean-wait gain (of +13.1% unbounded) while capping max wait at 81 ts (vs 138) and Gini at 0.68; B≤30 is slightly worse than FIFO (escalation churn). `05_results/fairness/budget_sweep.csv`.
+- **Uncertainty-aware scheduling (v3.2, honest negative)**: quantile XGBoost (q10/50/90; holdout q50 MAE 4.61) has under-dispersed intervals (68% coverage vs 80% nominal); UCB and spread-guarded variants match the point model everywhere and fail to detect the one regime where reordering hurts (0.5× arrivals / 4 nodes: −2…−5% vs FIFO across all three variants, guard fired on 0.5% of ticks). Rolling-MAE drift triggering remains the deployment mechanism. `05_results/uncertainty/`.
 - Phase 15 SHAP: global summary, 12 dependence plots, and 3 force plots regenerate cleanly (`05_results/shap/`).
-- Phase 16–19: scaling (advantage 14.4% on small contended clusters → 0% when capacity removes queueing), online learning (drifted-stream MAE 6.98 → 6.88 with incremental updates), concept drift detection (rolling-MAE triggers), and an assumption-heavy ROI estimate (~$78k/yr, 86% first-year ROI — treat as illustrative).
+- Phase 16–19: scaling (advantage 14.5% on small contended clusters → 0% when capacity removes queueing), online learning (drifted-stream MAE 6.98 → 6.88 with incremental updates), concept drift detection (rolling-MAE triggers), and an assumption-heavy ROI estimate (~$78k/yr, 86% first-year ROI — treat as illustrative).
 - Phase 22 statistics: all headline claims carry bootstrap CIs and BH-corrected p-values; degenerate comparisons (zero-variance utilisation/completions) are explicitly reported as "n/a (zero variance)" instead of fake significance.
 - Phase 26 stress test: at 32–256 GPUs under saturation, utilisation stays >99.7%, batched inference costs 10–48 ms per decision, and scheduling overhead stays <5% of throughput.
 

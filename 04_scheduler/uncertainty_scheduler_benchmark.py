@@ -120,23 +120,25 @@ def generate_jobs(n, arrival_window):
     return sorted(jobs, key=lambda j: j.arrival_time)
 
 def feature_matrix(queue, cluster, running):
-    """Batch feature extraction — matches generate_improved_dataset.py exactly."""
+    """Batch feature extraction — matches generate_improved_dataset.py exactly.
+    Each row's job is itself a member of `queue`; training rows exclude it
+    (snapshot at arrival, before enqueue), so queue_length/queue_pressure
+    subtract the job's own contribution to match the trained semantics."""
     tf = cluster.total_free_gpus()
     max_free = max(cluster.nodes)
     var_free = float(np.var(cluster.nodes))
     frag = float(np.std(cluster.nodes))
     q_gpus = sum(q.num_gpus for q in queue)
-    q_press = q_gpus / (tf + 1)
     avg_free = tf / cluster.num_nodes
     rows = []
     for job in queue:
         rows.append([
-            job.num_gpus, tf, len(queue), len(running),
+            job.num_gpus, tf, len(queue) - 1, len(running),
             max_free, var_free,
             int(tf >= job.num_gpus),
             min(tf / (job.num_gpus + 1e-6), 1.0),
             frag,
-            q_press,
+            (q_gpus - job.num_gpus) / (tf + 1),
             sum(1 for n in cluster.nodes if n >= job.num_gpus) / cluster.num_nodes,
             avg_free,
         ])

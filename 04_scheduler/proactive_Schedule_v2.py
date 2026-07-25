@@ -68,7 +68,10 @@ def generate_jobs(num_jobs, max_time):
     return sorted(jobs, key=lambda x: x.arrival_time)
 
 def get_features(job, cluster, queue, running_jobs):
-    """Feature extraction — must exactly match generate_improved_dataset.py."""
+    """Feature extraction — must exactly match generate_improved_dataset.py.
+    `queue` includes the scored job at dispatch time; training rows exclude it
+    (snapshot at arrival, before enqueue), so queue_length/queue_pressure
+    subtract the job's own contribution to match the trained semantics."""
     total_free    = cluster.total_free_gpus()
     max_free_node = max(cluster.nodes)
     variance_free = np.var(cluster.nodes)
@@ -76,13 +79,13 @@ def get_features(job, cluster, queue, running_jobs):
     can_fit_now       = int(total_free >= job.num_gpus)
     gpu_fit_ratio     = min(total_free / (job.num_gpus + 1e-6), 1.0)   # capped at 1.0
     fragmentation     = float(np.std(cluster.nodes))                     # std-dev (not normalised ratio)
-    total_queued_gpus = sum(q.num_gpus for q in queue)
-    queue_pressure    = total_queued_gpus / (total_free + 1)             # total queue demand vs supply
+    total_queued_gpus = sum(q.num_gpus for q in queue) - job.num_gpus
+    queue_pressure    = total_queued_gpus / (total_free + 1)             # others' queue demand vs supply
     node_availability = sum(1 for n in cluster.nodes if n >= job.num_gpus) / cluster.num_nodes
     avg_free_per_node = total_free / cluster.num_nodes
 
     return [
-        job.num_gpus, total_free, len(queue), len(running_jobs),
+        job.num_gpus, total_free, len(queue) - 1, len(running_jobs),
         max_free_node, variance_free,
         can_fit_now, gpu_fit_ratio, fragmentation,
         queue_pressure, node_availability, avg_free_per_node,

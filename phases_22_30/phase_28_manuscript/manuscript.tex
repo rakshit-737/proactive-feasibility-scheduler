@@ -50,16 +50,16 @@ cluster-state feature set every such attribute is a deterministic function of
 the job's requested size. The learned score is therefore a function of
 requested size alone, and the ordering it induces is a per-instant lookup table
 from size to priority: the cluster-state features shift all scores equally and
-cannot reorder anything. We verify this over $25{,}306$ real dispatch instants
+cannot reorder anything. We verify this over $45{,}432$ real dispatch instants
 in three settings (a synthetic generator and two Parallel Workloads Archive
 traces) and find zero counterexamples --- two jobs of equal size never receive
 different scores. The consequences are measurable. On the synthetic benchmark a
 one-line sort by requested size is statistically \emph{equivalent} to the full
-XGBoost pipeline (paired TOST $p = 2\times10^{-16}$, difference CI
-$[-0.14, +0.08]$ ts against a $\pm 1.61$ ts margin), and an MLP on the same
+XGBoost pipeline (paired TOST $p = 2.6\times10^{-16}$, difference CI
+$[+0.03, +0.23]$ ts against a $\pm 1.59$ ts margin), and an MLP on the same
 features reproduces the size sort exactly. We then re-ask the whole scheduler
 comparison on two real traces, replacing the simulated user-estimate model with
-the estimates the traces actually contain. The synthetic $7.7\%$ mean-wait gain
+the estimates the traces actually contain. The synthetic $7.9\%$ mean-wait gain
 over FCFS does not replicate: the ML scheduler is indistinguishable from FCFS on
 LANL CM-5 ($p = 0.48$) and any classical policy with a runtime estimate beats it
 on both machines. We also find that real estimate error is far more damaging to
@@ -108,9 +108,11 @@ Hence the score satisfies
 for some function $g_{S_t}$ determined entirely by the state, and the induced
 queue order is the order of $g_{S_t}$ over the sizes present in $Q_t$. The model
 is, at each instant, a \emph{lookup table from requested size to priority}. The
-remaining eight features describe only the cluster --- they select \emph{which}
+remaining seven features describe only the cluster --- they select \emph{which}
 table is used --- but they cannot distinguish two co-queued jobs, which is the
-only thing a ranking consumes.
+only thing a ranking consumes. (\texttt{queue\_pressure} does differ between
+co-queued jobs, but only through the $-g_j$ term: it is itself a function of
+size given the state, so it cannot break the degeneracy.)
 
 \paragraph{Why this matters.}
 If the argument holds, then a reported improvement of an ML wait-time scheduler
@@ -123,21 +125,22 @@ are aware of, including our own earlier versions of this work.
 \paragraph{Contributions.}
 \begin{enumerate}
   \item \textbf{The degeneracy, stated and measured} (\S\ref{sec:degeneracy}).
-        Over $25{,}306$ dispatch instants across a synthetic generator and two
+        Over $45{,}432$ dispatch instants across a synthetic generator and two
         real traces, two equally-sized co-queued jobs never receive different
-        scores (0 violations). Eight of the twelve features vary across the
-        queue in $0.0\%$ of instants. A ten-job queue receives only $2.3$--$3.1$
-        distinct priority levels.
+        scores (0 violations). Seven of the twelve features vary across the
+        queue in $0.0\%$ of instants, and every feature that does vary is a
+        deterministic function of the requested size. A ten-job queue receives
+        only $2.3$--$3.1$ distinct priority levels.
   \item \textbf{An equivalence result, not a null result}
         (\S\ref{sec:equivalence}). Using paired TOST rather than a failure to
         reject, sorting by requested size is statistically equivalent to the
         XGBoost scheduler on the synthetic benchmark
-        ($p_{\mathrm{TOST}} = 2\times10^{-16}$) and on SDSC SP2
+        ($p_{\mathrm{TOST}} = 2.6\times10^{-16}$) and on SDSC SP2
         ($p_{\mathrm{TOST}} = 1.8\times10^{-12}$). An MLP over the same features
         reproduces the size sort \emph{exactly} on all 20 paired runs.
   \item \textbf{A trace-driven re-evaluation} (\S\ref{sec:traces}). Replaying
         LANL CM-5 and SDSC SP2 through twelve policies, with the real user
-        runtime estimates the traces contain, the synthetic $7.7\%$ gain over
+        runtime estimates the traces contain, the synthetic $7.9\%$ gain over
         FCFS does not replicate, and every policy with access to a runtime
         estimate beats the ML scheduler on both machines.
   \item \textbf{Real estimate error breaks backfill far more than the
@@ -243,7 +246,7 @@ survives review.
 \label{sec:degeneracy}
 
 We instrumented every \textsc{Proactive} ranking decision in real simulations
-($25{,}306$ instants with $\ge 2$ queued jobs) and recorded, per instant, which
+($45{,}432$ instants with $\ge 2$ queued jobs) and recorded, per instant, which
 features differ across the queue and how the resulting order compares with
 ML-free orders. Table~\ref{tab:degeneracy} summarises.
 
@@ -254,15 +257,15 @@ ML-free orders. Table~\ref{tab:degeneracy} summarises.
 \toprule
  & Synthetic & SDSC & LANL \\
 \midrule
-Ranking instants        & 3{,}648 & 4{,}800 & 16{,}858 \\
+Ranking instants        & 3{,}646 & 11{,}843 & 29{,}943 \\
 Features (total)        & 12 & 8 & 8 \\
-Features varying (mean) & 1.82 & 2.79 & 2.71 \\
+Features varying (mean) & 2.62 & 2.87 & 2.69 \\
 Equal size, diff.\ score & \textbf{0} & \textbf{0} & \textbf{0} \\
-Distinct scores / queue & 2.81 & 3.07 & 2.29 \\
-Kendall $\tau$ vs.\ size & 0.77 & 0.73 & 0.71 \\
-Order $=$ smallest-first & 83.1\% & 69.1\% & 81.6\% \\
-Order $=$ arrival (FCFS) & 18.2\% & 21.7\% & 26.4\% \\
-Size table monotone     & 66.9\% & 51.9\% & 61.5\% \\
+Distinct scores / queue & 2.81 & 3.09 & 2.28 \\
+Kendall $\tau$ vs.\ size & 0.71 & 0.75 & 0.62 \\
+Order $=$ smallest-first & 80.3\% & 71.5\% & 77.6\% \\
+Order $=$ arrival (FCFS) & 19.7\% & 18.1\% & 27.5\% \\
+Size table monotone     & 63.1\% & 57.1\% & 56.9\% \\
 \bottomrule
 \end{tabular}
 \caption{The learned score never distinguishes two equally-sized co-queued jobs.
@@ -271,25 +274,25 @@ Cluster-state features vary across the queue in $0.0\%$ of instants.}
 \end{table}
 
 Three observations. First, the \emph{zero} in row four is the claim: across
-$25{,}306$ instants there is no counterexample, exactly as the argument in
-\S1 requires. Second, of the twelve synthetic features only four ever differ
+$45{,}432$ instants there is no counterexample, exactly as the argument in
+\S1 requires. Second, of the twelve synthetic features only five ever differ
 between co-queued jobs (\texttt{job\_gpu}, \texttt{gpu\_fit\_ratio},
-\texttt{can\_fit\_now}, \texttt{node\_availability}) and all four are functions
-of the requested size; the remaining eight vary in $0.0\%$ of instants and are
-therefore incapable of affecting any ranking. Third, the resolution is very
-coarse: a queue of $\sim$9 jobs is partitioned into only $2.3$--$3.1$ priority
-classes, and in $18$--$26\%$ of instants \emph{every} queued job receives the
-same score, so the policy silently reduces to FCFS.
+\texttt{can\_fit\_now}, \texttt{node\_availability}, \texttt{queue\_pressure})
+and all five are functions of the requested size; the remaining seven vary in
+$0.0\%$ of instants and are therefore incapable of affecting any ranking. Third,
+the resolution is very coarse: a queue of $\sim$9 jobs is partitioned into only
+$2.3$--$3.1$ priority classes, and in $18$--$27\%$ of instants \emph{every}
+queued job receives the same score, so the policy silently reduces to FCFS.
 
 The recovered size$\rightarrow$priority table is monotone increasing in only
-$52$--$67\%$ of instants. Where it is monotone the policy \emph{is}
+$57$--$63\%$ of instants. Where it is monotone the policy \emph{is}
 smallest-job-first; where it is not, the model has learned a non-trivial size
 preference. We note explicitly that this fraction does \emph{not} predict where
-the equivalence of \S\ref{sec:equivalence} fires --- it is lowest on SDSC
-($51.9\%$), which is the substrate on which the size sort is certified
-equivalent. Degeneracy is the claim this section supports; the shape of the
-learned table is a description of it, not an explanation of the downstream
-scheduling difference.
+the equivalence of \S\ref{sec:equivalence} fires --- SDSC ($57.1\%$), where the
+size sort is certified equivalent, and LANL ($56.9\%$), where it is not, are
+statistically indistinguishable on it. Degeneracy is the claim this section
+supports; the shape of the learned table is a description of it, not an
+explanation of the downstream scheduling difference.
 
 \section{Sorting by Size Is Equivalent to the Model}
 \label{sec:equivalence}
@@ -303,8 +306,8 @@ Table~\ref{tab:equiv} gives the paired TOST results.
 \toprule
 Substrate & Metric & $\Delta$ & $p_{\mathrm{TOST}}$ & Verdict \\
 \midrule
-Synthetic & mean wait & $-0.18\%$ & $2\times10^{-16}$ & equivalent \\
-Synthetic & bnd.\ slow. & $-0.05\%$ & $1\times10^{-18}$ & equivalent \\
+Synthetic & mean wait & $+0.80\%$ & $2.6\times10^{-16}$ & equivalent \\
+Synthetic & bnd.\ slow. & $+0.69\%$ & $3.8\times10^{-18}$ & equivalent \\
 SDSC SP2  & mean wait & $-0.05\%$ & $1.8\times10^{-12}$ & equivalent \\
 SDSC SP2  & bnd.\ slow. & $+2.7\%$ & $7.4\times10^{-4}$ & equivalent \\
 LANL CM-5 & mean wait & $+14.4\%$ & $0.77$ & not equiv. \\
@@ -317,8 +320,8 @@ margin $10\%$ of the reference.}
 \label{tab:equiv}
 \end{table}
 
-On the synthetic benchmark the difference in mean wait is $-0.029$ ts with a
-$90\%$ CI of $[-0.137, +0.079]$ against a $\pm 1.61$ ts margin: the entire
+On the synthetic benchmark the difference in mean wait is $+0.127$ ts with a
+$90\%$ CI of $[+0.025, +0.228]$ against a $\pm 1.59$ ts margin: the entire
 interval sits well inside the margin, so this is a positive finding of
 equivalence, not an underpowered null. The MLP baseline is a sharper version of
 the same point --- \textsc{NN} and \textsc{Smallest\_First} produce
@@ -376,8 +379,8 @@ Policy & wait & bsld & wait & bsld \\
 \end{table}
 
 \paragraph{The synthetic gain does not replicate.}
-On the synthetic benchmark \textsc{Proactive} beats FCFS by $6.5\%$ (and by
-$7.7\%$ in the older 40-run paired study). On SDSC it beats FCFS by $20.4\%$
+On the synthetic benchmark \textsc{Proactive} beats FCFS by $7.4\%$ (and by
+$7.9\%$ in the older 40-run paired study). On SDSC it beats FCFS by $20.4\%$
 ($p = 0.042$, Holm $0.084$); on LANL the difference is $4.5\%$ in
 \textsc{Proactive}'s favour but not distinguishable from zero
 ($p = 0.48$). A method whose advantage over doing nothing is machine-dependent
@@ -465,10 +468,10 @@ More broadly, we suggest two evaluation practices. First, \textbf{report the
 ML-free control that the model's own feature set implies}: if only the size
 feature varies across the queue, the control is sorting by size, and FIFO is not
 an adequate comparison. Second, \textbf{use equivalence tests} when arguing that
-a component matters --- had we only run difference tests, the $p = 0.65$
-comparison between the size sort and the XGBoost pipeline would have been
-reported as ``no significant difference'' and quietly dropped, rather than as
-the finding it is.
+a component matters --- had we only run difference tests, the Holm-adjusted
+$p = 0.17$ comparison between the size sort and the XGBoost pipeline would have
+been reported as ``no significant difference'' and quietly dropped, rather than
+as the finding it is.
 
 \section{Threats to Validity}
 \label{sec:threats}
@@ -511,7 +514,7 @@ step, and we make no claim about it here.
 
 We set out to find where an ML wait-time scheduler adds value and found that,
 as constructed, it cannot add value to queue ordering: its score is a function
-of requested size alone, verified over $25{,}306$ dispatch instants without a
+of requested size alone, verified over $45{,}432$ dispatch instants without a
 single counterexample. A one-line sort is statistically equivalent to it on two
 of three substrates, an MLP over the same features reproduces the sort exactly,
 its synthetic advantage over FCFS does not replicate on real traces, and any

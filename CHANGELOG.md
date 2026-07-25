@@ -1,6 +1,55 @@
 # Changelog
 
+## v3.5 — July 2026 · Train/serve feature-skew fix and full synthetic-result regeneration
+
+### The defect
+Training rows snapshot each job's features **at arrival, before it joins the
+queue** (`generate_improved_dataset.extract_features`, and likewise
+`build_real_trace_datasets.replay_trace_features`: "self NOT yet in the queue").
+But every *synthetic dispatch-time* feature builder scored a job while it was
+**inside** `queue`, so `queue_length` was off by one and `queue_pressure`
+included the job's own GPU demand — a train/serve skew. The trace-side dispatch
+builder (`trace_driven_benchmark.build_feature_matrix`) already excluded the
+scored job, and the manuscript/RESULTS formula
+`queue_pressure = (Σ_Q − g)/(free+1)` already *described* the corrected
+semantics; the synthetic serving code simply did not implement them.
+
+### The fix
+`queue_length → len(queue) − 1` and `queue_pressure → (Σ_queue − job_gpu)/(free+1)`
+at dispatch time in every synthetic builder: `multi_scheduler_benchmark`,
+`neural_network_scheduler`, `benchmark_statistical`, `fairness_analysis`,
+`fairness_budget_sweep`, `scaling_analysis`, `uncertainty_scheduler_benchmark`,
+`proactive_scheduler`, `proactive_Schedule_v2`, `05_results/benchmark_and_plot`,
+and the phase-23 dispatch call site (which now passes the queue without the
+scored job). Snapshot-style callers were already correct and are unchanged; no
+model was retrained (training data never had the skew).
+
+### Consequences for the results (all synthetic numbers regenerated)
+- `queue_pressure` now **varies across the queue** (82.9% of synthetic instants,
+  exactly as often as `job_gpu` — it is a deterministic function of size given
+  the state), so the synthetic feature vector has **7**, not 8, cluster-constant
+  features. The degeneracy argument is unchanged and the measured claim still
+  holds: **zero equal-size/different-score violations over 45,432 instants**
+  (3,646 synthetic + 11,843 SDSC + 29,943 LANL at the trace benchmark's own
+  20-window protocol, now also the diagnostic's default).
+- 40-run headline: **7.9%** mean-wait reduction vs FIFO (was 7.7%), t p=2.0e-06,
+  CI [4.9%, 10.9%]. 14-scheduler table: PROACTIVE 15.95 ts (was 16.10),
+  −7.4% vs FCFS/first-fit (Holm p=4.0e-04); NN and SMALLEST remain **bit-identical
+  to each other** at 16.07, and both are TOST-equivalent to PROACTIVE
+  (+0.80%, CI [+0.03, +0.23] ts inside a ±1.59 margin, p=2.6e-16).
+- Every conclusion of v3.3/v3.4 survives: any runtime signal still beats
+  PROACTIVE, the ranking is still a size lookup table, the trace-driven results
+  are untouched (that code path never had the skew).
+- Tests: `tests/` gains a suite that pins the degeneracy claim (equal-size ⇒
+  equal score, 7 constant features, all-equal-size queue ⇒ FCFS, trace builder
+  parity) plus backfill/queue-policy/statistics/reproducibility checks;
+  `pyproject.toml` + `conftest.py` configure it.
+
 ## v3.4 — July 2026 · Ranking degeneracy, trace-driven re-evaluation, and a reframed manuscript
+
+> **v3.5 note.** The synthetic numbers quoted below were produced under the
+> serving-side feature skew fixed in v3.5 and are superseded by the regenerated
+> values in `RESULTS.md`; the qualitative findings are unchanged.
 
 v3.3 established that any runtime signal beats the proactive scheduler on mean
 wait, leaving it a claimed niche in the *zero-runtime-information* regime. v3.4

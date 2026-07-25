@@ -1,0 +1,25 @@
+# The repository is a research codebase, not an installable package: its modules
+# live in numbered directories (01_simulation, 04_scheduler, ...) whose names are
+# not valid Python identifiers. This file therefore configures the TOOLS only —
+# there is no [project] table and nothing to `pip install`.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The suite must stay fast enough that nobody is tempted to skip it: no test may
+# run a full benchmark. If a test needs a simulation it uses a handful of jobs.
+addopts = "-q --strict-markers --strict-config"
+markers = [
+    "slow: takes more than a second; deselect with -m 'not slow'",
+    "artefact: needs a generated artefact from run_all_experiments.sh (skips if absent)",
+]
+filterwarnings = ["error::DeprecationWarning:tests.*"]
+
+[tool.ruff]
+line-length = 100
+exclude = ["07_archive", ".ruff_cache"]
+
+[tool.ruff.lint]
+# CI gates on real errors only: syntax (E9) and undefined/invalid names
+# (F63, F7, F82). Style is deliberately not enforced across a codebase written
+# over 30 research phases.
+select = ["E9", "F63", "F7", "F82"]

@@ -368,10 +368,18 @@ def run_proactive(jobs_input, num_nodes, model, model_features):
         # effect otherwise, and skipping keeps the 72-scenario sweep fast.
         free = cluster.total_free_gpus()
         if len(queue) > 1 and any(j.num_gpus <= free for j in queue):
+            # extract_features expects the queue WITHOUT the scored job (training
+            # rows are snapshotted at arrival, before enqueue), so pass the
+            # other queued jobs only — same fix as the 04_scheduler benchmarks.
             feats = np.asarray(
                 [
                     [snap[c] for c in model_features]
-                    for snap in (extract_features(job, cluster, queue, running_jobs) for job in queue)
+                    for snap in (
+                        extract_features(job, cluster,
+                                         [q for q in queue if q is not job],
+                                         running_jobs)
+                        for job in queue
+                    )
                 ],
                 dtype=float,
             )

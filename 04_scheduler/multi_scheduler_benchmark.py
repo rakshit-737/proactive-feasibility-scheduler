@@ -109,18 +109,23 @@ class Cluster:
             self.nodes[nid] += used
 
 def get_features(job, cluster, queue, running):
+    # `queue` INCLUDES the scored job at every call site here, but the training
+    # rows (generate_improved_dataset.extract_features) are snapshotted at the
+    # job's arrival, BEFORE it joins the queue. queue_length and queue_pressure
+    # therefore exclude the job itself, matching the trained semantics (the
+    # trace-side build_feature_matrix does the same).
     tf = cluster.total_free_gpus()
     return np.array([
         job.num_gpus,
         tf,
-        len(queue),
+        len(queue) - 1,
         len(running),
         max(cluster.nodes),
         float(np.var(cluster.nodes)),
         int(tf >= job.num_gpus),
         min(tf / (job.num_gpus + 1e-6), 1.0),
         float(np.std(cluster.nodes)),
-        sum(q.num_gpus for q in queue) / (tf + 1),
+        (sum(q.num_gpus for q in queue) - job.num_gpus) / (tf + 1),
         sum(1 for n in cluster.nodes if n >= job.num_gpus) / cluster.num_nodes,
         tf / cluster.num_nodes,
     ])

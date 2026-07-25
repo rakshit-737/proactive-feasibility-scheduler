@@ -79,18 +79,21 @@ def gini(values):
     return float((n + 1 - 2 * np.sum(c) / c[-1]) / n)
 
 def get_features(job, cluster, queue, running):
+    # `queue` includes the scored job at dispatch time; training rows exclude
+    # it (snapshot at arrival, before enqueue), so queue_length/queue_pressure
+    # subtract the job's own contribution to match the trained semantics.
     tf = cluster.total_free_gpus()
     return np.array([
         job.num_gpus,
         tf,
-        len(queue),
+        len(queue) - 1,
         len(running),
         max(cluster.nodes),
         float(np.var(cluster.nodes)),
         int(tf >= job.num_gpus),
         min(tf / (job.num_gpus + 1e-6), 1.0),
         float(np.std(cluster.nodes)),
-        sum(q.num_gpus for q in queue) / (tf + 1),
+        (sum(q.num_gpus for q in queue) - job.num_gpus) / (tf + 1),
         sum(1 for n in cluster.nodes if n >= job.num_gpus) / cluster.num_nodes,
         tf / cluster.num_nodes,
     ])

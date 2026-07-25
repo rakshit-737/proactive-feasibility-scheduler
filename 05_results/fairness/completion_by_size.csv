@@ -2,9 +2,9 @@ scheduler,job_size,completed_jobs,completion_rate,mean_wait,run
 fifo,large,40.75,1.0,29.403581043214636,10.5
 fifo,medium,41.55,1.0,17.005746383714843,10.5
 fifo,small,27.7,1.0,4.303876910569128,10.5
-proactive,large,40.75,1.0,42.213106667189024,10.5
-proactive,medium,41.55,1.0,1.70840450637072,10.5
-proactive,small,27.7,1.0,0.34764333696646604,10.5
-proactive_starvation,large,40.75,1.0,35.79378553771332,10.5
-proactive_starvation,medium,41.55,1.0,7.659164662498571,10.5
-proactive_starvation,small,27.7,1.0,0.7222218920929288,10.5
+proactive,large,40.75,1.0,42.11229766220091,10.5
+proactive,medium,41.55,1.0,1.772100809822397,10.5
+proactive,small,27.7,1.0,0.3987683717757114,10.5
+proactive_starvation,large,40.75,1.0,36.11968979820496,10.5
+proactive_starvation,medium,41.55,1.0,7.1412750535801335,10.5
+proactive_starvation,small,27.7,1.0,0.7112582934122915,10.5

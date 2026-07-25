@@ -35,17 +35,17 @@ SCHEDULERS COMPARED
     Reference: 04_scheduler/hrrn_scheduler.py (starvation-aware)
     Mean wait: 15.55 ts | Max wait: 65.2 ts | Gini: 0.538
 
-  • Smallest requested size first (no ML) (degeneracy_control)
-    Reference: 04_scheduler/size_scheduler.py (the ML-free control implied by ranking_degeneracy.py: the wait model's per-job features are all functions of requested size)
-    Mean wait: 16.07 ts | Max wait: 136.3 ts | Gini: 0.797
+  • Proactive (XGBoost)            (proposed)
+    Reference: Phase 09 proactive feasibility scheduler
+    Mean wait: 15.95 ts | Max wait: 128.8 ts | Gini: 0.793
 
   • Neural Network (MLP)           (ml_baseline)
     Reference: 04_scheduler/neural_network_scheduler.py (Phase 14)
     Mean wait: 16.07 ts | Max wait: 136.3 ts | Gini: 0.797
 
-  • Proactive (XGBoost)            (proposed)
-    Reference: Phase 09 proactive feasibility scheduler
-    Mean wait: 16.10 ts | Max wait: 127.2 ts | Gini: 0.791
+  • Smallest requested size first (no ML) (degeneracy_control)
+    Reference: 04_scheduler/size_scheduler.py (the ML-free control implied by ranking_degeneracy.py: the wait model's per-job features are all functions of requested size)
+    Mean wait: 16.07 ts | Max wait: 136.3 ts | Gini: 0.797
 
   • Priority                       (heuristic_baseline)
     Reference: 04_scheduler/priority_scheduler.py
@@ -57,7 +57,7 @@ SCHEDULERS COMPARED
 
   • EASY backfill + predicted-wait scan (ml_hybrid)
     Reference: 04_scheduler/multi_scheduler_benchmark.py (proactive_bf)
-    Mean wait: 19.19 ts | Max wait: 53.5 ts | Gini: 0.478
+    Mean wait: 19.20 ts | Max wait: 53.8 ts | Gini: 0.479
 
   • EASY backfill (user estimates) (heuristic_baseline)
     Reference: 04_scheduler/backfill_scheduler.py (f-model estimates, C=5)
@@ -79,33 +79,33 @@ KEY FINDINGS
 ----------------------------------------------------------------------
 
 1. MEAN WAIT vs. FIFO (multi-scheduler benchmark)
-   Proactive: 16.10 ts (FIFO: 17.22 ts)
-   Change: +6.46% (reduction in mean wait)
+   Proactive: 15.95 ts (FIFO: 17.22 ts)
+   Change: +7.37% (reduction in mean wait)
 
    Paired 40-run FIFO-vs-proactive benchmark:
-   Mean wait 18.27 -> 16.70 ts (mean per-run improvement 7.71%)
-   Wait difference 95% CI: [1.01, 2.13] ts
-   Paired t-test: t = 5.68, p = 1.45e-06 (statistically significant at p < 0.05)
+   Mean wait 18.27 -> 16.64 ts (mean per-run improvement 7.90%)
+   Wait difference 95% CI: [1.04, 2.22] ts
+   Paired t-test: t = 5.58, p = 2.00e-06 (statistically significant at p < 0.05)
 
 2. RANKING BY MEAN-WAIT IMPROVEMENT vs. FIFO
    1. Shortest Job First (oracle) +28.32%
    2. SJF (user estimates)      +22.64%
    3. Preemptive SRPT (+1 tick overhead) +18.55%
    4. Highest Response Ratio Next  +9.66%
-   5. Smallest requested size first (no ML)  +6.63%
+   5. Proactive (XGBoost)        +7.37%
    6. Neural Network (MLP)       +6.63%
-   7. Proactive (XGBoost)        +6.46%
+   7. Smallest requested size first (no ML)  +6.63%
    8. Priority                   +3.97%
    9. FCFS + first-fit (liberal dispatch)  +0.00%
-   10. EASY backfill + predicted-wait scan -11.49%
+   10. EASY backfill + predicted-wait scan -11.53%
    11. EASY backfill (user estimates) -11.69%
    12. EASY backfill (oracle)    -11.80%
    13. Conservative backfill     -26.88%
    14. FIFO (head-blocking)      -52.04%
 
 3. FAIRNESS (Gini coefficient of wait times, lower is fairer)
-   Proactive: 0.791 (FIFO: 0.516)
-   Proactive is 53.38% LESS fair than FIFO on this metric
+   Proactive: 0.793 (FIFO: 0.516)
+   Proactive is 53.76% LESS fair than FIFO on this metric
    (a wait-time/fairness trade-off of reordering the queue).
 
 4. THROUGHPUT & GPU UTILIZATION
@@ -116,52 +116,52 @@ POSITIONING vs. IMPLEMENTED BASELINES
 ----------------------------------------------------------------------
 
 ✗ Proactive does NOT beat Shortest Job First (oracle) on mean-wait reduction vs. FIFO
-  - Proactive +6.46% vs. Shortest Job First (oracle) +28.32%
+  - Proactive +7.37% vs. Shortest Job First (oracle) +28.32%
 
 ✗ Proactive does NOT beat SJF (user estimates) on mean-wait reduction vs. FIFO
-  - Proactive +6.46% vs. SJF (user estimates) +22.64%
+  - Proactive +7.37% vs. SJF (user estimates) +22.64%
 
 ✗ Proactive does NOT beat Preemptive SRPT (+1 tick overhead) on mean-wait reduction vs. FIFO
-  - Proactive +6.46% vs. Preemptive SRPT (+1 tick overhead) +18.55%
+  - Proactive +7.37% vs. Preemptive SRPT (+1 tick overhead) +18.55%
 
 ✗ Proactive does NOT beat Highest Response Ratio Next on mean-wait reduction vs. FIFO
-  - Proactive +6.46% vs. Highest Response Ratio Next +9.66%
+  - Proactive +7.37% vs. Highest Response Ratio Next +9.66%
 
-✗ Proactive does NOT beat Smallest requested size first (no ML) on mean-wait reduction vs. FIFO
-  - Proactive +6.46% vs. Smallest requested size first (no ML) +6.63%
+✓ Proactive achieves a larger mean-wait reduction vs. FIFO than Neural Network (MLP)
+  - Proactive +7.37% vs. Neural Network (MLP) +6.63%
 
-✗ Proactive does NOT beat Neural Network (MLP) on mean-wait reduction vs. FIFO
-  - Proactive +6.46% vs. Neural Network (MLP) +6.63%
+✓ Proactive achieves a larger mean-wait reduction vs. FIFO than Smallest requested size first (no ML)
+  - Proactive +7.37% vs. Smallest requested size first (no ML) +6.63%
 
 ✓ Proactive achieves a larger mean-wait reduction vs. FIFO than Priority
-  - Proactive +6.46% vs. Priority +3.97%
+  - Proactive +7.37% vs. Priority +3.97%
 
 ✓ Proactive achieves a larger mean-wait reduction vs. FIFO than EASY backfill + predicted-wait scan
-  - Proactive +6.46% vs. EASY backfill + predicted-wait scan -11.49%
+  - Proactive +7.37% vs. EASY backfill + predicted-wait scan -11.53%
 
 ✓ Proactive achieves a larger mean-wait reduction vs. FIFO than EASY backfill (user estimates)
-  - Proactive +6.46% vs. EASY backfill (user estimates) -11.69%
+  - Proactive +7.37% vs. EASY backfill (user estimates) -11.69%
 
 ✓ Proactive achieves a larger mean-wait reduction vs. FIFO than EASY backfill (oracle)
-  - Proactive +6.46% vs. EASY backfill (oracle) -11.80%
+  - Proactive +7.37% vs. EASY backfill (oracle) -11.80%
 
 ✓ Proactive achieves a larger mean-wait reduction vs. FIFO than Conservative backfill
-  - Proactive +6.46% vs. Conservative backfill -26.88%
+  - Proactive +7.37% vs. Conservative backfill -26.88%
 
 ✓ Proactive achieves a larger mean-wait reduction vs. FIFO than FIFO (head-blocking)
-  - Proactive +6.46% vs. FIFO (head-blocking) -52.04%
+  - Proactive +7.37% vs. FIFO (head-blocking) -52.04%
 
 Model-quality note vs. the NN baseline (same feature space):
-  - Wait-prediction MAE: Proactive 17.67 vs. NN 17.95 (lower is the proactive model)
+  - Wait-prediction MAE: Proactive 17.08 vs. NN 17.39 (lower is the proactive model)
   - XGBoost additionally offers faster inference and SHAP interpretability.
 
 ======================================================================
 CONCLUSION
 ======================================================================
 In the paired 40-run benchmark, the proactive scheduler reduces
-mean wait vs. FIFO by 7.71% on average (p = 1.45e-06).
-In the multi-scheduler benchmark it outperforms Priority, EASY backfill + predicted-wait scan, EASY backfill (user estimates), EASY backfill (oracle), Conservative backfill, FIFO (head-blocking) on mean-wait reduction.
-However, it is outperformed on mean wait by Shortest Job First (oracle), SJF (user estimates), Preemptive SRPT (+1 tick overhead), Highest Response Ratio Next, Smallest requested size first (no ML), Neural Network (MLP),
+mean wait vs. FIFO by 7.90% on average (p = 2.00e-06).
+In the multi-scheduler benchmark it outperforms Neural Network (MLP), Smallest requested size first (no ML), Priority, EASY backfill + predicted-wait scan, EASY backfill (user estimates), EASY backfill (oracle), Conservative backfill, FIFO (head-blocking) on mean-wait reduction.
+However, it is outperformed on mean wait by Shortest Job First (oracle), SJF (user estimates), Preemptive SRPT (+1 tick overhead), Highest Response Ratio Next,
 and its wait-time Gini coefficient is higher (less fair) than FIFO's.
 These comparisons cover only the schedulers implemented in this
 project's simulator; claims about external production schedulers

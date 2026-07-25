@@ -22,8 +22,9 @@ score is a function of requested size ALONE:
     predicted_wait(job | state) = g_state(job_gpu)
 
 and the ranking it induces is the ranking of g_state over the queue's sizes.
-The remaining EIGHT features describe only the cluster, so they shift every
-score by the same amount and cannot reorder anything. The learned model, used
+The remaining SEVEN features (of 12; four of 8 in the trace vector) describe
+only the cluster, so they shift every score by the same amount and cannot
+reorder anything. The learned model, used
 this way, is a per-instant lookup table from requested size to priority -- not
 a policy that reasons about individual jobs.
 
@@ -238,7 +239,7 @@ def make_figure(summary, feats, curves, stem):
 
     Two panels, each with one job:
       (a) the MECHANISM -- which features can differ between two jobs waiting
-          side by side. Features are named, never indexed; the eight that sit at
+          side by side. Features are named, never indexed; the seven that sit at
           exactly 0.0% are the point, so their zero is direct-labelled rather
           than rendered as an invisible bar.
       (b) the CONSEQUENCE for ordering -- how often the ML order is literally the
@@ -322,7 +323,7 @@ def make_figure(summary, feats, curves, stem):
         save_both(fig, stem, mode)
 
 
-def make_size_table_figure(curves, stem):
+def make_size_table_figure(curves, summary, stem):
     """The recovered size -> priority table, as small multiples.
 
     One panel per trained model rather than three lines on shared axes: the
@@ -345,14 +346,20 @@ def make_size_table_figure(curves, stem):
             ax.set_ylim(-0.05, 1.08)
             ax.set_axisbelow(True)
         axes[0].set_ylabel('normalised predicted-wait score')
+        # Monotone fractions come from the run's own summary so the caption can
+        # never go stale against the CSVs it cites.
+        mono = {r['setting']: r['pct_size_table_monotone']
+                for _, r in summary.iterrows()}
+        mono_txt = ', '.join(
+            f"{s.split(' (')[0]} {mono[s]:.0f}%" for s in settings if s in mono)
         finish(fig, mode,
                title='What the model actually learned: a lookup table from '
                      'requested size to priority',
                subtitle='Score against requested size, averaged over dispatch '
-                        'instants. Read the SHAPE, not the wiggle: SDSC spans 51 '
+                        'instants. Read the SHAPE, not the wiggle: SDSC spans many '
                         'distinct sizes with few\nobservations each, so its mean '
-                        'curve is noisy — per-instant the table is monotone 52% of '
-                        'the time there vs 62% on LANL and 67% synthetic.',
+                        'curve is noisy — per-instant monotone fractions: '
+                        f'{mono_txt}.',
                source='05_results/degeneracy/size_priority_table.csv — '
                       'monotone fractions in ranking_degeneracy.csv')
         fig.subplots_adjust(top=0.70, bottom=0.15, left=0.055, right=0.99)
@@ -362,7 +369,9 @@ def make_size_table_figure(curves, stem):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--runs', type=int, default=20, help='synthetic runs')
-    ap.add_argument('--windows', type=int, default=6, help='trace windows')
+    # 20 windows matches the trace-driven benchmark's published protocol, so the
+    # default pipeline invocation reproduces the manuscript's instant counts.
+    ap.add_argument('--windows', type=int, default=20, help='trace windows')
     ap.add_argument('--quick', action='store_true')
     ap.add_argument('--figures-only', action='store_true',
                     help='re-render the figures from the saved CSVs without '
@@ -376,7 +385,7 @@ def main():
         feats = pd.read_csv(os.path.join(OUT_DIR, 'feature_variation.csv'))
         curves = pd.read_csv(os.path.join(OUT_DIR, 'size_priority_table.csv'))
         make_figure(summary, feats, curves, os.path.join(OUT_DIR, 'ranking_degeneracy'))
-        make_size_table_figure(curves, os.path.join(OUT_DIR, 'size_priority_table'))
+        make_size_table_figure(curves, summary, os.path.join(OUT_DIR, 'size_priority_table'))
         print('Re-rendered figures from existing CSVs in', OUT_DIR)
         return
 
@@ -401,7 +410,7 @@ def main():
     feats.to_csv(feat_path, index=False)
     curves.to_csv(curve_path, index=False)
     make_figure(summary, feats, curves, fig_stem)
-    make_size_table_figure(curves, table_stem)
+    make_size_table_figure(curves, summary, table_stem)
 
     print('\n' + '=' * 78)
     print('RANKING DEGENERACY OF THE WAIT-TIME MODEL USED AS A QUEUE-ORDERING SCORE')

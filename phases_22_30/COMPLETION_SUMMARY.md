@@ -26,13 +26,13 @@
 ## Phase-by-Phase Results (regenerated, honest)
 
 ### Phase 22: Statistical Rigor
-- Wait improvement: **7.71%**, bootstrap 95% CI **[4.95%, 10.34%]**, paired t-test p = 1.4e-06 (BH-corrected), Wilcoxon p = 7.1e-06, n = 40 seeded paired runs.
+- Wait improvement: **7.90%**, bootstrap 95% CI **[4.91%, 10.67%]**, paired t-test p = 2.0e-06 (BH-corrected), Wilcoxon p = 2.7e-06, n = 40 seeded paired runs.
 - GPU utilisation and completed-jobs comparisons are zero-variance and are reported as **"n/a (zero variance)"** — not as significance.
 
 ### Phase 23: OOD Sensitivity (72 scenarios)
 - Scores the **actual trained model** (`wait_model_v2.pkl`) on freshly simulated shifted workloads.
 - **Prediction quality collapses OOD**: mean R² ≈ **−0.31** (range −2.32 … +0.85).
-- Scheduling improvement is erratic OOD: −14% … +50%, mean failure rate ≈ 32%.
+- Scheduling improvement is erratic OOD: −10% … +53%, mean failure rate ≈ 32%.
 - Conclusion: retrain per deployment regime; keep a FIFO fallback.
 
 ### Phase 24: Extended Scheduler Comparison
@@ -100,26 +100,28 @@ Four research extensions, all regenerated from artifacts on disk.
   head job, perfect runtime estimates = strongest-baseline setting) and a
   PROACTIVE_BF hybrid (predicted-wait backfill order).
 - 20 paired runs on out-of-training seeds 1000+i
-  (`05_results/schedulers/multi_scheduler_benchmark.csv`), mean wait / max wait / Gini:
-  SJF 12.34/145.7/0.785 · NN 16.07/136.4/0.797 · PROACTIVE 16.10/127.3/0.791 ·
-  PRIORITY 16.53/131.7/0.743 · FIFO 17.22/54.7/0.516 · PROACTIVE_BF 24.91/55.5/0.365 ·
-  BACKFILL(EASY) 24.94/55.4/0.365. Utilisation 0.637 and throughput identical across all seven.
+  (`05_results/schedulers/multi_scheduler_benchmark.csv`), mean wait / max wait / Gini
+  (v3.5 regeneration; the benchmark now spans 14 schedulers — subset shown):
+  SJF 12.34/145.7/0.785 · NN 16.07/136.4/0.797 · PROACTIVE 15.95/128.8/0.793 ·
+  PRIORITY 16.53/131.7/0.743 · FIFO 17.22/54.7/0.516 · PROACTIVE_BF 19.20/53.8/0.479 ·
+  BACKFILL(EASY) 19.25/51.6/0.451. Utilisation 0.637 and throughput identical across all.
 - **Semantics caveat**: the benchmark's "FIFO" dispatches every fitting job each tick,
   i.e. it is already unrestricted no-reservation backfilling. EASY's head-job reservation
-  costs ~45% mean wait but delivers the **best fairness in the whole study**
-  (Gini 0.365, max wait ~55 ts). The hybrid ties EASY — an honest null result.
-- PROACTIVE beats FIFO by 6.5% on these fresh seeds (vs 7.7% near-training — good
+  (canonical two-condition rule, v3.3) costs +11.8% mean wait but delivers among the
+  **best fairness in the whole study** (Gini 0.451, max wait ~52 ts). The hybrid ties
+  EASY — an honest null result.
+- PROACTIVE beats FIFO by 7.4% on these fresh seeds (vs 7.9% near-training — good
   generalization).
 
 ### 3. Bounded-fairness wait-budget sweep
 - `04_scheduler/fairness_budget_sweep.py`, 20 paired runs, seeds 5000+i, FIFO reference
   mean 22.4 ts (`05_results/fairness/budget_sweep.csv`, `budget_pareto.png`).
 - Budget B (ts) → mean-wait gain vs FIFO / max wait / Gini:
-  B=0: −0.4%/63/0.49 · B=10: −0.5%/67/0.51 · B=20: −1.7%/64/0.53 · B=30: −0.1%/64/0.56 ·
-  B=40: +1.8%/67/0.60 · B=60: +7.1%/81/0.69 · B=80: +10.2%/96/0.74 ·
-  B=120: +12.6%/125/0.78 · B=∞ (pure proactive): +13.2%/136/0.79.
+  B=0: −0.9%/62/0.49 · B=10: −0.6%/66/0.50 · B=20: −1.4%/64/0.52 · B=30: −0.1%/64/0.56 ·
+  B=40: +1.9%/68/0.60 · B=60: +7.4%/81/0.68 · B=80: +10.2%/96/0.74 ·
+  B=120: +12.7%/125/0.78 · B=∞ (pure proactive): +13.1%/138/0.79.
 - A smooth, tunable Pareto frontier: **B=60 keeps over half the mean-wait gain while
-  capping max wait at 81 ts** (vs 136 unbounded). Tiny budgets (0–30) are slightly
+  capping max wait at 81 ts** (vs 138 unbounded). Tiny budgets (0–30) are slightly
   *worse* than FIFO (escalation churn without freedom) — reported honestly.
 
 ### 4. Uncertainty-aware scheduling (quantile XGBoost)
@@ -129,12 +131,12 @@ Four research extensions, all regenerated from artifacts on disk.
 - Quantile holdout: q50 MAE 4.61 (point model 4.69); [q10,q90] empirical coverage **68%
   vs 80% nominal — under-dispersed**, reported honestly. Spread trigger τ = p95 of
   in-distribution relative spread.
-- In-distribution: PROACTIVE +6.5%, UCB(q90) +6.1%, GUARDED +6.3% — parity, no cost.
-- Overload (2× arrivals, 4 nodes): all smart policies +38.7 to +39.0% (caveat:
+- In-distribution: PROACTIVE +6.6%, UCB(q90) +6.8%, GUARDED +6.5% — parity, no cost.
+- Overload (2× arrivals, 4 nodes): all smart policies +38.6 to +39.0% (caveat:
   among-started-jobs under horizon censoring; smart policies also *started* more jobs,
   131 vs 114).
 - Light-load small cluster (0.5× arrivals, 4 nodes): **all smart policies negative**
-  (−4.3 to −5.0% vs FIFO) and the spread guard fires on only 0.2% of ticks — the
+  (−2.0 to −4.8% vs FIFO) and the spread guard fires on only 0.5% of ticks — the
   under-dispersed intervals fail to detect this regime. **Honest negative result:
   interval width is not a reliable OOD alarm here**; the drift-triggered FIFO fallback
   (Phase 19 rolling-MAE) remains the deployment mechanism.

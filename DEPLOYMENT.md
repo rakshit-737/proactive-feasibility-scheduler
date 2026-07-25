@@ -70,8 +70,8 @@ Drift response, in order: (1) automatic FIFO fallback, (2) retrain on the last
 **Do not rely on prediction-interval width as an OOD alarm.** We tested this in
 v3.2 with a quantile model (q10/q50/q90): the intervals are under-dispersed
 (68% empirical coverage vs 80% nominal), and in a light-load small-cluster
-regime — where every smart policy was *worse* than FIFO (−4.3 to −5.0%) — the
-spread guard fired on only 0.2% of ticks
+regime — where every smart policy was *worse* than FIFO (−2.0 to −4.8%) — the
+spread guard fired on only 0.5% of ticks
 (`05_results/uncertainty/uncertainty_ood_benchmark.csv`). The rolling-MAE drift
 trigger above (Phase 19) remains the canonical fallback mechanism.
 
@@ -80,7 +80,7 @@ trigger above (Phase 19) remains the canonical fallback mechanism.
 | Knob | Where | Default | Effect |
 |---|---|---|---|
 | Anti-starvation threshold | `fairness_analysis.py` (`STARVATION_THRESHOLD`-style bump age) | 3× mean wait | Lower = fairer tails, less mean-wait gain |
-| Wait budget B | `04_scheduler/fairness_budget_sweep.py` (hard per-job wait cap; job escalates to head-of-queue at B) | 60 ts | Tunable Pareto knob: B=60 keeps ~half the mean-wait gain (+7.1% of the +13.2% unbounded) while capping max wait at 81 ts vs 136 unbounded; B ≤ 30 is slightly *worse* than FIFO (escalation churn), B=∞ = pure proactive (`05_results/fairness/budget_sweep.csv`) |
+| Wait budget B | `04_scheduler/fairness_budget_sweep.py` (hard per-job wait cap; job escalates to head-of-queue at B) | 60 ts | Tunable Pareto knob: B=60 keeps ~half the mean-wait gain (+7.4% of the +13.1% unbounded) while capping max wait at 81 ts vs 138 unbounded; B ≤ 30 is slightly *worse* than FIFO (escalation churn), B=∞ = pure proactive (`05_results/fairness/budget_sweep.csv`) |
 | Reordering interval | scheduler loop | every tick | Longer intervals cut inference cost, delay adaptation |
 | Drift window / multiplier | `concept_drift_detection.py` | rolling 50, 1.5× | Smaller window = faster fallback, more false alarms |
 | Model refresh cadence | ops calendar | 3–6 months, or on drift trigger | Stale models decay with workload drift |

@@ -71,18 +71,21 @@ def get_features(job, cluster, queue, running_jobs):
     Previously this function used three formulas that did not match the training
     data: an uncapped gpu_fit_ratio, fragmentation = 1 - max_free/GPUS_PER_NODE,
     and queue_pressure = queue_length * job_gpus / free. Those have been replaced
-    with the trained schema below."""
+    with the trained schema below.
+    `queue` includes the scored job at dispatch time; training rows exclude it
+    (snapshot at arrival, before enqueue), so queue_length/queue_pressure
+    subtract the job's own contribution to match the trained semantics."""
     NUM_NODES = cluster.num_nodes
     total_free = cluster.total_free_gpus()
     max_free_node = max(cluster.nodes)
     variance_free = np.var(cluster.nodes)
-    queue_length = len(queue)
+    queue_length = len(queue) - 1
 
     can_fit_now       = int(total_free >= job.num_gpus)
     gpu_fit_ratio     = min(total_free / (job.num_gpus + 1e-6), 1.0)   # capped at 1.0
     fragmentation     = float(np.std(cluster.nodes))                    # std-dev of free GPUs
-    total_queued_gpus = sum(q.num_gpus for q in queue)
-    queue_pressure    = total_queued_gpus / (total_free + 1)            # total queued demand vs supply
+    total_queued_gpus = sum(q.num_gpus for q in queue) - job.num_gpus
+    queue_pressure    = total_queued_gpus / (total_free + 1)            # others' queued demand vs supply
     node_availability = sum(1 for n in cluster.nodes if n >= job.num_gpus) / NUM_NODES
     avg_free_per_node = total_free / NUM_NODES
 
