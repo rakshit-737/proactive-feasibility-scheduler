@@ -10,7 +10,7 @@ authors:
   - given-names: Rakshit
     family-names: Rameshbabu
     email: rakshitoffl@gmail.com
-    # affiliation: "<add your institution here>"
+    affiliation: "Vellore Institute of Technology, Chennai"
 repository-code: >-
   https://github.com/rakshit-737/proactive-feasibility-scheduler
 url: >-
@@ -22,7 +22,7 @@ abstract: >-
   instant all queued jobs share the cluster state, so every per-job feature in
   the standard feature set is a deterministic function of the job's requested
   size — the learned score therefore cannot distinguish two co-queued jobs by
-  anything else. This is verified over 25,306 real dispatch instants with zero
+  anything else. This is verified over 45,432 real dispatch instants with zero
   counterexamples, and an ML-free sort by requested size is shown statistically
   equivalent (paired TOST) to the full pipeline. The repository contains a
   30-phase research pipeline: discrete-time cluster simulation, wait-time
@@ -45,5 +45,5 @@ keywords:
   - evaluation methodology
   - queue optimization
 license: MIT
-version: "3.4"
+version: "3.5"
 date-released: "2026-07-21"

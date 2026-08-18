@@ -48,3 +48,8 @@ real_trace_dataset_*.csv
 *.synctex.gz
 *.fls
 *.fdb_latexmk
+
+# Reference papers: copyrighted PDFs obtained via institutional subscription.
+# Kept locally for writing; NOT redistributable from a public repository.
+# 06_paper/00-README-reference-papers.md documents what they are and where to get them.
+06_paper/*.pdf
