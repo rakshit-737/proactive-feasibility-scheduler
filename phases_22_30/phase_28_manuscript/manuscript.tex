@@ -30,8 +30,8 @@
        No Better Than Sorting by Requested Size}
 
 \author{
-  Author(s) \\
-  \small Institution
+  Rakshit Rameshbabu \\
+  \small \textcolor{red}{[AFFILIATION --- fill in before submission]}
 }
 
 \date{\today}
@@ -129,7 +129,7 @@ are aware of, including our own earlier versions of this work.
         real traces, two equally-sized co-queued jobs never receive different
         scores (0 violations). Seven of the twelve features vary across the
         queue in $0.0\%$ of instants, and every feature that does vary is a
-        deterministic function of the requested size. A ten-job queue receives
+        deterministic function of the requested size. A nine-job queue receives
         only $2.3$--$3.1$ distinct priority levels.
   \item \textbf{An equivalence result, not a null result}
         (\S\ref{sec:equivalence}). Using paired TOST rather than a failure to
@@ -196,7 +196,7 @@ published numbers.
 
 \paragraph{Trace-driven (for validity).}
 Two cleaned Parallel Workloads Archive traces: LANL CM-5 (1994, 1024
-processors, $122{,}060$ kept jobs) and SDSC SP2 (1998, 128 processors,
+processors, $122{,}055$ kept jobs) and SDSC SP2 (1998, 128 processors,
 $43{,}117$ kept jobs). We reserve the first $60\%$ of each trace's time span for
 model training and carve 20 evenly spaced evaluation windows from the remainder,
 each 3 simulated days of warm-up (not measured) followed by 7 measured days.
@@ -248,11 +248,12 @@ survives review.
 We instrumented every \textsc{Proactive} ranking decision in real simulations
 ($45{,}432$ instants with $\ge 2$ queued jobs) and recorded, per instant, which
 features differ across the queue and how the resulting order compares with
-ML-free orders. Table~\ref{tab:degeneracy} summarises.
+ML-free orders. Table~\ref{tab:degeneracy} summarises, and
+Figure~\ref{fig:degeneracy} shows the per-feature variation directly.
 
 \begin{table}[h]
 \centering
-\small
+\footnotesize
 \begin{tabular}{lrrr}
 \toprule
  & Synthetic & SDSC & LANL \\
@@ -269,9 +270,18 @@ Size table monotone     & 63.1\% & 57.1\% & 56.9\% \\
 \bottomrule
 \end{tabular}
 \caption{The learned score never distinguishes two equally-sized co-queued jobs.
-Cluster-state features vary across the queue in $0.0\%$ of instants.}
+Cluster-state features vary across the queue in $0.0\%$ of instants.
+{\small Source: \texttt{05\_results/degeneracy/ranking\_degeneracy.csv}}}
 \label{tab:degeneracy}
 \end{table}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{../../05_results/degeneracy/ranking_degeneracy.png}
+\caption{Feature variation in ranking decisions: only job-size features differ
+across the queue. Of 12 cluster-state features, 7 vary in 0.0\% of instants.}
+\label{fig:degeneracy}
+\end{figure*}
 
 Three observations. First, the \emph{zero} in row four is the claim: across
 $45{,}432$ instants there is no counterexample, exactly as the argument in
@@ -301,22 +311,25 @@ Table~\ref{tab:equiv} gives the paired TOST results.
 
 \begin{table}[h]
 \centering
-\small
+\footnotesize
+\setlength{\tabcolsep}{4pt}
 \begin{tabular}{llrrl}
 \toprule
-Substrate & Metric & $\Delta$ & $p_{\mathrm{TOST}}$ & Verdict \\
+Substrate & Metric & $\Delta$ & $p_{\mathrm{TOST}}$ & Eq.? \\
 \midrule
-Synthetic & mean wait & $+0.80\%$ & $2.6\times10^{-16}$ & equivalent \\
-Synthetic & bnd.\ slow. & $+0.69\%$ & $3.8\times10^{-18}$ & equivalent \\
-SDSC SP2  & mean wait & $-0.05\%$ & $1.8\times10^{-12}$ & equivalent \\
-SDSC SP2  & bnd.\ slow. & $+2.7\%$ & $7.4\times10^{-4}$ & equivalent \\
-LANL CM-5 & mean wait & $+14.4\%$ & $0.77$ & not equiv. \\
-LANL CM-5 & bnd.\ slow. & $+7.3\%$ & $0.30$ & not equiv. \\
+Synthetic & mean wait & $+0.80\%$ & $2.6\times10^{-16}$ & equiv. \\
+Synthetic & bnd.\ slow. & $+0.69\%$ & $3.8\times10^{-18}$ & equiv. \\
+SDSC SP2  & mean wait & $-0.05\%$ & $1.8\times10^{-12}$ & equiv. \\
+SDSC SP2  & bnd.\ slow. & $+2.7\%$ & $7.4\times10^{-4}$ & equiv. \\
+LANL CM-5 & mean wait & $+14.4\%$ & $0.77$ & no \\
+LANL CM-5 & bnd.\ slow. & $+7.3\%$ & $0.30$ & no \\
 \bottomrule
 \end{tabular}
 \caption{\textsc{Smallest\_First} versus \textsc{Proactive}. $\Delta$ is the
 difference in the metric (positive $=$ the size sort is worse). Equivalence
-margin $10\%$ of the reference.}
+margin $10\%$ of the reference. ``Eq.?'' is the TOST verdict at that margin.
+{\small Sources: the two \texttt{*\_equivalence.csv}
+files under \texttt{05\_results/}.}}
 \label{tab:equiv}
 \end{table}
 
@@ -329,7 +342,7 @@ the same point --- \textsc{NN} and \textsc{Smallest\_First} produce
 classes over the same features collapse to the same one-line sort.
 
 On LANL the equivalence test does not fire, and the honest verdict there is
-\emph{inconclusive} rather than "different". The size sort is $14.4\%$ worse on
+\emph{inconclusive} rather than ``different''. The size sort is $14.4\%$ worse on
 mean wait, but that difference does not survive Holm correction on the paired
 $t$-test ($p = 0.25$; the Wilcoxon test disagrees at $p = 0.015$), it shrinks to
 $+7.3\%$ and $p = 0.60$ on bounded slowdown, and TOST cannot certify equivalence
@@ -338,7 +351,7 @@ same on LANL nor establish that they differ.
 
 We initially attributed this to the learned size table being less monotone on
 LANL, and that explanation is wrong: the per-instant monotone fraction is
-$51.9\%$ on SDSC --- where equivalence \emph{does} hold --- against $61.5\%$ on
+$57.1\%$ on SDSC --- where equivalence \emph{does} hold --- against $56.9\%$ on
 LANL. Monotonicity does not track where the equivalence fires, so we report the
 LANL result as underpowered rather than mechanistically explained. What is not in
 question on either machine is the degeneracy itself (\S\ref{sec:degeneracy}), and
@@ -348,7 +361,8 @@ on LANL the ML scheduler also fails to beat plain FCFS ($p = 0.48$,
 \section{Trace-Driven Re-Evaluation}
 \label{sec:traces}
 
-Table~\ref{tab:traces} reports the twelve policies on both traces.
+Table~\ref{tab:traces} reports the twelve policies on both traces, and
+Figure~\ref{fig:trace-comparison} plots them.
 
 \begin{table}[h]
 \centering
@@ -374,9 +388,18 @@ Policy & wait & bsld & wait & bsld \\
 \bottomrule
 \end{tabular}
 \caption{Mean wait (minutes) and mean bounded slowdown, averaged over 20 paired
-7-day windows per trace at offered load $\approx 0.70$.}
+7-day windows per trace at offered load $\approx 0.70$. {\small Source: \texttt{trace\_schedulers/trace\_scheduler\_summary.csv}}}
 \label{tab:traces}
 \end{table}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{../../05_results/trace_schedulers/trace_scheduler_comparison.png}
+\caption{Twelve policies replayed through two real traces. The Proactive (ML)
+and Smallest-first (ML-free) bars are adjacent; every classical policy with a
+runtime estimate finishes ahead.}
+\label{fig:trace-comparison}
+\end{figure*}
 
 \paragraph{The synthetic gain does not replicate.}
 On the synthetic benchmark \textsc{Proactive} beats FCFS by $7.4\%$ (and by
@@ -429,7 +452,7 @@ Within $2\times$      & 24.0\% & 41.7\% & --- \\
 \textbf{Under-estimates} & 0.1\% & \textbf{36.3\%} & \textbf{0\%} \\
 \bottomrule
 \end{tabular}
-\caption{Real user runtime estimates versus the standard $f$-model.}
+\caption{Real user runtime estimates versus the standard $f$-model. {\small Source: \texttt{trace\_schedulers/trace\_estimate\_quality.csv}}}
 \label{tab:est}
 \end{table}
 
@@ -547,7 +570,7 @@ repository. \texttt{04\_scheduler/ranking\_degeneracy.py} reproduces
 
 \bibitem{Feitelson2000} D. G. Feitelson, \emph{Metrics for Parallel Job Scheduling and Their Convergence}, JSSPP 2001.
 
-\bibitem{Feitelson2011} D. G. Feitelson et al., \emph{Parallel Workloads Archive}, https://www.cs.huji.ac.il/labs/parallel/workload/.
+\bibitem{Feitelson2011} D. G. Feitelson et al., \emph{Parallel Workloads Archive}, \url{https://www.cs.huji.ac.il/labs/parallel/workload/}.
 
 \bibitem{Mualem2001} A. W. Mu'alem and D. G. Feitelson, \emph{Utilization, Predictability, Workloads, and User Runtime Estimates in Scheduling the IBM SP2 with Backfilling}, IEEE TPDS 12(6), 2001.
 

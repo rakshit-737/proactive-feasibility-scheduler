@@ -40,3 +40,11 @@ desktop.ini
 *.swf
 real_trace_dataset_*.csv
 .opencode
+
+# LaTeX build artifacts
+*.aux
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
