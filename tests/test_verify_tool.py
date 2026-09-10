@@ -173,7 +173,7 @@ def test_text_comparison_ignores_crlf_versus_lf(tmp_path):
     # The reference is a git blob (LF); the regenerated file on Windows is CRLF.
     ref.write_bytes(b'PHASE 26\nmean wait 3743.83\nend\n')
     new.write_bytes(b'PHASE 26\r\nmean wait 3743.83\r\nend\r\n')
-    status, detail = va.compare_text(ref, new)
+    status, detail = va.compare_text('phases_22_30/phase_24_extended_schedulers/novelty_claim.txt', ref, new)
     assert status == va.OK, detail
 
 
@@ -182,7 +182,7 @@ def test_text_comparison_reports_the_first_differing_line(tmp_path):
     new = tmp_path / 'new.txt'
     ref.write_bytes(b'PHASE 26\nmean wait 3743.83\nend\n')
     new.write_bytes(b'PHASE 26\nmean wait 9999.99\nend\n')
-    status, detail = va.compare_text(ref, new)
+    status, detail = va.compare_text('phases_22_30/phase_24_extended_schedulers/novelty_claim.txt', ref, new)
     assert status == va.MISMATCH
     assert 'line 2' in detail
 
@@ -192,7 +192,7 @@ def test_text_comparison_catches_a_truncated_file(tmp_path):
     new = tmp_path / 'new.txt'
     ref.write_bytes(b'a\nb\nc\n')
     new.write_bytes(b'a\nb\n')
-    status, detail = va.compare_text(ref, new)
+    status, detail = va.compare_text('phases_22_30/phase_24_extended_schedulers/novelty_claim.txt', ref, new)
     assert status == va.MISMATCH
     assert 'line count' in detail
 
@@ -253,3 +253,84 @@ def test_handwritten_prose_is_never_an_artefact(prose):
 def test_windows_separators_are_normalised():
     assert va.is_artefact('05_results\\scaling\\scaling_analysis.csv')
     assert not va.is_artefact('phases_22_30\\PHASES_ROADMAP.md')
+
+
+# ---------------------------------------------------------------------------
+# The wall-clock exemption for TEXT reports
+# ---------------------------------------------------------------------------
+#
+# phases_22_30/phase_26_scaling/scaling_measurements.txt TABULATES the two
+# columns that NONDETERMINISTIC_COLUMNS exempts in scaling_benchmark.csv. A
+# wall-clock number does not stop being wall-clock because a script printed it
+# into a .txt, and the full verification failed on exactly that before the mask
+# existed. These tests pin the mask as NARROW: the timing fields are exempt,
+# and everything sharing a line or a file with them is not.
+
+SCALING_TXT = 'phases_22_30/phase_26_scaling/scaling_measurements.txt'
+
+_TABLE = (
+    'KEY METRICS ACROSS SCALES\n'
+    '----------------------------------------------------------------------\n'
+    'Cluster      Wait (ts)    Throughput     Latency (ms)   Overhead  \n'
+    '----------------------------------------------------------------------\n'
+    'Small           3743.83          10.4         15.18       1.52%\n'
+    'XLarge          1794.49          59.2         10.24       1.02%\n'
+    '\n'
+    'Range: 10.24 - 15.49 ms (1.5x spread)\n'
+    'Peak scheduling overhead: 1.55% of throughput\n'
+    'Worst inference latency: 15.49 ms (at 64 GPUs)\n'
+    'No complexity class is inferred from these numbers.\n'
+)
+
+
+def _text_pair(tmp_path, ref_text, new_text):
+    ref, new = tmp_path / 'ref.txt', tmp_path / 'new.txt'
+    ref.write_text(ref_text, encoding='utf-8')
+    new.write_text(new_text, encoding='utf-8')
+    return ref, new
+
+
+def test_only_the_wall_clock_fields_moving_is_reported_as_timing(tmp_path):
+    moved = (_TABLE
+             .replace('15.18       1.52%', '15.42       1.54%')
+             .replace('Worst inference latency: 15.49 ms', 'Worst inference latency: 15.99 ms')
+             .replace('Range: 10.24 - 15.49 ms', 'Range: 10.30 - 15.99 ms'))
+    status, detail = va.compare_text(SCALING_TXT, *_text_pair(tmp_path, _TABLE, moved))
+    assert status == va.TIMING, detail
+    assert 'NONDETERMINISTIC_TEXT' in detail
+
+
+def test_a_deterministic_column_on_the_same_line_still_fails(tmp_path):
+    """Wait and throughput sit in the exempt rows and are NOT wall-clock. If the
+    mask swallowed the whole line, a real regression in the simulation would be
+    reported as a timing wobble -- which is the failure mode worth guarding."""
+    moved = _TABLE.replace('3743.83', '9999.99')
+    status, _ = va.compare_text(SCALING_TXT, *_text_pair(tmp_path, _TABLE, moved))
+    assert status == va.MISMATCH
+
+    moved = _TABLE.replace('          10.4  ', '          99.9  ')
+    status, _ = va.compare_text(SCALING_TXT, *_text_pair(tmp_path, _TABLE, moved))
+    assert status == va.MISMATCH
+
+
+def test_prose_in_an_exempt_file_still_fails(tmp_path):
+    """The retraction text lives in this file. Masking must not reach it."""
+    moved = _TABLE.replace('No complexity class is inferred',
+                           'A complexity class is inferred')
+    status, _ = va.compare_text(SCALING_TXT, *_text_pair(tmp_path, _TABLE, moved))
+    assert status == va.MISMATCH
+
+
+def test_an_unexempt_file_gets_no_mask(tmp_path):
+    """The exemption is per-path. A lookalike table elsewhere is compared exactly."""
+    moved = _TABLE.replace('15.18       1.52%', '15.42       1.54%')
+    status, _ = va.compare_text('phases_22_30/some_other_report.txt',
+                                *_text_pair(tmp_path, _TABLE, moved))
+    assert status == va.MISMATCH
+
+
+def test_an_identical_exempt_file_is_ok_not_timing(tmp_path):
+    """Masking runs only after an exact comparison fails, so an unchanged file is
+    reported OK and never as a timing exemption it did not need."""
+    status, detail = va.compare_text(SCALING_TXT, *_text_pair(tmp_path, _TABLE, _TABLE))
+    assert status == va.OK, detail

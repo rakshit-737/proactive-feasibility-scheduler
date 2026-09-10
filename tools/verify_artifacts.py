@@ -36,6 +36,7 @@ import argparse
 import io
 import os
 import pathlib
+import re
 import pickle
 import shutil
 import subprocess
@@ -94,6 +95,31 @@ NONDETERMINISTIC_COLUMNS = {
         'inference_latency_ms',
         'throughput_overhead_pct',
     }),
+}
+
+# The same exemption, for TEXT reports that RENDER those columns. A wall-clock
+# number does not stop being wall-clock because a script printed it into a .txt:
+# phases_22_30/phase_26_scaling/scaling_measurements.txt tabulates the very
+# inference_latency_ms and throughput_overhead_pct that are exempt in the CSV
+# above, so comparing that file byte-for-byte failed for exactly the reason the
+# column exemption exists. The mask is deliberately NARROW -- it blanks the two
+# timing fields of each table row and the two summary lines that quote them, and
+# leaves every other character on those lines, and every other line in the file,
+# compared exactly. Wait and throughput sit in the same table and stay checked.
+#
+# Each entry maps a repo-relative path to (regex, description). A line matching
+# the regex is compared with capture group 1 replaced by a placeholder.
+NONDETERMINISTIC_TEXT = {
+    'phases_22_30/phase_26_scaling/scaling_measurements.txt': [
+        (re.compile(r'^(?:Small|Medium|Large|XLarge)\s+[\d.]+\s+[\d.]+(\s+[\d.]+\s+[\d.]+%)\s*$'),
+         'latency and overhead columns of the metrics table'),
+        (re.compile(r'^(Range: [\d.]+ - [\d.]+ ms .*)$'),
+         'measured latency range'),
+        (re.compile(r'^(Peak scheduling overhead: [\d.]+% of throughput)$'),
+         'peak overhead'),
+        (re.compile(r'^(Worst inference latency: [\d.]+ ms .*)$'),
+         'worst latency'),
+    ],
 }
 
 DEFAULT_RTOL = 1e-9
@@ -206,8 +232,33 @@ def compare_csv_header(ref_path, new_path):
     return OK, f'{len(ref)} columns match (smoke run: values not compared)'
 
 
-def compare_text(ref_path, new_path):
-    """Diff two text artefacts line by line, ignoring line endings."""
+def _mask_timing_lines(rel, lines):
+    """Blank the wall-clock fields of `lines`, returning (masked, n_masked).
+
+    Returns the lines untouched when the artefact declares no text exemption.
+    """
+    patterns = NONDETERMINISTIC_TEXT.get(rel)
+    if not patterns:
+        return lines, 0
+    masked, count = [], 0
+    for line in lines:
+        for pattern, _why in patterns:
+            match = pattern.match(line)
+            if match:
+                start, end = match.span(1)
+                line = line[:start] + '<wall-clock>' + line[end:]
+                count += 1
+                break
+        masked.append(line)
+    return masked, count
+
+
+def compare_text(rel, ref_path, new_path):
+    """Diff two text artefacts line by line, ignoring line endings.
+
+    Lines that render a wall-clock measurement are masked first; see
+    NONDETERMINISTIC_TEXT for why, and which.
+    """
     try:
         ref = pathlib.Path(ref_path).read_bytes().decode('utf-8')
         new = pathlib.Path(new_path).read_bytes().decode('utf-8')
@@ -219,6 +270,11 @@ def compare_text(ref_path, new_path):
     new_lines = [line.rstrip() for line in new.splitlines()]
     if ref_lines == new_lines:
         return OK, f'{len(ref_lines)} lines identical'
+    ref_lines, n_masked = _mask_timing_lines(rel, ref_lines)
+    new_lines, _ = _mask_timing_lines(rel, new_lines)
+    if ref_lines == new_lines:
+        return TIMING, (f'identical apart from {n_masked} wall-clock line(s), '
+                        f'exempt by NONDETERMINISTIC_TEXT')
     for lineno, (a, b) in enumerate(zip(ref_lines, new_lines), start=1):
         if a != b:
             return MISMATCH, (f'first difference at line {lineno}: '
@@ -265,7 +321,7 @@ def compare_artefact(rel, ref_path, new_path, rtol=DEFAULT_RTOL, atol=DEFAULT_AT
             if size == 0:
                 return MISMATCH, 'empty file'
             return OK, f'{size} bytes (smoke run: content not compared)'
-        return compare_text(ref_path, new_path)
+        return compare_text(rel, ref_path, new_path)
     return compare_binary(rel, new_path)
 
 
@@ -427,6 +483,16 @@ def render_report(results, elapsed, mode, tree, pipeline_rc=None, strict_stale=F
               'same files is compared strictly:', '']
     for path, cols in sorted(NONDETERMINISTIC_COLUMNS.items()):
         lines.append(f'* `{path}`: {", ".join(sorted(cols))}')
+    if NONDETERMINISTIC_TEXT:
+        lines += ['',
+                  'The same exemption applies to the text reports that RENDER those',
+                  'columns -- a wall-clock number does not stop being wall-clock because',
+                  'a script printed it into a .txt. Only the named fields are masked;',
+                  'every other field on those lines, and every other line, is compared',
+                  'exactly:', '']
+        for path, patterns in sorted(NONDETERMINISTIC_TEXT.items()):
+            for _pattern, why in patterns:
+                lines.append(f'* `{path}`: {why}')
     summary = ', '.join(f'{counts[status]} {status}'
                         for status in STATUS_ORDER if counts[status])
     lines += ['', f'{len(results)} artefacts: {summary or "none"} '
