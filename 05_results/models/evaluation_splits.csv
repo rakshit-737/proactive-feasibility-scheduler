@@ -1,0 +1,13 @@
+split,n_folds,n_train,n_test,r2_mean,r2_std,mae_mean,mae_std,note
+random,1,1760,440,0.836840033531189,0.0,4.693508148193359,0.0,"PUBLISHED PROTOCOL, OPTIMISTIC: train_test_split(test_size=0.2, random_state=42) over rows; the same run, and adjacent instants of it, appear on both sides"
+random_baseline_mean,1,1760,440,-0.006004535541796807,0.0,13.286707128099172,0.0,"constant predictor = mean(y_train) of the same fold, random folds"
+random_baseline_median,1,1760,440,-0.13451277373901505,0.0,13.147727272727273,0.0,"constant predictor = median(y_train) of the same fold, random folds"
+run_wise,5,1760,440,0.8109103918075562,0.020672480852831736,4.897016620635986,0.44920253364004953,"HEADLINE: GroupKFold(n_splits=5) on run_id; 16 training runs / 4 held-out runs per fold, 1760/440 rows as in the random split; no run on both sides"
+run_wise_baseline_mean,5,1760,440,-0.01995849250043702,0.02201125929806716,13.450197830578512,1.0514969036495074,"constant predictor = mean(y_train) of the same fold, run_wise folds"
+run_wise_baseline_median,5,1760,440,-0.08862362327644205,0.08390578579244233,13.021363636363636,1.4102565559922093,"constant predictor = median(y_train) of the same fold, run_wise folds"
+chronological,1,1753,447,0.7251473069190979,0.0,7.240324020385742,0.0,"DEPLOYMENT ORDER: within each run, train on arrivals before that run's own 0.8 arrival_time quantile, test on arrivals at or after it"
+chronological_baseline_mean,1,1753,447,-0.7028528487442551,0.0,19.23026553393288,0.0,"constant predictor = mean(y_train) of the same fold, chronological folds"
+chronological_baseline_median,1,1753,447,-1.1750991311950223,0.0,21.655480984340045,0.0,"constant predictor = median(y_train) of the same fold, chronological folds"
+run_wise_loro,20,2090,110,0.7934857755899429,0.05417624577451439,4.820745599269867,1.0156291285441217,"sensitivity check on the fold count: leave-one-run-out (20 folds, 19 training runs); larger training set, much larger fold-to-fold spread"
+run_wise_loro_baseline_mean,20,2090,110,-0.13304592613011623,0.2237197153406657,13.44778947368421,3.0012357245416412,"constant predictor = mean(y_train) of the same fold, run_wise_loro folds"
+run_wise_loro_baseline_median,20,2090,110,-0.1335006179699309,0.17042794754639742,12.980454545454545,3.62922740110421,"constant predictor = median(y_train) of the same fold, run_wise_loro folds"

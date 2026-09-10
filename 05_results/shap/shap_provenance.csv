@@ -1,0 +1,2 @@
+n_explained,explained_index_sha256,split,rows_from_training,rows_from_test,sample_source_rows_declared,n_background_rows_supplied,n_background_rows_used,background_rows_from_training,background_rows_not_in_test_split,test_split_size,model_test_mae,model_test_r2,expected_test_mae,shap_base_value,split_random_state,explain_random_state,test_size
+400,4fd837e612a16124882f9b0189b25bafc67586d2a80cf9ca508decd262077d07,test,0,400,440,440,440,0,0,440,4.693508,0.83684,4.6935,17.393607,42,42,0.2
