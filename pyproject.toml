@@ -2,6 +2,12 @@
 # live in numbered directories (01_simulation, 04_scheduler, ...) whose names are
 # not valid Python identifiers. This file therefore configures the TOOLS only —
 # there is no [project] table and nothing to `pip install`.
+#
+# The absence of requires-python is deliberate, not an oversight: with no
+# [project] table there is nowhere to put it. The single Python pin (3.14, the
+# interpreter the committed artefacts were generated with) lives in
+# requirements.txt, requirements-dev.txt, the Dockerfile and CI, and
+# tests/test_python_pin.py fails if those four drift apart.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

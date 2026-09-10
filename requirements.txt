@@ -1,4 +1,7 @@
-# Requires Python >= 3.10 (pins below verified working on Python 3.14)
+# Requires Python 3.14 -- the interpreter the committed artefacts were
+# generated with, and the one the Dockerfile and CI both pin. The pins below
+# are exact because they decide the numbers: a different numpy or lightgbm
+# reproduces the pipeline but not the committed CSVs.
 numpy==2.4.3
 pandas==3.0.1
 scipy==1.17.1

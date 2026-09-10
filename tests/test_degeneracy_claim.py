@@ -26,11 +26,17 @@ If any of that ever stops holding, the paper's central claim is false and the
 tests in this module fail. These tests also make honest the CHANGELOG's
 previously-uncommitted assertions about property tests.
 
+Sections (f)-(h) guard the ARTEFACT rather than the claim: the instant total the
+paper quotes is a sum over three settings, so a run that quietly drops one must
+fail rather than write a smaller number under the same column name.
+
 Every test here is fast (a handful of jobs, no simulation loop, no benchmark)
-and pure (no artefact is written; artefact READS go through require()).
+and pure (no tracked artefact is written -- the totals-CSV tests write only into
+pytest's tmp_path; artefact READS go through require()).
 """
 
 import numpy as np
+import pandas as pd
 import pytest
 
 # Repo-relative path to the trained model. Importing multi_scheduler_benchmark
@@ -333,3 +339,198 @@ def test_a_true_per_job_feature_would_break_degeneracy(wait_model, make_job,
     # column, so the score gap equals that column's contribution -- the new
     # feature, not size, is doing the reordering.
     assert scores[1] - scores[0] == pytest.approx(extra[1, 0] - extra[0, 0])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# (f) The measured all-ties fraction, and why it is not the arrival-order column
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Two columns are enough to exercise the Collector: column 0 is the requested
+# size (ranking_degeneracy.SIZE_COL in both real feature vectors) and column 1
+# stands in for the cluster-only features, identical for every queued job.
+_UNIT_FEATURES = ('job_gpu', 'total_free')
+
+
+def _observe(col, make_job, sizes, preds, arrivals=None):
+    """Drive a Collector exactly the way the RANK_OBSERVER hook does at one
+    dispatch instant: (policy, queue, feature matrix, predictions).
+
+    Reuses the SimpleJob fixture the rest of this module builds queues from, so
+    the queue carries the real arrival_time/job_id tie-break attributes.
+    """
+    arrivals = list(range(len(sizes))) if arrivals is None else arrivals
+    queue = [make_job(job_id=i, arrival_time=a, num_gpus=int(s))
+             for i, (a, s) in enumerate(zip(arrivals, sizes))]
+    x = np.column_stack([np.asarray(sizes, dtype=float),
+                         np.full(len(sizes), 7.0)])
+    col('proactive', queue, x, np.asarray(preds, dtype=float))
+    return queue
+
+
+def test_pct_all_scores_tied_is_bounded_by_order_identical_to_arrival(make_job):
+    """INVARIANT: pct_all_scores_tied <= pct_order_identical_to_arrival, by
+    construction, and the two are NOT the same measurement.
+
+    The published sentence is "in X% of instants all scores tie, so the policy is
+    silently FCFS". All-tied does imply the induced order is arrival order (the
+    tie-break is (score, arrival, id)), but the converse fails: distinct scores
+    can rank the queue in arrival order too. So the arrival-order column is only
+    an UPPER BOUND, and quoting it as the all-ties fraction over-claims. This
+    test pins both the bound and the gap.
+    """
+    import ranking_degeneracy as rd
+
+    col = rd.Collector('unit test', list(_UNIT_FEATURES))
+
+    # instant 1: every queued job scores the same -> all tied, and necessarily
+    # ordered by (arrival, id)
+    _observe(col, make_job, sizes=[1, 2, 4], preds=[5.0, 5.0, 5.0])
+    assert col.all_tied == 1
+    assert col.same_as_arrival == 1
+
+    # instant 2: distinct scores that happen to increase with arrival -> the
+    # order is STILL arrival order, but nothing is tied. This single instant is
+    # the whole gap between the two columns.
+    _observe(col, make_job, sizes=[1, 2, 4], preds=[1.0, 2.0, 3.0])
+    assert col.all_tied == 1
+    assert col.same_as_arrival == 2
+
+    s = col.summary()
+    assert s['ranking_instants'] == 2
+    assert s['pct_all_scores_tied'] == pytest.approx(50.0)
+    assert s['pct_order_identical_to_arrival'] == pytest.approx(100.0)
+    assert s['pct_all_scores_tied'] <= s['pct_order_identical_to_arrival'], (
+        'all-tied implies order-identical-to-arrival, so the strict measure can '
+        'never exceed the bound')
+
+    # The CSV must keep the strict measure next to the bound it strengthens, so
+    # a reader cannot pick up one while meaning the other.
+    keys = list(s)
+    assert keys.index('pct_all_scores_tied') == \
+        keys.index('pct_order_identical_to_arrival') + 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# (g) A missing trace must be a hard failure, not a smaller published total
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _stub_pipeline(rd, monkeypatch, tmp_path, make_job, trace=None):
+    """Redirect the script's outputs to tmp_path and replace everything slow.
+
+    run_synthetic is stubbed with a Collector fed one hand-built instant (the
+    suite may not run a benchmark, and the behaviour under test is the control
+    flow around a missing trace, not the model); the two figure functions are
+    stubbed because no test may write a PNG. `trace` is the run_trace stand-in;
+    the default one reports every trace as absent.
+    """
+    monkeypatch.setattr(rd, 'OUT_DIR', str(tmp_path))
+
+    def fake_synthetic(n_runs):
+        col = rd.Collector('synthetic (unit test)', list(_UNIT_FEATURES))
+        _observe(col, make_job, sizes=[1, 2, 4], preds=[1.0, 2.0, 3.0])
+        return col
+
+    def missing(trace_key, *a, **k):
+        raise FileNotFoundError(f'02_data/{trace_key}.swf.gz')
+
+    monkeypatch.setattr(rd, 'run_synthetic', fake_synthetic)
+    monkeypatch.setattr(rd, 'run_trace', trace or missing)
+    monkeypatch.setattr(rd, 'make_figure', lambda *a, **k: None)
+    monkeypatch.setattr(rd, 'make_size_table_figure', lambda *a, **k: None)
+
+
+def test_missing_trace_is_a_hard_error_without_allow_partial(monkeypatch, tmp_path,
+                                                             make_job):
+    """INVARIANT: a trace that cannot be loaded aborts the run.
+
+    The published headline is the sum of ranking_instants over three settings.
+    The script used to catch FileNotFoundError per trace, print 'skipping ...'
+    and write the summary anyway, so 45,432 instants could collapse to the 3,646
+    synthetic ones with nothing in the artefact saying so. A missing trace must
+    now exit non-zero and write NOTHING.
+    """
+    import os
+    import sys
+
+    import ranking_degeneracy as rd
+    _stub_pipeline(rd, monkeypatch, tmp_path, make_job)
+    monkeypatch.setattr(sys, 'argv', ['ranking_degeneracy.py', '--quick'])
+
+    with pytest.raises(SystemExit) as exc:
+        rd.main()
+
+    msg = str(exc.value)
+    assert 'sdsc' in msg                     # names the trace that failed
+    assert '--allow-partial' in msg          # says how to proceed deliberately
+    assert '02_data' in msg                  # says how to fix it properly
+    for name in ('ranking_degeneracy.csv', 'ranking_degeneracy_totals.csv'):
+        assert not os.path.exists(os.path.join(str(tmp_path), name)), (
+            f'{name} was written despite a missing trace')
+
+
+def test_allow_partial_records_what_the_run_actually_covered(monkeypatch, tmp_path,
+                                                             make_job):
+    """INVARIANT: with --allow-partial the run succeeds but the artefact SAYS it
+    is partial -- which settings were expected, which are present, which traces
+    are missing. That totals row is what a reader (or a later consistency check)
+    consults instead of re-summing a table that may be short a setting.
+    """
+    import sys
+
+    import ranking_degeneracy as rd
+    _stub_pipeline(rd, monkeypatch, tmp_path, make_job)
+    monkeypatch.setattr(sys, 'argv',
+                        ['ranking_degeneracy.py', '--quick', '--allow-partial'])
+
+    rd.main()
+
+    totals = pd.read_csv(tmp_path / 'ranking_degeneracy_totals.csv')
+    assert len(totals) == 1
+    row = totals.iloc[0]
+    assert int(row['settings_expected']) == rd.EXPECTED_SETTINGS == 3
+    assert int(row['settings_present']) == 1          # synthetic only
+    assert bool(row['partial']) is True
+    assert sorted(row['missing_traces'].split(';')) == sorted(rd.TRACE_KEYS)
+    assert int(row['total_instants']) == 1            # the one stubbed instant
+    assert int(row['total_violations']) == 0
+
+    # The totals live in their OWN file: make_figure draws one bar pair per row
+    # of ranking_degeneracy.csv, so a TOTAL row there would plot as a fourth,
+    # non-existent setting.
+    summary = pd.read_csv(tmp_path / 'ranking_degeneracy.csv')
+    assert len(summary) == 1
+    assert 'TOTAL' not in set(summary['setting'])
+
+
+def test_quick_run_is_marked_partial_even_with_every_trace_present(monkeypatch,
+                                                                   tmp_path,
+                                                                   make_job,
+                                                                   capsys):
+    """INVARIANT: --quick reduces runs and windows, so its instant total is not
+    the published number even when no trace is missing. The totals row must say
+    so, and the printed line must report settings covered over settings expected.
+    """
+    import sys
+
+    import ranking_degeneracy as rd
+
+    def fake_trace(trace_key, *a, **k):
+        col = rd.Collector(f'{trace_key} (unit test)', list(_UNIT_FEATURES))
+        _observe(col, make_job, sizes=[1, 2, 4], preds=[1.0, 2.0, 3.0])
+        return col
+
+    _stub_pipeline(rd, monkeypatch, tmp_path, make_job, trace=fake_trace)
+    monkeypatch.setattr(sys, 'argv', ['ranking_degeneracy.py', '--quick'])
+
+    rd.main()
+
+    row = pd.read_csv(tmp_path / 'ranking_degeneracy_totals.csv').iloc[0]
+    assert int(row['settings_present']) == 3
+    # nothing missing: the empty field round-trips through read_csv as NaN
+    assert pd.isna(row['missing_traces']) or row['missing_traces'] == ''
+    assert bool(row['partial']) is True                # because of --quick alone
+    assert int(row['total_instants']) == 3
+
+    out = capsys.readouterr().out
+    assert 'Total ranking instants across 3/3 settings: 3' in out
+    assert 'partial=True' in out

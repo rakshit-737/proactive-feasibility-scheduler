@@ -24,6 +24,11 @@
 # multi_scheduler_benchmark.py): release -> arrivals -> order -> dispatch ALL
 # jobs that fit this tick, greedy allocation across per-node GPU lists.
 #
+# Starvation is per-job: a completed job is starved when its wait exceeds 3x its
+# OWN runtime. This file previously used a distribution-relative definition
+# (wait > 3x the run's mean wait); it now matches 04_scheduler/fairness_analysis.py
+# so the repository has a single definition of starvation.
+#
 # Outputs:
 #   05_results/fairness/budget_sweep.csv        (one row per budget B)
 #   05_results/fairness/budget_pareto.png       (mean vs max wait; mean vs Gini)
@@ -55,7 +60,10 @@ GPUS_PER_NODE = 4
 NUM_JOBS = 110
 CAPACITY = NUM_NODES * GPUS_PER_NODE
 BUDGETS = [0, 10, 20, 30, 40, 60, 80, 120, None]   # None = pure proactive
-STARVATION_FACTOR = 3.0                            # starved: wait > 3x run mean
+# starved: wait > 3x the job's OWN runtime -- the definition used by
+# 04_scheduler/fairness_analysis.py and by phase 27's SLA-2, kept identical here so
+# the repository has one definition of starvation.
+STARVATION_RUNTIME_MULTIPLE = 3.0
 
 # ── Load wait_model_v2 (clean 12-feature model) ──────────────────────────────
 with open(MODEL_PATH, 'rb') as f:
@@ -167,7 +175,8 @@ def order_queue_budget(queue, t, cluster, running, budget):
 
 def run_once(jobs_in, policy, budget=None):
     """policy: 'fifo' (true FIFO reference) or 'budget' (proactive with hard
-    wait-budget; budget=None = pure proactive). Returns per-job wait list."""
+    wait-budget; budget=None = pure proactive). Returns one (wait, runtime) pair per
+    completed job -- the runtime is carried through because starvation is per-job."""
     cluster = Cluster(NUM_NODES, GPUS_PER_NODE)
     jobs = [Job(j.job_id, j.arrival_time, j.num_gpus, j.runtime) for j in jobs_in]
     queue, running, completed = [], [], []
@@ -193,10 +202,13 @@ def run_once(jobs_in, policy, budget=None):
                     running.append(job)
                     queue.remove(job)
 
-    waits = [j.start_time - j.arrival_time for j in completed if j.start_time is not None]
-    return waits
+    return [(j.start_time - j.arrival_time, j.runtime)
+            for j in completed if j.start_time is not None]
 
-def wait_metrics(waits):
+def wait_metrics(completed):
+    """`completed`: (wait, runtime) pairs from run_once(). Only 'starvation' uses the
+    runtime; the wait-distribution metrics are computed from the same waits as before."""
+    waits = [wait for wait, _ in completed]
     w = np.array(waits, dtype=float)
     m = float(np.mean(w))
     return {
@@ -204,7 +216,8 @@ def wait_metrics(waits):
         'p95_wait': float(np.percentile(w, 95)),
         'max_wait': float(np.max(w)),
         'gini': gini(waits),
-        'starvation': int(np.sum(w > STARVATION_FACTOR * m)),
+        'starvation': int(sum(1 for wait, runtime in completed
+                              if wait > STARVATION_RUNTIME_MULTIPLE * runtime)),
     }
 
 def budget_label(b):

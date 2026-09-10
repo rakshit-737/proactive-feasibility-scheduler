@@ -1,0 +1,7 @@
+# Python 3.14 -- the interpreter the committed artefacts were generated with.
+#
+# Development tooling only: the test suite and the linter. The runtime pins that
+# actually determine the numbers live in requirements.txt and stay exact; these
+# two are floors, because a newer pytest or ruff cannot change a result.
+pytest>=9.1.1
+ruff>=0.8.4

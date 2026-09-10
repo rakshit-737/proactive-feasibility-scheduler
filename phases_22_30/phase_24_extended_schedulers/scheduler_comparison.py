@@ -6,7 +6,7 @@ Compare the proactive scheduler against the baselines actually implemented
 and benchmarked in this project (04_scheduler/multi_scheduler_benchmark.py):
   - FIFO (arrival-order baseline)
   - SJF (shortest-job-first heuristic)
-  - Priority (priority-score heuristic)
+  - Static priority (priority-score + fixed arrival bonus; no aging)
   - Neural Network scheduler (MLP-based, Phase 14)
   - Proactive (XGBoost wait-model ordering, Phase 09)
 
@@ -91,10 +91,12 @@ SCHEDULERS = {
         "type": "heuristic_baseline",
         "reference": "04_scheduler/sjf_scheduler.py (f-model estimates, C=5)",
     },
-    "PRIORITY": {
-        "name": "Priority",
+    "STATIC_PRIORITY": {
+        "name": "Static priority",
         "type": "heuristic_baseline",
-        "reference": "04_scheduler/priority_scheduler.py",
+        # Renamed from PRIORITY: the key's current_time term cancels pairwise,
+        # so the order is time-invariant -- a static priority, never aging.
+        "reference": "04_scheduler/priority_scheduler.py (time-invariant key)",
     },
     "HRRN": {
         "name": "Highest Response Ratio Next",

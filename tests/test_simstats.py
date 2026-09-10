@@ -330,11 +330,14 @@ def test_tost_underpowered_case_is_neither_different_nor_equivalent():
 # ---------------------------------------------------------------------------
 # These are the table-builders that turn a runs DataFrame into the published
 # significance and equivalence CSVs. The load-bearing invariant is the PAIRING:
-# both helpers pair observations by the `unit` column (run / window), and both
-# sort_values(unit) before pairing. If someone dropped that sort, results would
-# depend on incoming row order — a silent, data-dependent corruption. The tests
-# below build a tiny synthetic runs frame, confirm the output shape/columns, and
-# prove that shuffling the input rows leaves the output byte-for-byte identical.
+# both helpers match observations by their `unit` LABEL (run / window), never by
+# row position, and refuse to pair at all when the two schedulers do not carry
+# the same label set. If the pairing followed row position, results would depend
+# on incoming row order — a silent, data-dependent corruption — and two frames
+# with equal counts but different labels would yield a confident p-value for a
+# comparison that was never paired. The tests below build a tiny synthetic runs
+# frame, confirm the output shape/columns, prove that shuffling the input rows
+# leaves the output byte-for-byte identical, and pin every refusal case.
 
 
 def _synthetic_runs(seed=101, n_runs=8):
@@ -470,15 +473,46 @@ def test_pairwise_significance_holm_is_applied_within_each_reference_family():
         assert fam['wilcoxon_p_holm'].to_numpy() == pytest.approx(expected_w)
 
 
-def test_equivalence_table_silently_skips_mismatched_length_pairs():
-    """DOCUMENTS CURRENT BEHAVIOUR (not an endorsement).
+def test_disjoint_unit_labels_raise_from_both_helpers():
+    """Equal counts but disjoint labels is not a paired comparison — it must raise.
 
-    When the two schedulers of a pair have different numbers of observations,
-    `equivalence_table` cannot pair them and drops the pair entirely — with no
-    warning and no row in the output. A reader of the resulting CSV sees an
-    absent row, not an error. This is pinned so the silence is at least
-    deliberate and visible: if the behaviour ever becomes "raise" or "emit a
-    NaN row", this test fails and forces the change to be conscious.
+    PROACTIVE has runs 0-3 and SMALLEST has runs 10-13: the same NUMBER of
+    observations, no shared unit at all. Pairing by position would hand back a
+    fully populated, confident p-value for a comparison that was never paired
+    (the trace benchmark dropping a window for one policy, or two runs frames
+    concatenated with offset run ids, produce exactly this shape). Both helpers
+    must refuse, naming the offending labels.
+    """
+    rows = []
+    for i, r in enumerate([0, 1, 2, 3]):
+        rows.append({'scheduler': 'PROACTIVE', 'run': r,
+                     'mean_wait': 10.0 + 0.7 * i})
+    for i, r in enumerate([10, 11, 12, 13]):   # same count, DISJOINT unit labels
+        rows.append({'scheduler': 'SMALLEST', 'run': r,
+                     'mean_wait': 13.0 + 1.3 * i})
+    df = pd.DataFrame(rows)
+
+    with pytest.raises(ValueError, match='do not share the same run labels'):
+        pairwise_significance(df, references=('PROACTIVE',), metric='mean_wait',
+                              unit='run')
+
+    with pytest.raises(ValueError, match='do not share the same run labels'):
+        equivalence_table(df, [('SMALLEST', 'PROACTIVE')], metric='mean_wait',
+                          unit='run')
+
+
+def test_mismatched_counts_raise_but_an_absent_scheduler_is_skipped():
+    """Unequal counts raise; a scheduler that is entirely absent is still skipped.
+
+    Unequal counts imply unequal label sets, so there is no honest pairing and
+    both helpers must say so rather than dropping the pair from the CSV (the old
+    `equivalence_table` behaviour) or dying inside numpy (the old
+    `pairwise_significance` behaviour).
+
+    A scheduler that does not appear in the frame AT ALL is different in kind and
+    stays a skip: the trace benchmark's EQUIV_PAIRS names policies that a
+    `--policies` subset may legitimately never have run. That pair yields no row,
+    and the empty frame still carries the full schema for the concat downstream.
     """
     rows = []
     for r in range(6):
@@ -487,81 +521,103 @@ def test_equivalence_table_silently_skips_mismatched_length_pairs():
         rows.append({'scheduler': 'SMALLEST', 'run': r, 'mean_wait': 12.0 + r})
     df = pd.DataFrame(rows)
 
-    out = equivalence_table(df, [('SMALLEST', 'PROACTIVE')], metric='mean_wait',
-                            unit='run')
-    assert len(out) == 0                       # the pair vanished silently
-    assert 'p_tost' in out.columns             # schema still intact
+    with pytest.raises(ValueError, match='do not share the same run labels'):
+        equivalence_table(df, [('SMALLEST', 'PROACTIVE')], metric='mean_wait',
+                          unit='run')
 
-
-def test_pairwise_significance_raises_on_mismatched_or_missing_reference():
-    """DOCUMENTS CURRENT BEHAVIOUR: it raises rather than skipping.
-
-    Unlike `equivalence_table` (which guards with a length check and skips),
-    `pairwise_significance` has no guard: an unequal number of observations, or
-    a reference name absent from the frame, produces a numpy broadcast
-    ValueError. Failing loudly is preferable to a silent wrong answer, so this
-    is pinned as the contract — and it flags the inconsistency between the two
-    helpers for anyone extending them.
-
-    Note this makes the default `references=('PROACTIVE', 'FIFO')` a landmine
-    for any runs frame that lacks a scheduler literally named 'FIFO'.
-    """
-    rows = []
-    for r in range(6):
-        rows.append({'scheduler': 'PROACTIVE', 'run': r, 'mean_wait': 10.0 + r})
-    for r in range(4):
-        rows.append({'scheduler': 'SMALLEST', 'run': r, 'mean_wait': 12.0 + r})
-    df = pd.DataFrame(rows)
-
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match='do not share the same run labels'):
         pairwise_significance(df, references=('PROACTIVE',), metric='mean_wait',
-                             unit='run')
+                              unit='run')
 
-    # A reference name that does not appear at all: empty array, same failure.
-    with pytest.raises(ValueError):
+    # A reference name that does not appear at all raises too, with the same
+    # named error instead of an opaque numpy broadcast failure.
+    with pytest.raises(ValueError, match='do not share the same run labels'):
         pairwise_significance(df[df['scheduler'] == 'SMALLEST'],
-                             references=('PROACTIVE',), metric='mean_wait',
-                             unit='run')
+                              references=('PROACTIVE',), metric='mean_wait',
+                              unit='run')
+
+    # ...but an absent scheduler in an equivalence pair is skipped, not an error.
+    out = equivalence_table(df, [('NEVER_RAN', 'PROACTIVE')], metric='mean_wait',
+                            unit='run')
+    assert len(out) == 0
+    expected_cols = {'scheduler_a', 'scheduler_b', 'metric', 'n', 'mean_a',
+                     'mean_b', 'pct_diff', 'margin_frac', 'margin', 'mean_diff',
+                     'ci_low', 'ci_high', 'p_lower', 'p_upper', 'p_tost',
+                     'equivalent'}
+    assert expected_cols.issubset(set(out.columns))
 
 
-def test_pairing_is_positional_and_unit_values_are_never_compared():
-    """DOCUMENTS A GENUINE LATENT DEFECT — see the summary, do not "fix" here.
+def test_duplicate_unit_labels_raise():
+    """A repeated unit label makes the pairing ambiguous, so it must raise.
 
-    Both helpers sort each scheduler's rows by `unit` and then pair them BY
-    POSITION. They never check that the two schedulers actually share the same
-    set of unit labels — only that the counts match (and `pairwise_significance`
-    does not even check that).
-
-    Consequence: if two schedulers have the same NUMBER of observations but
-    different unit labels — e.g. the trace-driven benchmark drops a window for
-    one policy and adds a different one, or two runs frames are concatenated
-    with offset run ids — the "paired" t-test / Wilcoxon / TOST silently pairs
-    unrelated observations and reports a confident p-value for a comparison
-    that was never paired at all. There is no warning.
-
-    Below, PROACTIVE has runs 0-3 and SMALLEST has runs 10-13: entirely
-    disjoint units. The correct answer is "these cannot be paired". The current
-    answer is a fully populated result row. This test asserts the *current*
-    (wrong) behaviour so the defect is visible and any future guard shows up as
-    a deliberate, reviewed change.
+    Two rows claiming run 1 for the same scheduler means two observations of one
+    unit. Positional pairing would keep whichever landed first after the sort and
+    silently discard the other; label-based pairing cannot choose either, so the
+    only correct answer is to refuse.
     """
     rows = []
-    for i, r in enumerate([0, 1, 2, 3]):
-        rows.append({'scheduler': 'PROACTIVE', 'run': r,
-                     'mean_wait': 10.0 + 0.7 * i})
-    for i, r in enumerate([10, 11, 12, 13]):   # DISJOINT unit labels
-        rows.append({'scheduler': 'SMALLEST', 'run': r,
-                     'mean_wait': 13.0 + 1.3 * i})
+    for r in [0, 1, 1, 2]:                       # run 1 appears twice
+        rows.append({'scheduler': 'SMALLEST', 'run': r, 'mean_wait': 12.0 + r})
+    for r in [0, 1, 2]:
+        rows.append({'scheduler': 'PROACTIVE', 'run': r, 'mean_wait': 10.0 + r})
     df = pd.DataFrame(rows)
 
-    sig = pairwise_significance(df, references=('PROACTIVE',),
-                               metric='mean_wait', unit='run')
-    # BUG: a paired test is reported even though no unit is shared.
-    assert len(sig) == 1
-    assert np.isfinite(sig['ttest_p'].iloc[0])
+    with pytest.raises(ValueError, match='duplicate run labels'):
+        equivalence_table(df, [('SMALLEST', 'PROACTIVE')], metric='mean_wait',
+                          unit='run')
 
-    eq = equivalence_table(df, [('SMALLEST', 'PROACTIVE')], metric='mean_wait',
-                           unit='run')
-    # BUG: TOST reports n = 4 "pairs" that do not correspond to common units.
-    assert len(eq) == 1
-    assert int(eq['n'].iloc[0]) == 4
+    with pytest.raises(ValueError, match='duplicate run labels'):
+        pairwise_significance(df, references=('PROACTIVE',), metric='mean_wait',
+                              unit='run')
+
+
+def test_missing_unit_column_raises_a_named_error():
+    """Asking to pair on a column that is not there must name the column.
+
+    Calling the trace helper with the synthetic `unit='run'` (or vice versa) is
+    an easy mistake; a KeyError deep in pandas would send the reader hunting.
+    The error names the missing pairing column and lists what is available.
+    """
+    df = pd.DataFrame([
+        {'scheduler': 'PROACTIVE', 'window': 0, 'mean_wait': 10.0},
+        {'scheduler': 'SMALLEST', 'window': 0, 'mean_wait': 12.0},
+    ])
+
+    with pytest.raises(ValueError, match="pairing column 'run' is not present"):
+        equivalence_table(df, [('SMALLEST', 'PROACTIVE')], metric='mean_wait',
+                          unit='run')
+
+    with pytest.raises(ValueError, match="pairing column 'run' is not present"):
+        pairwise_significance(df, references=('PROACTIVE',), metric='mean_wait',
+                              unit='run')
+
+
+def test_row_order_never_changes_the_paired_result():
+    """A row permutation must leave the equivalence table byte-for-byte identical.
+
+    Label-based pairing makes this a property of the data, not of the frame's
+    ordering: permuting the rows of a tidy frame changes nothing a reader could
+    observe. The hand-computed `mean_diff` also pins that the pairing is run 0
+    with run 0 (and so on) rather than any other matching — a positional pairing
+    of the permuted frame would give a different mean difference.
+    """
+    a_vals = [12.0, 11.0, 15.0, 9.0, 14.0, 13.0]     # SMALLEST, runs 0..5
+    b_vals = [10.0, 10.5, 11.0, 11.5, 12.0, 12.5]    # PROACTIVE, runs 0..5
+    rows = []
+    for r, v in enumerate(a_vals):
+        rows.append({'scheduler': 'SMALLEST', 'run': r, 'mean_wait': v})
+    for r, v in enumerate(b_vals):
+        rows.append({'scheduler': 'PROACTIVE', 'run': r, 'mean_wait': v})
+    tidy = pd.DataFrame(rows)
+    permuted = tidy.sample(frac=1.0, random_state=31337).reset_index(drop=True)
+
+    pairs = [('SMALLEST', 'PROACTIVE')]
+    out_tidy = equivalence_table(tidy, pairs, metric='mean_wait', unit='run')
+    out_perm = equivalence_table(permuted, pairs, metric='mean_wait', unit='run')
+
+    pd.testing.assert_frame_equal(out_tidy, out_perm)
+
+    expected_mean_diff = float((np.array(a_vals) - np.array(b_vals)).mean())
+    assert int(out_tidy['n'].iloc[0]) == 6
+    assert out_tidy['mean_diff'].iloc[0] == pytest.approx(expected_mean_diff)
+    assert out_perm['mean_diff'].iloc[0] == pytest.approx(expected_mean_diff)

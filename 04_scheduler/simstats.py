@@ -87,17 +87,84 @@ def tost_equivalence(a, b, margin_frac=0.10, alpha=0.05):
     }
 
 
+def _sample_labels(labels, k=5):
+    """Up to k labels, sorted, for a stable and readable error message."""
+    # .item() unwraps numpy scalars: np.int64(3) reprs as "np.int64(3)" inside a
+    # list and would make the message harder to read than the id it names.
+    vals = [v.item() if hasattr(v, 'item') else v for v in labels]
+    try:
+        vals.sort()
+    except TypeError:          # mixed label types: ordering here is cosmetic only
+        vals.sort(key=repr)
+    return vals[:k]
+
+
+def _paired_series(runs_df, name, metric, unit):
+    """One scheduler's `metric` as a float Series indexed by its `unit` label.
+
+    Carrying the label alongside the value is what makes label-based pairing
+    possible at all: a bare positional array cannot be checked against another.
+    """
+    if unit not in runs_df.columns:
+        raise ValueError(
+            f"pairing column {unit!r} is not present in the runs frame; "
+            f"available columns: {sorted(map(str, runs_df.columns))}"
+        )
+    sub = runs_df[runs_df['scheduler'] == name]
+    labels = sub[unit]
+    if labels.duplicated().any():
+        dups = _sample_labels(labels[labels.duplicated()].unique())
+        raise ValueError(
+            f"{name} has duplicate {unit} labels: {dups}; two observations claim the same "
+            f"{unit} and positional pairing would silently keep only one of them"
+        )
+    return pd.Series(sub[metric].to_numpy(dtype=float), index=labels.to_numpy())
+
+
+def _aligned_pair(runs_df, a_name, b_name, metric, unit):
+    """(a_values, b_values) for two schedulers, aligned BY `unit` LABEL.
+
+    Raises ValueError when the two label sets differ, instead of pairing
+    observation i of one scheduler with observation i of the other on the
+    strength of the counts alone.
+
+    This cannot move any published number. When the two label sets are equal and
+    duplicate-free, sorting each scheduler by `unit` yields the SAME label
+    sequence for both, so position i already held the same label under the old
+    positional code; reindexing b onto a's sorted index therefore reproduces
+    exactly the old float order, element for element.
+    """
+    a = _paired_series(runs_df, a_name, metric, unit)
+    b = _paired_series(runs_df, b_name, metric, unit)
+    if set(a.index) != set(b.index):
+        only_a = _sample_labels(set(a.index) - set(b.index))
+        only_b = _sample_labels(set(b.index) - set(a.index))
+        raise ValueError(
+            f"{a_name} and {b_name} do not share the same {unit} labels: "
+            f"only in {a_name}: {only_a}, only in {b_name}: {only_b}"
+        )
+    a = a.sort_index()
+    b = b.reindex(a.index)
+    return a.to_numpy(dtype=float), b.to_numpy(dtype=float)
+
+
 def equivalence_table(runs_df, pairs, metric='mean_wait', unit='run',
                       margin_frac=0.10):
-    """Run tost_equivalence over a list of (scheduler_a, scheduler_b) pairs."""
+    """Run tost_equivalence over a list of (scheduler_a, scheduler_b) pairs.
+
+    Observations are paired by their `unit` LABEL, never by row position: a pair
+    whose two schedulers do not carry the same set of labels raises rather than
+    producing a confident p-value for a comparison that was never paired.
+    """
     rows = []
     for a_name, b_name in pairs:
-        a = (runs_df[runs_df['scheduler'] == a_name]
-             .sort_values(unit)[metric].to_numpy())
-        b = (runs_df[runs_df['scheduler'] == b_name]
-             .sort_values(unit)[metric].to_numpy())
-        if len(a) == 0 or len(b) == 0 or len(a) != len(b):
+        # A scheduler entirely absent is skipped, not an error: the trace
+        # benchmark's EQUIV_PAIRS names policies a --policies subset may not have
+        # run. Anything else -- mismatched or duplicated labels -- now raises.
+        if (not (runs_df['scheduler'] == a_name).any()
+                or not (runs_df['scheduler'] == b_name).any()):
             continue
+        a, b = _aligned_pair(runs_df, a_name, b_name, metric, unit)
         res = tost_equivalence(a, b, margin_frac=margin_frac)
         res.update({'scheduler_a': a_name, 'scheduler_b': b_name,
                     'metric': metric, 'margin_frac': margin_frac,
@@ -117,19 +184,20 @@ def pairwise_significance(runs_df, references=('PROACTIVE', 'FIFO'),
     within each reference family.
 
     `unit` is the pairing column ('run' for the synthetic benchmark, 'window'
-    for the trace-driven one). diff > 0 means the scheduler scores HIGHER on
-    `metric` than the reference (for wait/slowdown metrics: it is worse).
+    for the trace-driven one). Observations are paired by their `unit` LABEL,
+    never by row position: a reference that is missing, or a scheduler whose
+    labels differ from the reference's, raises a named ValueError instead of
+    dying inside numpy or silently pairing unrelated observations. diff > 0
+    means the scheduler scores HIGHER on `metric` than the reference (for
+    wait/slowdown metrics: it is worse).
     """
     rows = []
     for ref in references:
-        ref_w = (runs_df[runs_df['scheduler'] == ref]
-                 .sort_values(unit)[metric].to_numpy())
         fam = []
         for sch in sorted(runs_df['scheduler'].unique()):
             if sch == ref:
                 continue
-            w = (runs_df[runs_df['scheduler'] == sch]
-                 .sort_values(unit)[metric].to_numpy())
+            w, ref_w = _aligned_pair(runs_df, sch, ref, metric, unit)
             diff = w - ref_w
             tt = stats.ttest_rel(w, ref_w)
             try:

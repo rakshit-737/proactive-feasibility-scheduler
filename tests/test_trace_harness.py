@@ -19,6 +19,12 @@ These tests therefore protect two different kinds of correctness:
     exist, and cannot finish before it has run. A simulator that violates any
     of these can manufacture an arbitrarily good scheduler.
 
+3.  SHARED-INPUT correctness — the benchmark and `02_data/build_real_trace_
+    datasets.py` must read the same trace files and build the same features.
+    Both now go through `02_data/swf_io.open_swf`, and the benchmark's
+    per-trace model is trained on `replay_trace_features` output rather than on
+    a cached CSV, so the two scripts can no longer disagree about their input.
+
 Everything here runs on hand-built job lists of five jobs or fewer and on SWF
 files of eight rows or fewer. Nothing reads or writes a tracked artefact.
 """
@@ -26,6 +32,7 @@ files of eight rows or fewer. Nothing reads or writes a tracked artefact.
 import gzip
 import os
 
+import pandas as pd
 import pytest
 
 # `trace_driven_benchmark` pulls in XGBRegressor at module load for the
@@ -35,6 +42,10 @@ tdb = pytest.importorskip(
     'trace_driven_benchmark',
     reason='trace_driven_benchmark imports xgboost (XGBRegressor) at module load',
 )
+
+# The dataset builder: producer of 02_data/real_trace_dataset_*.csv, and the
+# source of the feature replay the benchmark now always runs in memory.
+import build_real_trace_datasets as brtd  # noqa: E402
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -352,6 +363,30 @@ def test_parse_reads_the_gzipped_copy_when_only_it_exists(tmp_path):
     assert set(df['job_id']) == {1, 2, 3, 8}
 
 
+def test_dataset_builder_also_reads_the_gzipped_copy_when_only_it_exists(tmp_path):
+    """The DATASET BUILDER must survive a fresh clone too, not just the benchmark.
+
+    `02_data/build_real_trace_datasets.py` used a bare `open()` on the plain
+    `.swf` name while the benchmark had a gzip fallback, so the builder could
+    not run at all on a fresh clone — only on a machine where someone had
+    already expanded the archive. Both now go through the same
+    `02_data/swf_io.open_swf`, and this test is the mirror image of the one
+    above: same trace text, same expectations, other reader.
+    """
+    text = _swf_text(FILTER_ROWS)
+    gz_path = tmp_path / 'builder_onlygz.swf.gz'
+    with gzip.open(str(gz_path), 'wt', encoding='utf-8') as fh:
+        fh.write(text)
+
+    plain_path = str(tmp_path / 'builder_onlygz.swf')
+    assert not os.path.exists(plain_path), 'the uncompressed file must be absent'
+
+    capacity, jobs, stats = brtd.parse_swf(plain_path)
+    assert capacity == 64
+    assert stats['kept'] == len(jobs) == 4
+    assert {j['job_id'] for j in jobs} == {1, 2, 3, 8}
+
+
 def test_open_swf_reports_a_missing_trace_instead_of_returning_empty(tmp_path):
     """Neither file present is an error, never a silently empty job set.
 
@@ -589,3 +624,101 @@ def test_fifo_strict_head_blocks_where_fcfs_runs_past_the_head(monkeypatch):
     # And the difference shows up in the reported metric, which is what the
     # study actually compares.
     assert strict['mean_wait'] > fcfs['mean_wait']
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# (g) The in-memory feature rebuild the retrained model is fitted on
+# ─────────────────────────────────────────────────────────────────────────────
+
+# A four-job recorded schedule on an 8-processor machine, chosen so the replay
+# is exercised without ever oversubscribing the machine (no clamping) and so
+# every interesting state appears at least once: a fully free cluster, a job
+# that does not fit, a non-empty queue with real pressure, and a completion
+# retired in the same step as a start.
+#
+#   job 1  [0, 600)  4 procs        job 3  [300, 540)  4 procs
+#   job 2  [0, 300)  2 procs        job 4  [600, 720)  2 procs
+#
+# Peak concurrency is 8 == capacity over [300, 540).
+REPLAY_JOBS = [
+    {'job_id': 1, 'submit': 0,   'wait': 0,   'run': 600, 'procs': 4},
+    {'job_id': 2, 'submit': 0,   'wait': 0,   'run': 300, 'procs': 2},
+    {'job_id': 3, 'submit': 120, 'wait': 180, 'run': 240, 'procs': 4},
+    {'job_id': 4, 'submit': 200, 'wait': 400, 'run': 120, 'procs': 2},
+]
+REPLAY_CAPACITY = 8
+
+
+def test_in_memory_rebuild_supplies_exactly_the_columns_the_model_is_trained_on():
+    """`train_trace_model` no longer has a cached CSV to fall back to.
+
+    The benchmark used to read `02_data/real_trace_dataset_<trace>.csv` when it
+    happened to exist and replay the trace only otherwise. That file is
+    gitignored and nothing validated it against the current trace or capacity,
+    so a stale copy on one machine silently trained a different model — and
+    published different numbers — from a fresh clone. The cached branch is gone,
+    which makes `replay_trace_features` the single source of training features
+    and makes its output schema load-bearing: a renamed or dropped column here
+    is a KeyError at training time, and a *silently* changed one is worse.
+    """
+    df, neg_events = brtd.replay_trace_features(REPLAY_JOBS, REPLAY_CAPACITY)
+
+    # One row per job, in chronological order -- the replay sorts by
+    # (submit, job_id) and must not drop or duplicate anyone.
+    assert len(df) == len(REPLAY_JOBS)
+    assert list(df['job_id']) == [1, 2, 3, 4]
+
+    # Exactly what train_trace_model selects: the eight base features, the
+    # chronological-split key, the join key for the estimate variant, and the
+    # target.
+    required = set(tdb.BASE_FEATURES) | {'job_id', 'submit_time', 'wait_time'}
+    missing = required - set(df.columns)
+    assert not missing, f'the model would be trained without {sorted(missing)}'
+
+    # The recorded schedule fits inside the machine, so the negative-free clamp
+    # (LANL's non-dedicated-mode overlap) is NOT what this test is measuring.
+    assert neg_events == 0
+    assert (df['neg_free_flag'] == 0).all()
+
+    # Targets and split keys round-trip from the input, unaltered.
+    assert list(df['submit_time']) == [j['submit'] for j in REPLAY_JOBS]
+    assert list(df['wait_time']) == [j['wait'] for j in REPLAY_JOBS]
+
+    rows = {int(r['job_id']): r for _, r in df.iterrows()}
+
+    # Job 1 submits into an empty cluster.
+    assert rows[1]['total_free'] == REPLAY_CAPACITY
+    assert rows[1]['running_jobs'] == 0 and rows[1]['queue_length'] == 0
+    assert rows[1]['can_fit_now'] == 1 and rows[1]['free_frac'] == 1.0
+
+    # Job 3 asks for 4 processors with only 2 free: it demonstrably does not
+    # fit, and fit_ratio is the un-clipped shortfall.
+    assert rows[3]['total_free'] == 2
+    assert rows[3]['can_fit_now'] == 0
+    assert rows[3]['fit_ratio'] == pytest.approx(0.5)
+
+    # Job 4 submits while job 3 is still queued -- the only instant with a
+    # non-empty queue, so it is the only one that exercises queue_pressure
+    # (queued processors that are NOT the scored job, over free + 1).
+    assert rows[4]['queue_length'] == 1
+    assert rows[4]['running_jobs'] == 2
+    assert rows[4]['total_free'] == 2
+    assert rows[4]['queue_pressure'] == pytest.approx(4.0 / 3.0)
+
+
+def test_in_memory_rebuild_is_deterministic():
+    """Two replays of one job list must be bit-identical.
+
+    With the cached CSV removed, the features are rebuilt on every run of the
+    benchmark, so reproducibility of the published scheduler numbers now rests
+    on this replay being a pure function of (jobs, capacity). It uses heaps
+    keyed on (start, end, procs) and (end, procs); if two entries ever tied on
+    a key that does not fully order them, the pop order — and therefore the
+    features — could vary between runs. `check_exact=True` because a float
+    tolerance would hide exactly that.
+    """
+    first, first_neg = brtd.replay_trace_features(REPLAY_JOBS, REPLAY_CAPACITY)
+    second, second_neg = brtd.replay_trace_features(REPLAY_JOBS, REPLAY_CAPACITY)
+
+    assert first_neg == second_neg
+    pd.testing.assert_frame_equal(first, second, check_exact=True)

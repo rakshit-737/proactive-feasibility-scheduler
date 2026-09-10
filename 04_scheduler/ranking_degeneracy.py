@@ -51,14 +51,19 @@ instant with at least two queued jobs:
   4. the fraction of instants where the two orders are IDENTICAL;
   5. the fraction where the model's order is identical to plain arrival order
      (the degenerate-to-FCFS case, which happens when tree plateaus give every
-     queued job the same score).
+     queued job the same score);
+  6. the fraction where EVERY queued job receives the same score. (5) is only an
+     upper bound on (6): all-tied forces arrival order, but arrival order can
+     also arise from distinct scores that happen to agree with it.
 
 Outputs: 05_results/degeneracy/{ranking_degeneracy.csv,
-         feature_variation.csv, ranking_degeneracy.png}
+         ranking_degeneracy_totals.csv, feature_variation.csv,
+         ranking_degeneracy.png}
 
 Usage:
-  python ranking_degeneracy.py              # synthetic + both traces
-  python ranking_degeneracy.py --quick      # fewer runs/windows
+  python ranking_degeneracy.py                  # synthetic + both traces
+  python ranking_degeneracy.py --quick          # fewer runs/windows
+  python ranking_degeneracy.py --allow-partial  # tolerate a missing trace
 """
 
 import argparse
@@ -83,6 +88,12 @@ os.makedirs(OUT_DIR, exist_ok=True)
 
 SIZE_COL = 0     # requested size is feature 0 in both feature vectors
 
+TRACE_KEYS = ('sdsc', 'lanl')
+# Synthetic + one setting per trace. The published instant total is the sum over
+# all of them, so a run that yields fewer settings has under-reported it and must
+# say so rather than writing a smaller number into the same CSV.
+EXPECTED_SETTINGS = 1 + len(TRACE_KEYS)
+
 
 class Collector:
     """Accumulates statistics over observed ranking decisions."""
@@ -93,6 +104,7 @@ class Collector:
         self.instants = 0
         self.same_as_size = 0
         self.same_as_arrival = 0
+        self.all_tied = 0            # every queued job got the same score
         self.taus = []
         self.n_distinct_pred = []
         self.queue_lens = []
@@ -119,7 +131,17 @@ class Collector:
             if len(p) > 1 and (p.max() - p.min()) > 1e-9:
                 self.violations += 1
 
-        self.n_distinct_pred.append(len(np.unique(np.round(pred, 9))))
+        n_distinct = len(np.unique(np.round(pred, 9)))
+        self.n_distinct_pred.append(n_distinct)
+
+        # (5b) the STRICT all-scores-tied case, measured rather than inferred.
+        # All-tied implies the induced order equals arrival order (the tie-break
+        # is (score, arrival, id)), but NOT conversely: distinct scores can rank
+        # the queue in arrival order too. So same_as_arrival is only an upper
+        # bound on all_tied, and both counters are kept so the claim "all scores
+        # tie" is never read off the weaker column.
+        if n_distinct == 1:
+            self.all_tied += 1
 
         # (2b) the score IS a lookup table over size -- recover it. Is that
         # table monotone increasing (i.e. exactly smallest-first), or has the
@@ -165,6 +187,7 @@ class Collector:
             'kendall_tau_vs_size_min': float(np.min(self.taus)) if self.taus else float('nan'),
             'pct_order_identical_to_size': 100.0 * self.same_as_size / max(self.instants, 1),
             'pct_order_identical_to_arrival': 100.0 * self.same_as_arrival / max(self.instants, 1),
+            'pct_all_scores_tied': 100.0 * self.all_tied / max(self.instants, 1),
             'pct_size_table_monotone': 100.0 * self.monotone_instants / max(self.instants, 1),
             'mean_distinct_predictions': float(np.mean(self.n_distinct_pred)) if self.n_distinct_pred else float('nan'),
         }
@@ -373,6 +396,10 @@ def main():
     # default pipeline invocation reproduces the manuscript's instant counts.
     ap.add_argument('--windows', type=int, default=20, help='trace windows')
     ap.add_argument('--quick', action='store_true')
+    ap.add_argument('--allow-partial', action='store_true',
+                    help='continue when a trace cannot be loaded. Without this '
+                         'flag a missing trace is a hard error, so the published '
+                         'instant total can never be silently under-reported.')
     ap.add_argument('--figures-only', action='store_true',
                     help='re-render the figures from the saved CSVs without '
                          're-running any simulation (for iterating on styling)')
@@ -390,23 +417,56 @@ def main():
         return
 
     collectors = [run_synthetic(args.runs)]
-    for key in ('sdsc', 'lanl'):
+    missing = []
+    for key in TRACE_KEYS:
         try:
             collectors.append(run_trace(key, args.windows, 3, 7))
         except FileNotFoundError as exc:
-            print(f'skipping {key}: {exc}')
+            if not args.allow_partial:
+                raise SystemExit(
+                    f'ERROR: trace {key!r} could not be run: {exc}\n'
+                    f'The published ranking-instant total is the sum over '
+                    f'{EXPECTED_SETTINGS} settings (synthetic + '
+                    f'{len(TRACE_KEYS)} traces); dropping one silently reports a '
+                    f'smaller total under the same column name. Restore the SWF '
+                    f'traces in 02_data/*.swf.gz (they are tracked in git), or '
+                    f're-run with --allow-partial. A partial table must NOT be '
+                    f'committed.')
+            missing.append(key)
+            print(f'WARNING: trace {key!r} unavailable, continuing because '
+                  f'--allow-partial was passed: {exc}')
 
     summary = pd.DataFrame([c.summary() for c in collectors])
     feats = pd.concat([c.feature_table() for c in collectors], ignore_index=True)
     curves = pd.concat([c.size_curve() for c in collectors], ignore_index=True)
 
+    # What this run actually covered, persisted next to the per-setting table.
+    # It is a SEPARATE file: make_figure draws one bar pair per row of
+    # ranking_degeneracy.csv, so a TOTAL row there would render as a fourth,
+    # non-existent setting.
+    total_instants = int(summary['ranking_instants'].sum())
+    total_violations = int(summary['equal_size_diff_pred_violations'].sum())
+    # --quick shrinks runs/windows, so its totals are not the published numbers
+    # either, even when every trace was present.
+    partial = bool(missing) or bool(args.quick)
+    totals = pd.DataFrame([{
+        'settings_expected': EXPECTED_SETTINGS,
+        'settings_present': len(collectors),
+        'missing_traces': ';'.join(missing),
+        'partial': partial,
+        'total_instants': total_instants,
+        'total_violations': total_violations,
+    }])
+
     sum_path = os.path.join(OUT_DIR, 'ranking_degeneracy.csv')
+    totals_path = os.path.join(OUT_DIR, 'ranking_degeneracy_totals.csv')
     feat_path = os.path.join(OUT_DIR, 'feature_variation.csv')
     curve_path = os.path.join(OUT_DIR, 'size_priority_table.csv')
     fig_stem = os.path.join(OUT_DIR, 'ranking_degeneracy')
     table_stem = os.path.join(OUT_DIR, 'size_priority_table')
     fig_path = fig_stem + '.png'
     summary.to_csv(sum_path, index=False)
+    totals.to_csv(totals_path, index=False)
     feats.to_csv(feat_path, index=False)
     curves.to_csv(curve_path, index=False)
     make_figure(summary, feats, curves, fig_stem)
@@ -423,10 +483,16 @@ def main():
                                  ascending=False).itertuples(index=False):
             print(f'    {r.feature:22s} {r.pct_instants_varying_across_queue:6.1f}%')
 
-    viol = int(summary['equal_size_diff_pred_violations'].sum())
-    print(f'\nEqual-size / different-prediction violations across all settings: {viol}')
+    print(f'\nEqual-size / different-prediction violations across all settings: '
+          f'{total_violations}')
     print('(zero => the score is exactly a function of requested size, as argued)')
-    for p in (sum_path, feat_path, curve_path, fig_path,
+    print(f'Total ranking instants across {len(collectors)}/{EXPECTED_SETTINGS} '
+          f'settings: {total_instants:,} (violations: {total_violations}, '
+          f'partial={partial})')
+    if partial:
+        print('PARTIAL RUN — this total is NOT the published number; do not commit '
+              'these artefacts.')
+    for p in (sum_path, totals_path, feat_path, curve_path, fig_path,
               table_stem + '.png'):
         print('Saved:', p)
 
