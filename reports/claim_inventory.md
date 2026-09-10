@@ -1,5 +1,29 @@
 # Claim inventory
 
+> **STATUS AFTER PHASE B (v3.6).** This inventory is the Phase A snapshot, taken BEFORE any repair,
+> and it is kept in that form deliberately: it is the evidence that motivated the changes, so
+> rewriting it would destroy the record. Read it as "what was true at commit 888b5ed".
+>
+> What has since changed:
+>
+> - Every STALE row listed here has been corrected, and every correction with a moved number is
+>   recorded old-to-new in `CHANGELOG.md` under v3.6 and in `reports/phase_B_report.md`.
+> - Every ORPHAN row now has a producer in `run_all_experiments.sh`, or its artefact and the claims
+>   citing it were deleted. Which of the two, per study, is listed in the Phase B report.
+> - Every UNREPRODUCIBLE row was either given a producer, marked in the prose as unverifiable, or
+>   deleted. The two unique values that existed only in a deleted documentation page are preserved
+>   as `[UNVERIFIED]` in `reports/phase_A_report.md`.
+> - One row was found to be a claim the artefact does not support at all, rather than a stale
+>   number: the all-ties fraction. See the retraction in the Phase B report.
+> - **Line-number citations below are stale wherever Phase B edited the file they point into.** The
+>   verdicts and the values remain accurate; the line numbers do not. Chasing them back into the
+>   current tree is not worth the churn, since the current numbers are pinned by
+>   `tests/test_golden_numbers.py` instead.
+>
+> The live contract is now enforced by machine, not by this document:
+> `tests/test_golden_numbers.py` pins every headline number to its committed artefact, and
+> `python tools/verify_artifacts.py` proves the artefacts still come from the committed scripts.
+
 Every numeric claim that appears in prose anywhere in this repository, checked against the
 artifact that should contain it and against the script that should produce that artifact.
 Built in Phase A of the hostile-review hardening pass. Read-only: nothing in the repository was
