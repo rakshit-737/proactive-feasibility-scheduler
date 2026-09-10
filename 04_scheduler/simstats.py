@@ -99,17 +99,28 @@ def _sample_labels(labels, k=5):
     return vals[:k]
 
 
-def _paired_series(runs_df, name, metric, unit):
-    """One scheduler's `metric` as a float Series indexed by its `unit` label.
+def _require_unit_column(runs_df, unit):
+    """Raise a named ValueError when the pairing column is absent.
 
-    Carrying the label alongside the value is what makes label-based pairing
-    possible at all: a bare positional array cannot be checked against another.
+    The table builders call this ONCE, up front, before any per-pair skipping.
+    Validating inside the per-pair path is not enough: a call that gets both the
+    `unit` and a scheduler name wrong would take the skip branch first and hand
+    back an empty table, hiding the wrong `unit` entirely.
     """
     if unit not in runs_df.columns:
         raise ValueError(
             f"pairing column {unit!r} is not present in the runs frame; "
             f"available columns: {sorted(map(str, runs_df.columns))}"
         )
+
+
+def _paired_series(runs_df, name, metric, unit):
+    """One scheduler's `metric` as a float Series indexed by its `unit` label.
+
+    Carrying the label alongside the value is what makes label-based pairing
+    possible at all: a bare positional array cannot be checked against another.
+    """
+    _require_unit_column(runs_df, unit)
     sub = runs_df[runs_df['scheduler'] == name]
     labels = sub[unit]
     if labels.duplicated().any():
@@ -155,12 +166,24 @@ def equivalence_table(runs_df, pairs, metric='mean_wait', unit='run',
     Observations are paired by their `unit` LABEL, never by row position: a pair
     whose two schedulers do not carry the same set of labels raises rather than
     producing a confident p-value for a comparison that was never paired.
+
+    `unit` is validated once here, before any pair is examined, so a wrong
+    pairing column is reported even when every pair would otherwise be skipped.
     """
+    _require_unit_column(runs_df, unit)
     rows = []
     for a_name, b_name in pairs:
-        # A scheduler entirely absent is skipped, not an error: the trace
-        # benchmark's EQUIV_PAIRS names policies a --policies subset may not have
-        # run. Anything else -- mismatched or duplicated labels -- now raises.
+        # A pair naming a scheduler with NO rows at all is dropped from the
+        # table instead of raising: `pairs` is a fixed list of candidate
+        # comparisons, so one that does not apply to this frame is omitted
+        # rather than aborting the whole table. No caller in this repository
+        # currently reaches this branch -- multi_scheduler_benchmark.py and
+        # trace_driven_benchmark.py both build `pairs` from policy lists that
+        # always run in full (--smoke only shortens the windows, --skip-consbf
+        # drops CONS_BF_USEREST, which no pair names) -- so it is deliberate
+        # tolerance, not a workaround for any flag that exists today.
+        # Anything else -- a partially present scheduler, mismatched or
+        # duplicated labels -- raises.
         if (not (runs_df['scheduler'] == a_name).any()
                 or not (runs_df['scheduler'] == b_name).any()):
             continue
@@ -190,9 +213,22 @@ def pairwise_significance(runs_df, references=('PROACTIVE', 'FIFO'),
     dying inside numpy or silently pairing unrelated observations. diff > 0
     means the scheduler scores HIGHER on `metric` than the reference (for
     wait/slowdown metrics: it is worse).
+
+    A reference that appears nowhere in the frame is a caller error and raises
+    on its own terms -- naming the reference -- rather than being reported as a
+    label mismatch between the reference and every other scheduler, which reads
+    as a data problem and sends the reader looking in the wrong place.
     """
+    _require_unit_column(runs_df, unit)
     rows = []
     for ref in references:
+        if not (runs_df['scheduler'] == ref).any():
+            present = sorted(map(str, runs_df['scheduler'].unique()))
+            raise ValueError(
+                f"reference scheduler {ref!r} is not present in the runs frame; "
+                f"there is nothing to compare against. Schedulers present: "
+                f"{present}"
+            )
         fam = []
         for sch in sorted(runs_df['scheduler'].unique()):
             if sch == ref:

@@ -568,7 +568,7 @@ def simulate_srpt(jobs_in, capacity, window_meta, overhead=PREEMPT_OVERHEAD):
 # Per-trace model training (chronological, no leakage)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def train_trace_model(trace_key, split_time, swf_df, with_est, capacity):
+def train_trace_model(split_time, swf_df, with_est, capacity):
     """Retrain the wait-time model on the trace's own EARLY period.
 
     Features come from build_real_trace_datasets.py, which reconstructs the
@@ -581,8 +581,12 @@ def train_trace_model(trace_key, split_time, swf_df, with_est, capacity):
     the scheduler only consumes the RANKING, which any monotone target
     preserves.
 
-    `trace_key` is accepted for call-site symmetry with the rest of the module
-    (ranking_degeneracy.py passes it too); the features no longer depend on it.
+    There is deliberately NO `trace_key` parameter. It survived the removal of
+    the cached-CSV branch below as a parameter nothing read, which made passing
+    the wrong trace name a silent no-op: a caller could train the SDSC model
+    while believing it had asked for LANL and get a plausible model either way.
+    The trace now enters this function only as `swf_df`, so there is one way to
+    say which trace is being trained on and it is the data itself.
     """
     # Features are ALWAYS rebuilt in memory from the trace that was just parsed.
     # An earlier version read 02_data/real_trace_dataset_<trace>.csv whenever
@@ -690,8 +694,8 @@ def run_trace(trace_key, n_windows, warmup_days, measure_days, skip_consbf):
           f"{(split_time - t_min)/DAY:.0f}, evaluate after")
 
     print('Retraining wait model on the trace\'s own early period ...')
-    model_base, n_train = train_trace_model(trace_key, split_time, df, False, capacity)
-    model_est, _ = train_trace_model(trace_key, split_time, df, True, capacity)
+    model_base, n_train = train_trace_model(split_time, df, False, capacity)
+    model_est, _ = train_trace_model(split_time, df, True, capacity)
     print(f'  trained on {n_train} pre-split jobs '
           f'({len(BASE_FEATURES)} features; +1 with user estimate)')
 

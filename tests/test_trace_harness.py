@@ -32,6 +32,7 @@ files of eight rows or fewer. Nothing reads or writes a tracked artefact.
 import gzip
 import os
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -387,6 +388,74 @@ def test_dataset_builder_also_reads_the_gzipped_copy_when_only_it_exists(tmp_pat
     assert {j['job_id'] for j in jobs} == {1, 2, 3, 8}
 
 
+def test_a_gz_path_passed_directly_is_decompressed_not_read_as_text(tmp_path):
+    """A `.swf.gz` handed in DIRECTLY must be decompressed, not read as UTF-8.
+
+    `open_swf` tested `os.path.exists(path)` before it looked at the suffix, so
+    an existing `.gz` argument fell into the plain-text branch and was decoded
+    as UTF-8 with `errors='replace'`. That does not raise: gzip's bytes become
+    replacement characters, the parser skips every line that fails to split into
+    >= 11 numeric fields, and the caller gets ZERO jobs — which reads downstream
+    like a quiet trace rather than like a broken read. The header is gone too,
+    so capacity would come back as None and `parse_swf_jobs` would blame the
+    file for having no MaxProcs line.
+
+    Nothing in the pipeline passes a `.gz` path today, which is exactly why this
+    needs a test: the next caller that does gets silence, not an error.
+    """
+    text = _swf_text(FILTER_ROWS)
+    gz_path = tmp_path / 'direct.swf.gz'
+    with gzip.open(str(gz_path), 'wt', encoding='utf-8') as fh:
+        fh.write(text)
+
+    # The uncompressed sibling must NOT exist: this is about the .gz argument
+    # itself being handled, not about the fallback finding a plain file.
+    assert not os.path.exists(str(tmp_path / 'direct.swf'))
+
+    # The reader returns real trace text ...
+    with tdb.open_swf(str(gz_path)) as fh:
+        first = fh.readline()
+    assert first.startswith('; Version: 2.2'), (
+        'the .gz path was read undecompressed: the caller received bytes '
+        'decoded as UTF-8 instead of the trace')
+
+    # ... and the whole parse succeeds identically to the plain-path case.
+    capacity, df, stats = tdb.parse_swf_jobs(str(gz_path))
+    assert capacity == 64
+    assert stats['kept'] == len(df) == 4
+    assert set(df['job_id']) == {1, 2, 3, 8}
+
+
+def test_a_gz_path_is_decompressed_even_when_a_plain_file_sits_beside_it(tmp_path):
+    """The SUFFIX decides, not which file happens to exist.
+
+    The bug was an ordering bug, so the fix must not be an ordering coincidence:
+    with BOTH files present, a `.gz` argument must still be decompressed. Here
+    the plain sibling holds a different trace (a smaller machine), so reading
+    the wrong one is visible in the capacity rather than silent.
+    """
+    gz_path = tmp_path / 'both.swf.gz'
+    with gzip.open(str(gz_path), 'wt', encoding='utf-8') as fh:
+        fh.write(_swf_text(FILTER_ROWS, max_procs=64))
+    _write_swf(tmp_path, FILTER_ROWS, name='both.swf', max_procs=8)
+
+    gz_capacity, _, _ = tdb.parse_swf_jobs(str(gz_path))
+    plain_capacity, _, _ = tdb.parse_swf_jobs(str(tmp_path / 'both.swf'))
+
+    assert gz_capacity == 64, 'the .gz argument was served the plain file'
+    assert plain_capacity == 8, 'the fixture must make the two distinguishable'
+
+
+def test_open_swf_reports_a_missing_gz_path_instead_of_falling_back(tmp_path):
+    """An absent `.gz` argument raises; it does not silently find something else.
+
+    A caller that names a compressed trace and gets a FileNotFoundError can fix
+    its path. One that gets a different file cannot tell that it did.
+    """
+    with pytest.raises(FileNotFoundError):
+        tdb.open_swf(str(tmp_path / 'nothing-here.swf.gz'))
+
+
 def test_open_swf_reports_a_missing_trace_instead_of_returning_empty(tmp_path):
     """Neither file present is an error, never a silently empty job set.
 
@@ -722,3 +791,134 @@ def test_in_memory_rebuild_is_deterministic():
 
     assert first_neg == second_neg
     pd.testing.assert_frame_equal(first, second, check_exact=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# (h) The deleted cached-features branch must stay deleted
+# ─────────────────────────────────────────────────────────────────────────────
+
+# The exact filenames the removed branch read. Both trace keys are planted so a
+# resurrection keyed on either name picks up the trap, and the bare name is
+# planted for a resurrection that drops the key altogether (which it must, now
+# that `train_trace_model` has no trace_key parameter to key on).
+_CACHE_NAMES = ('real_trace_dataset_sdsc.csv', 'real_trace_dataset_lanl.csv',
+                'real_trace_dataset.csv')
+
+# Six jobs on a 16-processor machine, in submit order. The split below puts the
+# first four before it and the last two after, so the pre-split row count (4) is
+# a number the planted cache cannot accidentally match.
+CACHE_TRAP_ROWS = [
+    _swf_row(1, 0,    0,   600, alloc=4,  req_procs=4,  req_time=600, status=1),
+    _swf_row(2, 100,  0,   300, alloc=2,  req_procs=2,  req_time=300, status=1),
+    _swf_row(3, 200,  180, 240, alloc=8,  req_procs=8,  req_time=240, status=1),
+    _swf_row(4, 300,  400, 120, alloc=2,  req_procs=2,  req_time=120, status=1),
+    _swf_row(5, 5000, 0,   600, alloc=4,  req_procs=4,  req_time=600, status=1),
+    _swf_row(6, 5100, 60,  300, alloc=2,  req_procs=2,  req_time=300, status=1),
+]
+CACHE_TRAP_SPLIT = 1000        # jobs 1-4 are pre-split; jobs 5-6 are not
+
+
+def _plant_wrong_cache(directory, n_rows):
+    """Write a syntactically perfect, semantically WRONG cached feature file.
+
+    Same column names `train_trace_model` selects, so a resurrected cached
+    branch would load it without complaint; different row count and absurd
+    feature values, so using it is impossible to miss.
+    """
+    planted = pd.DataFrame({
+        'job_id': range(1000, 1000 + n_rows),
+        'submit_time': [0] * n_rows,              # all "pre-split"
+        'job_procs': [999] * n_rows,
+        'total_free': [-777] * n_rows,
+        'queue_length': [555] * n_rows,
+        'running_jobs': [444] * n_rows,
+        'can_fit_now': [0] * n_rows,
+        'fit_ratio': [9.9] * n_rows,
+        'queue_pressure': [123.4] * n_rows,
+        'free_frac': [-5.0] * n_rows,
+        'neg_free_flag': [1] * n_rows,
+        'run_time': [1] * n_rows,
+        'wait_time': [86400] * n_rows,            # a day of wait, on every row
+        'wait_log_minutes': [7.3] * n_rows,
+        'est_runtime': [1.0] * n_rows,
+    })
+    for name in _CACHE_NAMES:
+        planted.to_csv(os.path.join(str(directory), name), index=False)
+    return planted
+
+
+def _expected_pre_split_rows(capacity, df, split_time):
+    """The in-memory replay's own answer, computed the way the module does."""
+    jobs = [{'job_id': int(r.job_id), 'submit': int(r.submit),
+             'wait': int(r.recorded_wait), 'run': int(r.runtime),
+             'procs': int(r.procs)} for r in df.itertuples(index=False)]
+    replayed, _ = brtd.replay_trace_features(jobs, capacity)
+    return int((replayed['submit_time'] < split_time).sum())
+
+
+def test_train_trace_model_ignores_a_planted_cached_feature_file(tmp_path,
+                                                                 monkeypatch):
+    """INVARIANT: `train_trace_model` reads the trace it was handed, never a
+    file lying around in 02_data.
+
+    An earlier version loaded `02_data/real_trace_dataset_<trace>.csv` whenever
+    that file happened to exist and replayed the trace only otherwise. The file
+    is gitignored and nothing validated it against the current trace or
+    capacity, so a developer holding a stale copy trained a different model --
+    and published different numbers -- from anyone on a fresh clone. The branch
+    was deleted, but nothing FAILED if it came back: the other tests in this
+    module call `replay_trace_features` directly and none of them called
+    `train_trace_model` at all, so a resurrected cache branch left the suite
+    green.
+
+    This test is the trap. A cache file with the right columns and wrong
+    contents sits in the directory the branch used to read, and the model must
+    come out of the six-job trace regardless: same training-row count as the
+    in-memory replay, and predictions identical to a run with no file planted.
+    Row count alone would not be enough -- a cache with a coincidentally equal
+    length would slip through -- so the trained model is compared too.
+    """
+    path = _write_swf(tmp_path, CACHE_TRAP_ROWS, name='cachetrap.swf',
+                      max_procs=16)
+    capacity, df, _ = tdb.parse_swf_jobs(path)
+    assert capacity == 16 and len(df) == len(CACHE_TRAP_ROWS)
+
+    expected_rows = _expected_pre_split_rows(capacity, df, CACHE_TRAP_SPLIT)
+    assert expected_rows == 4, 'the fixture must straddle the split'
+
+    # Baseline: train with an EMPTY data directory, i.e. nothing to be tempted by.
+    clean_dir = tmp_path / 'clean_data'
+    clean_dir.mkdir()
+    monkeypatch.setattr(tdb, 'DATA_DIR', str(clean_dir))
+    monkeypatch.setattr(brtd, 'DATA_DIR', str(clean_dir))
+    clean_model, clean_rows = tdb.train_trace_model(
+        CACHE_TRAP_SPLIT, df, False, capacity)
+    assert clean_rows == expected_rows
+
+    # Now plant the trap and train again from the identical trace.
+    trap_dir = tmp_path / 'trap_data'
+    trap_dir.mkdir()
+    planted = _plant_wrong_cache(trap_dir, n_rows=37)
+    assert len(planted) != expected_rows, 'the trap must be distinguishable'
+    monkeypatch.setattr(tdb, 'DATA_DIR', str(trap_dir))
+    monkeypatch.setattr(brtd, 'DATA_DIR', str(trap_dir))
+    for name in _CACHE_NAMES:
+        assert os.path.exists(os.path.join(str(trap_dir), name))
+
+    trap_model, trap_rows = tdb.train_trace_model(
+        CACHE_TRAP_SPLIT, df, False, capacity)
+
+    assert trap_rows == expected_rows, (
+        f'trained on {trap_rows} rows with a cache file present but '
+        f'{expected_rows} without it: the cached-features branch is back, and '
+        f'the published model depends on whatever CSV is lying around in '
+        f'02_data')
+
+    # And not merely the same COUNT: the same model. A cache whose length
+    # happened to match would still change every prediction.
+    probe = np.array([[4.0, 8.0, 1.0, 1.0, 1.0, 1.0, 0.5, 0.5],
+                      [8.0, 2.0, 3.0, 2.0, 0.0, 0.25, 2.0, 0.125]])
+    np.testing.assert_allclose(trap_model.predict(probe),
+                               clean_model.predict(probe), rtol=1e-9, atol=0,
+                               err_msg='a planted cache file changed the '
+                                       'trained model')

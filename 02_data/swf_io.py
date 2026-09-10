@@ -18,24 +18,46 @@ import io
 import os
 
 
+def _open_gzip_text(path):
+    """Decode a gzip member as text with the archive's tolerant decoding."""
+    return io.TextIOWrapper(gzip.open(path, 'rb'), encoding='utf-8',
+                            errors='replace')
+
+
 def open_swf(path):
-    """Open an SWF trace, transparently falling back to the gzipped copy.
+    """Open an SWF trace, transparently handling the gzipped copy.
 
-    Callers pass the plain `.swf` path; if it is absent the `.swf.gz` beside it
-    is read instead. Decoding is `utf-8` with `errors='replace'` because the
-    archive headers carry occasional non-UTF-8 bytes in site/contact lines, and
-    a trace must not fail to load over a comment the parser skips anyway.
+    Two accepted forms, and the SUFFIX decides which -- never the order the
+    checks happen to be written in:
 
-    Pass the PLAIN name. An existing path is opened as text as given, so a
-    `.swf.gz` argument that exists on disk would be read undecompressed; the
-    `.gz` suffix is handled here only as the fallback for a missing `.swf`.
+      * a `.gz` path is always decompressed, whether or not the plain file
+        exists beside it;
+      * a plain path is read as text when it exists, and otherwise the
+        `<path>.gz` beside it is decompressed.
+
+    The suffix test comes FIRST on purpose. When existence was tested first, an
+    existing `.swf.gz` handed in directly fell into the plain-text branch and
+    was read as UTF-8 with `errors='replace'`, so the caller got a stream of
+    replacement characters instead of a trace. The parser skips anything that
+    does not split into >= 11 numeric-looking fields, so that garbage did not
+    raise: it parsed to ZERO jobs, which reads downstream like an empty trace
+    rather than like a bug.
+
+    Decoding is `utf-8` with `errors='replace'` because the archive headers
+    carry occasional non-UTF-8 bytes in site/contact lines, and a trace must not
+    fail to load over a comment the parser skips anyway.
     """
+    if path.endswith('.gz'):
+        if os.path.exists(path):
+            return _open_gzip_text(path)
+        raise FileNotFoundError(
+            f'{path} does not exist. The Parallel Workloads Archive traces '
+            f'ship with the repository as .swf.gz.')
     if os.path.exists(path):
         return open(path, 'r', encoding='utf-8', errors='replace')
-    gz = path if path.endswith('.gz') else path + '.gz'
+    gz = path + '.gz'
     if os.path.exists(gz):
-        return io.TextIOWrapper(gzip.open(gz, 'rb'), encoding='utf-8',
-                                errors='replace')
+        return _open_gzip_text(gz)
     raise FileNotFoundError(
         f'Neither {path} nor {gz} exists. The Parallel Workloads Archive '
         f'traces ship with the repository as .swf.gz.')

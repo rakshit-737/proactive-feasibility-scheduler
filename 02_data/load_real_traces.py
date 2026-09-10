@@ -2,6 +2,13 @@ import os
 import argparse
 import pandas as pd
 
+# The one gzip-aware SWF reader. This module lives in 02_data beside swf_io, and
+# every script that touches an SWF trace must go through it: when a reader kept
+# its own `open()`, the two disagreed about which forms of the file they could
+# read, and the disagreement only surfaced on a machine where the uncompressed
+# trace happened to exist.
+from swf_io import open_swf
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # This script builds a SYNTHETIC LANL-SCHEMA PROXY, not a real trace.
@@ -29,9 +36,18 @@ def parse_lanl_swf(path):
       parts[7] = requested number of processors, parts[8] = requested time.
     Requested processors (parts[7]) is preferred; the '-1' sentinel falls
     back to allocated processors (parts[4]).
+
+    The file is opened through `swf_io.open_swf`, so BOTH committed forms work:
+    a `.swf.gz` path is decompressed, and a plain `.swf` path falls back to the
+    `.swf.gz` beside it. The previous bare `open(..., errors='ignore')` here
+    read a gzip member as text and produced an empty DataFrame rather than an
+    error -- an unreadable trace that looked like an empty one. Decoding is
+    `errors='replace'` (swf_io's choice, not 'ignore'): the archive's header
+    comments carry occasional non-UTF-8 bytes, and every reader in this
+    repository must mangle them the same way.
     """
     rows = []
-    with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+    with open_swf(path) as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith(';'):
@@ -81,9 +97,15 @@ def main():
     args = parser.parse_args()
 
     if args.input:
-        if not os.path.exists(args.input):
-            raise SystemExit(f'--input {args.input} does not exist')
-        df = parse_lanl_swf(args.input)
+        # No `os.path.exists` pre-check: open_swf decides what "present" means
+        # (a plain `.swf` is satisfied by the `.swf.gz` beside it), and a second
+        # existence rule here would reject an input the reader can actually
+        # open. Its FileNotFoundError names both candidate paths; it is turned
+        # into a clean exit rather than a traceback.
+        try:
+            df = parse_lanl_swf(args.input)
+        except FileNotFoundError as exc:
+            raise SystemExit(f'--input {args.input}: {exc}') from None
         source = f'SWF log {os.path.basename(args.input)}'
     else:
         df = build_fallback_trace()
