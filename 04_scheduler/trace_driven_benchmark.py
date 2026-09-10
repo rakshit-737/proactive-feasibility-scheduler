@@ -85,8 +85,6 @@ Usage:
 """
 
 import argparse
-import gzip
-import io
 import os
 import sys
 
@@ -100,8 +98,18 @@ from xgboost import XGBRegressor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 02_data holds the trace reader and the feature replay this module shares with
+# the dataset builder; the numbered directories are not importable packages, so
+# they go on sys.path exactly as the two lines above do it.
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '02_data'))
 from vizstyle import (figure, finish, save_both, bar_ends, color_of,  # noqa: E402
                       label_of, PALETTE)
+# Re-exported under its original name: existing callers and tests import
+# `open_swf` from this module, and the implementation must not be duplicated
+# here or the two readers can drift apart.
+from swf_io import open_swf  # noqa: E402,F401
+from build_real_trace_datasets import replay_trace_features  # noqa: E402
 
 from sjf_scheduler import order_queue as order_sjf, order_queue_estimated as order_sjf_est
 from hrrn_scheduler import order_queue_estimated as order_hrrn_est
@@ -122,12 +130,10 @@ os.makedirs(OUT_DIR, exist_ok=True)
 TRACES = {
     'sdsc': {
         'swf': 'SDSC-SP2-1998-4.2-cln.swf',
-        'features_csv': 'real_trace_dataset_sdsc.csv',
         'label': 'SDSC SP2 (1998)',
     },
     'lanl': {
         'swf': 'LANL-CM5-1994-4.1-cln.swf',
-        'features_csv': 'real_trace_dataset_lanl.csv',
         'label': 'LANL CM-5 (1994)',
     },
 }
@@ -154,24 +160,6 @@ EST_FEATURE = 'est_runtime'
 # ─────────────────────────────────────────────────────────────────────────────
 
 KEEP_STATUS = (0, 1, -1)   # completed / failed / unknown; drop cancelled+partial
-
-
-def open_swf(path):
-    """Open an SWF trace, transparently falling back to the gzipped copy.
-
-    Only the `.swf.gz` files are committed (`.gitignore` excludes `*.swf`), so
-    a fresh clone has the compressed trace and not the expanded one. Reading
-    either keeps the pipeline runnable straight after `git clone`.
-    """
-    if os.path.exists(path):
-        return open(path, 'r', encoding='utf-8', errors='replace')
-    gz = path if path.endswith('.gz') else path + '.gz'
-    if os.path.exists(gz):
-        return io.TextIOWrapper(gzip.open(gz, 'rb'), encoding='utf-8',
-                                errors='replace')
-    raise FileNotFoundError(
-        f'Neither {path} nor {gz} exists. The Parallel Workloads Archive '
-        f'traces ship with the repository as .swf.gz.')
 
 
 def parse_swf_jobs(path):
@@ -580,7 +568,7 @@ def simulate_srpt(jobs_in, capacity, window_meta, overhead=PREEMPT_OVERHEAD):
 # Per-trace model training (chronological, no leakage)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def train_trace_model(trace_key, split_time, swf_df, with_est, capacity):
+def train_trace_model(split_time, swf_df, with_est, capacity):
     """Retrain the wait-time model on the trace's own EARLY period.
 
     Features come from build_real_trace_datasets.py, which reconstructs the
@@ -592,20 +580,27 @@ def train_trace_model(trace_key, split_time, swf_df, with_est, capacity):
     Target is log1p(wait seconds): the wait distribution is heavy-tailed, and
     the scheduler only consumes the RANKING, which any monotone target
     preserves.
+
+    There is deliberately NO `trace_key` parameter. It survived the removal of
+    the cached-CSV branch below as a parameter nothing read, which made passing
+    the wrong trace name a silent no-op: a caller could train the SDSC model
+    while believing it had asked for LANL and get a plausible model either way.
+    The trace now enters this function only as `swf_df`, so there is one way to
+    say which trace is being trained on and it is the data itself.
     """
-    path = os.path.join(DATA_DIR, TRACES[trace_key]['features_csv'])
-    if os.path.exists(path):
-        df = pd.read_csv(path)
-    else:
-        # The reconstructed-feature CSVs are gitignored (they are large and
-        # derived), so rebuild them in memory from the trace itself using the
-        # same replay used to produce them. Keeps a fresh clone runnable.
-        sys.path.insert(0, os.path.join(PROJECT_ROOT, '02_data'))
-        from build_real_trace_datasets import replay_trace_features
-        jobs = [{'job_id': int(r.job_id), 'submit': int(r.submit),
-                 'wait': int(r.recorded_wait), 'run': int(r.runtime),
-                 'procs': int(r.procs)} for r in swf_df.itertuples(index=False)]
-        df, _ = replay_trace_features(jobs, capacity)
+    # Features are ALWAYS rebuilt in memory from the trace that was just parsed.
+    # An earlier version read 02_data/real_trace_dataset_<trace>.csv whenever
+    # that file happened to exist and only replayed otherwise. That file is
+    # gitignored, and nothing checked it against the current trace or capacity,
+    # so a developer holding a stale cache silently trained a different model --
+    # and published different numbers -- from anyone on a fresh clone. The two
+    # paths were never proved identical, so the cached one is gone.
+    # 02_data/build_real_trace_datasets.py remains the producer of the on-disk
+    # datasets, which 02_data/real_trace_validation.py consumes.
+    jobs = [{'job_id': int(r.job_id), 'submit': int(r.submit),
+             'wait': int(r.recorded_wait), 'run': int(r.runtime),
+             'procs': int(r.procs)} for r in swf_df.itertuples(index=False)]
+    df, _ = replay_trace_features(jobs, capacity)
     df = df[df['submit_time'] < split_time]
     if with_est:
         df = df.merge(swf_df[['job_id', 'est_runtime']], on='job_id', how='inner')
@@ -699,8 +694,8 @@ def run_trace(trace_key, n_windows, warmup_days, measure_days, skip_consbf):
           f"{(split_time - t_min)/DAY:.0f}, evaluate after")
 
     print('Retraining wait model on the trace\'s own early period ...')
-    model_base, n_train = train_trace_model(trace_key, split_time, df, False, capacity)
-    model_est, _ = train_trace_model(trace_key, split_time, df, True, capacity)
+    model_base, n_train = train_trace_model(split_time, df, False, capacity)
+    model_est, _ = train_trace_model(split_time, df, True, capacity)
     print(f'  trained on {n_train} pre-split jobs '
           f'({len(BASE_FEATURES)} features; +1 with user estimate)')
 

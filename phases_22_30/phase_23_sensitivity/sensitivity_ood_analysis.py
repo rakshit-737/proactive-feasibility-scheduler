@@ -166,8 +166,8 @@ def load_baseline_data():
     raise FileNotFoundError(
         "No benchmark artifact found among: "
         + ", ".join(DATA_CANDIDATES)
-        + ". Run the Phase 09 benchmark (05_results/benchmark_and_plot.py) first; "
-        "Phase 23 refuses to fabricate baseline numbers."
+        + ". Run 04_scheduler/benchmark_statistical.py first (step 17 of "
+        "run_all_experiments.sh); Phase 23 refuses to fabricate baseline numbers."
     )
 
 

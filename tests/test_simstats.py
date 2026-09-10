@@ -21,11 +21,15 @@ path set up in conftest.py (`import simstats`) and use tiny hand-checkable input
 conftest.py puts 04_scheduler on sys.path, so the bare import below works.
 """
 
+import re
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
 from scipy import stats
 
+import simstats
 from simstats import (
     equivalence_table,
     gini,
@@ -330,11 +334,23 @@ def test_tost_underpowered_case_is_neither_different_nor_equivalent():
 # ---------------------------------------------------------------------------
 # These are the table-builders that turn a runs DataFrame into the published
 # significance and equivalence CSVs. The load-bearing invariant is the PAIRING:
-# both helpers pair observations by the `unit` column (run / window), and both
-# sort_values(unit) before pairing. If someone dropped that sort, results would
-# depend on incoming row order — a silent, data-dependent corruption. The tests
-# below build a tiny synthetic runs frame, confirm the output shape/columns, and
-# prove that shuffling the input rows leaves the output byte-for-byte identical.
+# both helpers match observations by their `unit` LABEL (run / window), never by
+# row position, and refuse to pair at all when the two schedulers do not carry
+# the same label set. If the pairing followed row position, results would depend
+# on incoming row order — a silent, data-dependent corruption — and two frames
+# with equal counts but different labels would yield a confident p-value for a
+# comparison that was never paired. The tests below build a tiny synthetic runs
+# frame, confirm the output shape/columns, prove that shuffling the input rows
+# leaves the output byte-for-byte identical, and pin every refusal case.
+#
+# One caution about what proves what. Sorting by `unit` before pairing is NOT
+# the label-pairing property: the pre-repair code sorted as well, so every
+# shuffle-invariance test here passes against it too. Those tests guard the
+# alignment step, nothing more. The tests that actually discriminate are the
+# refusals — disjoint labels, offset labels, unequal counts, duplicate labels —
+# because that is where sorted positional pairing returns a number and label
+# pairing declines to. Each test below says in its docstring which of the two it
+# is doing.
 
 
 def _synthetic_runs(seed=101, n_runs=8):
@@ -470,15 +486,52 @@ def test_pairwise_significance_holm_is_applied_within_each_reference_family():
         assert fam['wilcoxon_p_holm'].to_numpy() == pytest.approx(expected_w)
 
 
-def test_equivalence_table_silently_skips_mismatched_length_pairs():
-    """DOCUMENTS CURRENT BEHAVIOUR (not an endorsement).
+def test_disjoint_unit_labels_raise_from_both_helpers():
+    """Equal counts but disjoint labels is not a paired comparison — it must raise.
 
-    When the two schedulers of a pair have different numbers of observations,
-    `equivalence_table` cannot pair them and drops the pair entirely — with no
-    warning and no row in the output. A reader of the resulting CSV sees an
-    absent row, not an error. This is pinned so the silence is at least
-    deliberate and visible: if the behaviour ever becomes "raise" or "emit a
-    NaN row", this test fails and forces the change to be conscious.
+    PROACTIVE has runs 0-3 and SMALLEST has runs 10-13: the same NUMBER of
+    observations, no shared unit at all. Pairing by position would hand back a
+    fully populated, confident p-value for a comparison that was never paired
+    (the trace benchmark dropping a window for one policy, or two runs frames
+    concatenated with offset run ids, produce exactly this shape). Both helpers
+    must refuse, naming the offending labels.
+    """
+    rows = []
+    for i, r in enumerate([0, 1, 2, 3]):
+        rows.append({'scheduler': 'PROACTIVE', 'run': r,
+                     'mean_wait': 10.0 + 0.7 * i})
+    for i, r in enumerate([10, 11, 12, 13]):   # same count, DISJOINT unit labels
+        rows.append({'scheduler': 'SMALLEST', 'run': r,
+                     'mean_wait': 13.0 + 1.3 * i})
+    df = pd.DataFrame(rows)
+
+    with pytest.raises(ValueError, match='do not share the same run labels'):
+        pairwise_significance(df, references=('PROACTIVE',), metric='mean_wait',
+                              unit='run')
+
+    with pytest.raises(ValueError, match='do not share the same run labels'):
+        equivalence_table(df, [('SMALLEST', 'PROACTIVE')], metric='mean_wait',
+                          unit='run')
+
+
+def test_mismatched_counts_raise_but_an_absent_scheduler_is_skipped():
+    """Unequal counts raise; a scheduler that is entirely absent is still skipped.
+
+    Unequal counts imply unequal label sets, so there is no honest pairing and
+    both helpers must say so rather than dropping the pair from the CSV (the old
+    `equivalence_table` behaviour) or dying inside numpy (the old
+    `pairwise_significance` behaviour).
+
+    A scheduler that does not appear in the frame AT ALL is different in kind and
+    stays a skip in `equivalence_table`: `pairs` is a fixed list of candidate
+    comparisons, so one that does not apply to the frame in hand is omitted
+    rather than aborting the whole table. That pair yields no row, and the empty
+    frame still carries the full schema for the concat downstream. (No benchmark
+    in this repo produces such a frame today — both callers build `pairs` from
+    policy lists that always run in full — so this branch is deliberate
+    tolerance, not a workaround for any CLI flag.) An absent *reference* in
+    `pairwise_significance` is the opposite case and raises; that is pinned in
+    `test_absent_reference_raises_naming_the_reference` below.
     """
     rows = []
     for r in range(6):
@@ -487,81 +540,301 @@ def test_equivalence_table_silently_skips_mismatched_length_pairs():
         rows.append({'scheduler': 'SMALLEST', 'run': r, 'mean_wait': 12.0 + r})
     df = pd.DataFrame(rows)
 
-    out = equivalence_table(df, [('SMALLEST', 'PROACTIVE')], metric='mean_wait',
-                            unit='run')
-    assert len(out) == 0                       # the pair vanished silently
-    assert 'p_tost' in out.columns             # schema still intact
+    with pytest.raises(ValueError, match='do not share the same run labels'):
+        equivalence_table(df, [('SMALLEST', 'PROACTIVE')], metric='mean_wait',
+                          unit='run')
 
-
-def test_pairwise_significance_raises_on_mismatched_or_missing_reference():
-    """DOCUMENTS CURRENT BEHAVIOUR: it raises rather than skipping.
-
-    Unlike `equivalence_table` (which guards with a length check and skips),
-    `pairwise_significance` has no guard: an unequal number of observations, or
-    a reference name absent from the frame, produces a numpy broadcast
-    ValueError. Failing loudly is preferable to a silent wrong answer, so this
-    is pinned as the contract — and it flags the inconsistency between the two
-    helpers for anyone extending them.
-
-    Note this makes the default `references=('PROACTIVE', 'FIFO')` a landmine
-    for any runs frame that lacks a scheduler literally named 'FIFO'.
-    """
-    rows = []
-    for r in range(6):
-        rows.append({'scheduler': 'PROACTIVE', 'run': r, 'mean_wait': 10.0 + r})
-    for r in range(4):
-        rows.append({'scheduler': 'SMALLEST', 'run': r, 'mean_wait': 12.0 + r})
-    df = pd.DataFrame(rows)
-
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match='do not share the same run labels'):
         pairwise_significance(df, references=('PROACTIVE',), metric='mean_wait',
-                             unit='run')
+                              unit='run')
 
-    # A reference name that does not appear at all: empty array, same failure.
-    with pytest.raises(ValueError):
-        pairwise_significance(df[df['scheduler'] == 'SMALLEST'],
-                             references=('PROACTIVE',), metric='mean_wait',
-                             unit='run')
+    # An absent scheduler in an equivalence pair is skipped, not an error.
+    out = equivalence_table(df, [('NEVER_RAN', 'PROACTIVE')], metric='mean_wait',
+                            unit='run')
+    assert len(out) == 0
+    expected_cols = {'scheduler_a', 'scheduler_b', 'metric', 'n', 'mean_a',
+                     'mean_b', 'pct_diff', 'margin_frac', 'margin', 'mean_diff',
+                     'ci_low', 'ci_high', 'p_lower', 'p_upper', 'p_tost',
+                     'equivalent'}
+    assert expected_cols.issubset(set(out.columns))
 
 
-def test_pairing_is_positional_and_unit_values_are_never_compared():
-    """DOCUMENTS A GENUINE LATENT DEFECT — see the summary, do not "fix" here.
+def test_absent_reference_raises_naming_the_reference():
+    """A reference that is nowhere in the frame must be named as the problem.
 
-    Both helpers sort each scheduler's rows by `unit` and then pair them BY
-    POSITION. They never check that the two schedulers actually share the same
-    set of unit labels — only that the counts match (and `pairwise_significance`
-    does not even check that).
+    PROPERTY PINNED: `pairwise_significance` reports a missing REFERENCE as a
+    missing reference, and still raises.
 
-    Consequence: if two schedulers have the same NUMBER of observations but
-    different unit labels — e.g. the trace-driven benchmark drops a window for
-    one policy and adds a different one, or two runs frames are concatenated
-    with offset run ids — the "paired" t-test / Wilcoxon / TOST silently pairs
-    unrelated observations and reports a confident p-value for a comparison
-    that was never paired at all. There is no warning.
+    Every family hangs off its reference, so a reference with no rows at all is
+    a caller error — a typo, or a frame already filtered down to one policy —
+    not a property of the data. It used to raise only indirectly, via the
+    label-set check, as "SMALLEST and PROACTIVE do not share the same run
+    labels: only in SMALLEST: [0, 1, 2, 3], only in PROACTIVE: []", which reads
+    as two present schedulers disagreeing about their runs and sends the reader
+    hunting through the runs frame for dropped runs that were never there. It
+    must also keep RAISING rather than skipping the family: a significance CSV
+    that quietly lost a whole reference family would be read as "these
+    comparisons were not significant" instead of "these comparisons never ran".
+    """
+    df = pd.DataFrame([
+        {'scheduler': 'SMALLEST', 'run': r, 'mean_wait': 12.0 + r}
+        for r in range(4)
+    ])
 
-    Below, PROACTIVE has runs 0-3 and SMALLEST has runs 10-13: entirely
-    disjoint units. The correct answer is "these cannot be paired". The current
-    answer is a fully populated result row. This test asserts the *current*
-    (wrong) behaviour so the defect is visible and any future guard shows up as
-    a deliberate, reviewed change.
+    with pytest.raises(ValueError) as exc:
+        pairwise_significance(df, references=('PROACTIVE',),
+                              metric='mean_wait', unit='run')
+    msg = str(exc.value)
+    assert "reference scheduler 'PROACTIVE' is not present" in msg
+    assert 'SMALLEST' in msg              # what IS in the frame is reported
+    # ...and the misleading label-mismatch phrasing is gone.
+    assert 'do not share the same run labels' not in msg
+
+    # With one reference present and one absent, the ABSENT one is what raises,
+    # and it is the one named — the present family does not mask it.
+    with pytest.raises(ValueError, match="reference scheduler 'FIFO' is not present"):
+        pairwise_significance(df, references=('SMALLEST', 'FIFO'),
+                              metric='mean_wait', unit='run')
+
+
+def test_wrong_unit_is_reported_even_when_every_pair_would_be_skipped():
+    """A wrong pairing column must surface before any pair can be skipped.
+
+    PROPERTY PINNED: `unit` is validated once, up front, not lazily inside the
+    per-pair path.
+
+    The absent-scheduler skip used to run FIRST, so a call that got BOTH things
+    wrong — `unit='run'` against a window-indexed frame AND a scheduler name the
+    frame does not contain — returned a clean, empty table and reported nothing.
+    That silence is the danger: an empty equivalence table is exactly what a
+    caller expects for a comparison that does not apply, so the wrong pairing
+    column looked like a legitimate skip and the requested pair vanished from
+    the CSV without a word.
+    """
+    df = pd.DataFrame([
+        {'scheduler': 'PROACTIVE', 'window': 0, 'mean_wait': 10.0},
+        {'scheduler': 'PROACTIVE', 'window': 1, 'mean_wait': 11.0},
+        {'scheduler': 'SMALLEST', 'window': 0, 'mean_wait': 12.0},
+        {'scheduler': 'SMALLEST', 'window': 1, 'mean_wait': 13.0},
+    ])
+
+    # Both wrong at once: 'run' is not a column here AND NEVER_RAN is absent.
+    with pytest.raises(ValueError, match="pairing column 'run' is not present"):
+        equivalence_table(df, [('NEVER_RAN', 'PROACTIVE')], metric='mean_wait',
+                          unit='run')
+
+    # Every pair skippable, so the loop body is entirely dead code.
+    with pytest.raises(ValueError, match="pairing column 'run' is not present"):
+        equivalence_table(df, [('NEVER_RAN', 'ALSO_ABSENT')],
+                          metric='mean_wait', unit='run')
+
+    # No pairs at all: nothing to skip, and still the column is checked.
+    with pytest.raises(ValueError, match="pairing column 'run' is not present"):
+        equivalence_table(df, [], metric='mean_wait', unit='run')
+
+    # Same for pairwise_significance: a frame holding only the reference has an
+    # empty comparison family, so a lazily-validated `unit` is never reached.
+    with pytest.raises(ValueError, match="pairing column 'run' is not present"):
+        pairwise_significance(df[df['scheduler'] == 'PROACTIVE'],
+                              references=('PROACTIVE',), metric='mean_wait',
+                              unit='run')
+
+    # The correct pairing column on the same frame still produces a table, so
+    # the check rejects a wrong `unit`, not this frame.
+    out = equivalence_table(df, [('SMALLEST', 'PROACTIVE')],
+                            metric='mean_wait', unit='window')
+    assert len(out) == 1
+
+
+def test_duplicate_unit_labels_raise():
+    """A repeated unit label makes the pairing ambiguous, so it must raise.
+
+    Two rows claiming run 1 for the same scheduler means two observations of one
+    unit. Positional pairing would keep whichever landed first after the sort and
+    silently discard the other; label-based pairing cannot choose either, so the
+    only correct answer is to refuse.
     """
     rows = []
-    for i, r in enumerate([0, 1, 2, 3]):
-        rows.append({'scheduler': 'PROACTIVE', 'run': r,
-                     'mean_wait': 10.0 + 0.7 * i})
-    for i, r in enumerate([10, 11, 12, 13]):   # DISJOINT unit labels
-        rows.append({'scheduler': 'SMALLEST', 'run': r,
-                     'mean_wait': 13.0 + 1.3 * i})
+    for r in [0, 1, 1, 2]:                       # run 1 appears twice
+        rows.append({'scheduler': 'SMALLEST', 'run': r, 'mean_wait': 12.0 + r})
+    for r in [0, 1, 2]:
+        rows.append({'scheduler': 'PROACTIVE', 'run': r, 'mean_wait': 10.0 + r})
     df = pd.DataFrame(rows)
 
-    sig = pairwise_significance(df, references=('PROACTIVE',),
-                               metric='mean_wait', unit='run')
-    # BUG: a paired test is reported even though no unit is shared.
-    assert len(sig) == 1
-    assert np.isfinite(sig['ttest_p'].iloc[0])
+    with pytest.raises(ValueError, match='duplicate run labels'):
+        equivalence_table(df, [('SMALLEST', 'PROACTIVE')], metric='mean_wait',
+                          unit='run')
 
-    eq = equivalence_table(df, [('SMALLEST', 'PROACTIVE')], metric='mean_wait',
-                           unit='run')
-    # BUG: TOST reports n = 4 "pairs" that do not correspond to common units.
-    assert len(eq) == 1
-    assert int(eq['n'].iloc[0]) == 4
+    with pytest.raises(ValueError, match='duplicate run labels'):
+        pairwise_significance(df, references=('PROACTIVE',), metric='mean_wait',
+                              unit='run')
+
+
+def test_missing_unit_column_raises_a_named_error():
+    """Asking to pair on a column that is not there must name the column.
+
+    Calling the trace helper with the synthetic `unit='run'` (or vice versa) is
+    an easy mistake; a KeyError deep in pandas would send the reader hunting.
+    The error names the missing pairing column and lists what is available.
+    """
+    df = pd.DataFrame([
+        {'scheduler': 'PROACTIVE', 'window': 0, 'mean_wait': 10.0},
+        {'scheduler': 'SMALLEST', 'window': 0, 'mean_wait': 12.0},
+    ])
+
+    with pytest.raises(ValueError, match="pairing column 'run' is not present"):
+        equivalence_table(df, [('SMALLEST', 'PROACTIVE')], metric='mean_wait',
+                          unit='run')
+
+    with pytest.raises(ValueError, match="pairing column 'run' is not present"):
+        pairwise_significance(df, references=('PROACTIVE',), metric='mean_wait',
+                              unit='run')
+
+
+def test_offset_labels_refuse_the_answer_positional_pairing_would_have_given():
+    """The discriminating test: where positional and label pairing DISAGREE.
+
+    PROPERTY PINNED: pairing is by `unit` LABEL, not by position within each
+    scheduler's `unit`-sorted rows.
+
+    Sorting by `unit` before pairing is not the fix and never was — the
+    pre-repair code sorted too. The two schemes part company exactly when the
+    label SETS differ: sorted positional pairing happily lines up row k of one
+    scheduler with row k of the other whatever the labels say, while label
+    pairing refuses. So this frame is built to make them disagree:
+
+        SMALLEST : runs 0, 1, 2, 3   waits 12.0, 11.0, 15.0,  9.0
+        PROACTIVE: runs 0, 1, 2, 9   waits 10.0, 10.5, 11.0, 11.5
+
+    Equal counts, three shared runs, and one run each side that the other does
+    not have — the shape produced by a trace window that failed for one policy
+    only, or by two runs frames concatenated with offset run ids. Sorted
+    positional pairing pairs SMALLEST run 3 with PROACTIVE run 9 and reports
+    mean_diff = +1.00, a confident number for a comparison nobody made; the
+    honest pairing over the three genuinely shared runs would be +2.17. Neither
+    is published here: label pairing raises, and names the two odd labels.
+    """
+    a_vals = [12.0, 11.0, 15.0, 9.0]                 # SMALLEST, runs 0,1,2,3
+    b_vals = [10.0, 10.5, 11.0, 11.5]                # PROACTIVE, runs 0,1,2,9
+    rows = [{'scheduler': 'SMALLEST', 'run': r, 'mean_wait': v}
+            for r, v in zip([0, 1, 2, 3], a_vals)]
+    rows += [{'scheduler': 'PROACTIVE', 'run': r, 'mean_wait': v}
+             for r, v in zip([0, 1, 2, 9], b_vals)]
+    df = pd.DataFrame(rows)
+
+    # The two numbers the docstring names, computed rather than remembered, so
+    # this test cannot drift away from the fixture it describes.
+    positional_mean_diff = float(np.mean(np.array(a_vals) - np.array(b_vals)))
+    shared_mean_diff = float(np.mean(np.array(a_vals[:3]) - np.array(b_vals[:3])))
+    assert positional_mean_diff == pytest.approx(1.00)
+    assert shared_mean_diff == pytest.approx(13.0 / 6.0)     # 2.1666...
+    assert positional_mean_diff != pytest.approx(shared_mean_diff)
+
+    with pytest.raises(ValueError) as exc:
+        equivalence_table(df, [('SMALLEST', 'PROACTIVE')], metric='mean_wait',
+                          unit='run')
+    msg = str(exc.value)
+    assert 'do not share the same run labels' in msg
+    assert 'only in SMALLEST: [3]' in msg
+    assert 'only in PROACTIVE: [9]' in msg
+
+    # Same frame, same refusal, from the significance table.
+    with pytest.raises(ValueError, match='do not share the same run labels'):
+        pairwise_significance(df, references=('PROACTIVE',), metric='mean_wait',
+                              unit='run')
+
+    # Give PROACTIVE run 3 instead of run 9 and the labels agree, so the same
+    # call now succeeds and reports the honest paired difference. This is what
+    # makes the refusal above a statement about the LABELS and not about the
+    # shape or the values: only the label moved.
+    fixed = df.copy()
+    fixed.loc[fixed['run'] == 9, 'run'] = 3
+    out = equivalence_table(fixed, [('SMALLEST', 'PROACTIVE')],
+                            metric='mean_wait', unit='run')
+    assert int(out['n'].iloc[0]) == 4
+    assert out['mean_diff'].iloc[0] == pytest.approx(positional_mean_diff)
+
+
+def test_row_permutation_leaves_the_paired_result_identical():
+    """A row permutation must leave the equivalence table byte-for-byte identical.
+
+    PROPERTY PINNED: the output is a function of the data, not of the order the
+    rows arrive in — the guard against someone dropping the alignment step, so
+    that a shuffled frame would pair run 4 with run 1.
+
+    What this test does NOT pin, stated plainly because it once was mistaken for
+    evidence: the pre-repair positional code also sorted by `unit` before
+    pairing, so it passes this test unchanged. Invariance to row order is
+    necessary, not sufficient. The property that actually separates label
+    pairing from positional pairing is pinned by
+    `test_offset_labels_refuse_the_answer_positional_pairing_would_have_given`
+    above, where the two schemes give different answers.
+
+    The hand-computed `mean_diff` additionally pins that run r is paired with
+    run r on both the tidy and the permuted frame.
+    """
+    a_vals = [12.0, 11.0, 15.0, 9.0, 14.0, 13.0]     # SMALLEST, runs 0..5
+    b_vals = [10.0, 10.5, 11.0, 11.5, 12.0, 12.5]    # PROACTIVE, runs 0..5
+    rows = []
+    for r, v in enumerate(a_vals):
+        rows.append({'scheduler': 'SMALLEST', 'run': r, 'mean_wait': v})
+    for r, v in enumerate(b_vals):
+        rows.append({'scheduler': 'PROACTIVE', 'run': r, 'mean_wait': v})
+    tidy = pd.DataFrame(rows)
+    permuted = tidy.sample(frac=1.0, random_state=31337).reset_index(drop=True)
+
+    pairs = [('SMALLEST', 'PROACTIVE')]
+    out_tidy = equivalence_table(tidy, pairs, metric='mean_wait', unit='run')
+    out_perm = equivalence_table(permuted, pairs, metric='mean_wait', unit='run')
+
+    pd.testing.assert_frame_equal(out_tidy, out_perm)
+
+    expected_mean_diff = float((np.array(a_vals) - np.array(b_vals)).mean())
+    assert int(out_tidy['n'].iloc[0]) == 6
+    assert out_tidy['mean_diff'].iloc[0] == pytest.approx(expected_mean_diff)
+    assert out_perm['mean_diff'].iloc[0] == pytest.approx(expected_mean_diff)
+
+
+# ---------------------------------------------------------------------------
+# (e) the comments themselves
+# ---------------------------------------------------------------------------
+
+
+def test_simstats_comments_cite_only_flags_the_benchmarks_really_have():
+    """A comment in simstats.py may not invent a CLI option that does not exist.
+
+    PROPERTY PINNED: every '--flag' token written anywhere in simstats.py is a
+    flag some benchmark that imports simstats actually registers with
+    `add_argument`.
+
+    `equivalence_table` used to justify its absent-scheduler skip with "the
+    trace benchmark's EQUIV_PAIRS names policies a --policies subset may not
+    have run". No --policies option exists in trace_driven_benchmark.py or
+    anywhere else in this repo -- the mechanism was invented to make the
+    behaviour look forced. A fabricated justification is worse than none: the
+    next reader takes it for a constraint and preserves the behaviour for a
+    reason that was never true. The surviving citations (--smoke, --skip-consbf)
+    are real, and this test keeps them honest.
+
+    Vacuous only if simstats.py cites no flag at all, which is the one state
+    that needs no checking.
+    """
+    src_dir = Path(simstats.__file__).resolve().parent
+    simstats_src = (src_dir / 'simstats.py').read_text(encoding='utf-8')
+
+    benchmarks = [src_dir / 'trace_driven_benchmark.py',
+                  src_dir / 'multi_scheduler_benchmark.py']
+    for path in benchmarks:
+        assert path.exists(), f'benchmark module not found where expected: {path}'
+
+    registered = set()
+    for path in benchmarks:
+        registered.update(re.findall(r"add_argument\(\s*'(--[A-Za-z0-9_-]+)'",
+                                     path.read_text(encoding='utf-8')))
+
+    cited = set(re.findall(r'--[A-Za-z][A-Za-z0-9_-]*', simstats_src))
+    unknown = sorted(cited - registered)
+    assert not unknown, (
+        f'simstats.py cites CLI flags that no benchmark defines: {unknown}; '
+        f'flags actually registered: {sorted(registered)}'
+    )

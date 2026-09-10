@@ -1,4 +1,4 @@
-# Methodology (Phases 01–21 + v3.3/v3.4 baselines)
+# Methodology (Phases 01–21 + v3.3/v3.4 baselines; current as of v3.6)
 
 ## Core system
 - Discrete-time cluster simulation with heterogeneous queue states (synthetic study).
@@ -22,32 +22,46 @@ therefore `g_S(size)`, and the ranking is a permutation of the size order.
 measures, per instant: which features actually vary across the queue; whether two
 equally-sized jobs ever receive different scores; Kendall τ against the size order;
 the fraction of instants whose order is identical to smallest-first and to arrival
-order; and the recovered size→priority table with its monotonicity. The matching
+order; the fraction in which *every* queued job receives an identical score
+(`pct_all_scores_tied`, measured directly as of v3.6); and the recovered
+size→priority table with its monotonicity. The arrival-order fraction and the
+all-tied fraction are distinct quantities and must be reported as such: an
+all-tied instant is necessarily order-identical to arrival, but not the
+converse, so `pct_order_identical_to_arrival` only
+*upper-bounds* the all-tied fraction. Before v3.6 the two were conflated and the
+arrival-order figure was reported as if it were the all-tied one. The matching
 control policy is `04_scheduler/size_scheduler.py` (`SMALLEST` / `SMALLEST_FIRST`):
 sort by requested size, no model.
 
 ## Enhancements
 1. **Ablation**: remove each of 12 features and measure R² drop.
 2. **Fairness**: evaluate max wait, Gini index, completion by size, starvation count.
-3. **Scheduler baselines (14 as of v3.4)**: FCFS/first-fit (historical 'FIFO' key), strict head-blocking FIFO, SJF with true runtimes (oracle), SJF with f-model user estimates (est = runtime·f, f~U(1,C), C=5; Mu'alem & Feitelson 2001) and modal estimates (menu rounding, Tsafrir & Feitelson 2005), Priority+aging, HRRN, **SMALLEST (sort by requested size — the ML-free control implied by the degeneracy analysis)**, canonical two-condition EASY backfill (oracle and estimated runtimes), conservative backfill (per-job reservations on a capacity profile), preemptive SRPT (1-tick checkpoint penalty per preemption), Proactive (XGBoost), NN (MLP), predicted-wait EASY hybrid. Unified wait definition: wait = turnaround − true runtime (identical to start − arrival for non-preemptive policies; charges preemptive requeue time and checkpoint overhead as waiting). A runtime-estimate-quality sweep (C ∈ {1,2,3,5,10} + modal) isolates how much of classical schedulers' advantage survives realistic estimate error.
+3. **Scheduler baselines (14 as of v3.4)**: FCFS/first-fit (historical 'FIFO' key), strict head-blocking FIFO, SJF with true runtimes (oracle), SJF with f-model user estimates (est = runtime·f, f~U(1,C), C=5; Mu'alem & Feitelson 2001) and modal estimates (menu rounding, Tsafrir & Feitelson 2005), STATIC_PRIORITY (relabelled in v3.6 — the old "Priority + aging" name was false: the key expands to `(priority_score + 0.03·arrival_time) − 0.03·current_time`, and the `current_time` term is a common additive shift at any one instant, so it cancels pairwise, the induced order is time-invariant, and a waiting job can never overtake; its value as a baseline is precisely that it does not age, and no anti-starvation property may be claimed for it), HRRN (this repository's genuinely aging baseline), **SMALLEST (sort by requested size — the ML-free control implied by the degeneracy analysis)**, canonical two-condition EASY backfill (oracle and estimated runtimes), conservative backfill (per-job reservations on a capacity profile), preemptive SRPT (1-tick checkpoint penalty per preemption), Proactive (XGBoost), NN (MLP), predicted-wait EASY hybrid. Unified wait definition: wait = turnaround − true runtime (identical to start − arrival for non-preemptive policies; charges preemptive requeue time and checkpoint overhead as waiting). A runtime-estimate-quality sweep (C ∈ {1,2,3,5,10} + modal) isolates how much of classical schedulers' advantage survives realistic estimate error.
 4. **SHAP**: summary, dependence, and force plots.
-5. **Real traces (validated as of v3.2; used for scheduling as of v3.4)**: two cleaned Parallel Workloads Archive traces are committed — LANL CM-5 1994 (1024 procs, 122,060 kept jobs) and SDSC SP2 1998 (128 procs, 43,117 kept jobs). `02_data/build_real_trace_datasets.py` reconstructs each job's submit-instant cluster state by replaying the recorded schedule; `02_data/real_trace_validation.py` evaluates prediction quality. **v3.4** adds `04_scheduler/trace_driven_benchmark.py`, which replays the traces through all 12 policies. Key point: SWF field 9 records the user's *requested time*, so the study uses the **real runtime estimates the traces contain** rather than the simulated f-model — real error is both larger and differently shaped (SDSC median 6.9× over-estimate; LANL 36.3% under-estimates, which the over-estimate-only f-model cannot generate). Jobs with missing estimates fall back to the trace median, deliberately *not* the true runtime, so estimate-driven policies get no free oracle. Protocol: chronological 60% train split, 20 evenly spaced windows (3-day warm-up not measured + 7 measured days), windows spaced evenly rather than selected by load.
-6. **Scaling**: 4/8/16/32 nodes (8/32/128/256 GPUs), overhead and inference analysis.
+5. **Real traces (validated as of v3.2; used for scheduling as of v3.4)**: two cleaned Parallel Workloads Archive traces are committed — LANL CM-5 1994 (1024 procs, 122,055 kept jobs) and SDSC SP2 1998 (128 procs, 43,117 kept jobs). `02_data/build_real_trace_datasets.py` reconstructs each job's submit-instant cluster state by replaying the recorded schedule; `02_data/real_trace_validation.py` evaluates prediction quality. **v3.4** adds `04_scheduler/trace_driven_benchmark.py`, which replays the traces through all 12 policies. Key point: SWF field 9 records the user's *requested time*, so the study uses the **real runtime estimates the traces contain** rather than the simulated f-model — real error is both larger and differently shaped (SDSC median 6.9× over-estimate; LANL 36.3% under-estimates, which the over-estimate-only f-model cannot generate). Jobs with missing estimates fall back to the trace median, deliberately *not* the true runtime, so estimate-driven policies get no free oracle. Protocol: chronological 60% train split, 20 evenly spaced windows (3-day warm-up not measured + 7 measured days), windows spaced evenly rather than selected by load.
+6. **Scaling**: 4/8/16/32 nodes (8/32/128/256 GPUs), overhead and inference-latency
+   measurement. Latency and overhead are wall-clock and machine-dependent, so no
+   complexity class is fitted from them; the phase-26 "O(1) / latency is CONSTANT"
+   verdict and every projection past the largest measured cluster were withdrawn in
+   v3.6 (the fit had used four non-monotone timing points, and its classifier's
+   one-sided test labelled a negative exponent constant by fall-through).
 7. **Online learning**: incremental updates on streaming data.
 8. **Concept drift**: rolling MAE trigger for adaptive retraining.
 9. **ROI**: GPU-hour savings, energy savings, and annual cost-benefit metrics.
 10. **Reproducibility and dashboard**: one-command pipeline plus interactive explorers.
 
 ## Statistical treatment
-- Seeded paired runs for scheduler comparisons (40-run FIFO-vs-proactive benchmark; 20-run 13-scheduler benchmark with out-of-training seeds).
-- Paired t-test, Wilcoxon signed-rank, and bootstrap 95% confidence intervals (Phase 22); Benjamini–Hochberg correction across metrics; zero-variance comparisons reported as "n/a" rather than as significance.
+- Seeded paired runs for scheduler comparisons (40-run FIFO-vs-proactive benchmark; 20-run 14-scheduler benchmark with out-of-training seeds).
+- Paired t-test, Wilcoxon signed-rank, and **Student-t** 95% confidence intervals; Benjamini–Hochberg correction across metrics; zero-variance comparisons reported as "n/a" rather than as significance.
+- **CI provenance (corrected in v3.6)**: the headline 40-run interval [4.8824%, 10.9133%] comes from `04_scheduler/benchmark_statistical.py`, which uses `stats.t.ppf(0.975, df=n−1)` — it is a Student-t interval and was mislabelled a bootstrap. The one genuine percentile bootstrap in the repository is `phases_22_30/phase_22_stats/stats_bootstrap.py` (10,000 resamples of the mean, fixed seed); over the same 40 runs it gives [4.9102%, 10.6714%]. Cite whichever is meant by name and file — the two are not interchangeable labels for one number.
 - v3.3: every scheduler is compared pairwise against both PROACTIVE and FCFS with Holm step-down correction applied separately to the t-test and Wilcoxon families (`05_results/schedulers/multi_scheduler_significance.csv`), plus Cohen's dz effect sizes; per-C paired CIs in the estimate sweep.
 - **v3.4 equivalence testing**: claims that two policies perform *the same* use paired TOST (two one-sided tests, `simstats.tost_equivalence`) with an equivalence margin of 10% of the reference mean, reporting both one-sided p-values, p_TOST, and the 90% CI of the paired difference. A large p from a difference test is **not** evidence of sameness; without TOST the size-sort-vs-XGBoost comparison (Holm-adjusted p = 0.17) would read as "no significant difference" and be discarded rather than recognised as the result. Trace comparisons are paired by window; synthetic ones by run.
 - **v3.4 metrics**: mean bounded slowdown `max(turnaround/max(runtime, τ), 1)` (τ = 60 s on traces, 1 tick synthetic) is reported alongside mean wait as a first-class metric — it is the standard batch-scheduling measure and mean wait alone hides the effect on short jobs.
 - Mean and max wait reporting.
-- Fairness measured via per-job Gini coefficient, run-level Jain index, starvation counts, and SLA compliance (Phase 27).
-- Cross-dataset (proxy) and OOD diagnostics via MAE and R² on freshly simulated shifted workloads (Phase 23).
+- Fairness measured via per-job Gini coefficient, run-level Jain index, starvation counts, and SLA compliance (Phase 27). One definition of starvation holds repository-wide: a job is starved when its wait exceeds **3× its own runtime**. That is what `04_scheduler/fairness_analysis.py` has always computed and what phase 27's SLA-2 uses; `04_scheduler/fairness_budget_sweep.py` used a distribution-relative "wait > 3× the run's mean wait" rule until v3.6 and now uses the per-job one (column `starved_jobs_wait_gt_3x_own_runtime`).
+- Cross-dataset and OOD diagnostics via MAE and R² on freshly simulated shifted workloads (Phase 23). The cross-dataset check runs against a **synthetic proxy written in the LANL SWF schema** (`02_data/synthetic_proxy_lanl_schema_trace.csv`, results in `05_results/traces/synthetic_proxy_validation_results.csv`) — renamed in v3.6 because the old `lanl_trace_sample` / `lanl_validation_results` names invited it to be read as real LANL data. It is not; the real-trace study is item 5 above.
 
 ## Reproducibility
-- The entire pipeline is seeded: `bash run_all_experiments.sh` regenerates the dataset, model, and every result deterministically on a fresh checkout.
+- The entire pipeline is seeded: `bash run_all_experiments.sh` (20 steps) regenerates the dataset, model, and every result deterministically on a fresh checkout. This became true only in v3.6 — until then seven studies sat outside every pipeline script, so the claim was false as written; `phases_22_30/run_all_experiments_v2.sh` is now a forwarding shim rather than a second entry point. A regenerated tree can be checked with `python tools/verify_artifacts.py` (`--quick` / `--smoke`).
+- One honest exception to "deterministically": three artefacts carry wall-clock columns that cannot reproduce on any machine — `05_results/model_comparison_table1.csv` (`training_time_sec`), `05_results/scaling/scaling_analysis.csv` (its three `*_sec` columns), and `phases_22_30/phase_26_scaling/scaling_benchmark.csv` (`inference_latency_ms`, `throughput_overhead_pct`). Between two runs on the same machine here these drifted by up to 84%. Every other column reproduced identically, and no claim in this repository should rest on a timing column.
 - `PYTHONUTF8=1` is exported by the pipeline scripts so Unicode console output works on Windows (cp1252) as well as Linux/macOS.

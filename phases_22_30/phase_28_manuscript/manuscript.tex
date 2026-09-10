@@ -1,4 +1,4 @@
-% Proactive Feasibility Scheduling -- v3.4 manuscript
+% Proactive Feasibility Scheduling -- v3.5 manuscript
 %
 % REFRAMED (v3.4). Earlier versions presented this work as "we propose an ML
 % scheduler that beats FIFO". The v3.3 baseline study and the v3.4 experiments
@@ -30,8 +30,8 @@
        No Better Than Sorting by Requested Size}
 
 \author{
-  Author(s) \\
-  \small Institution
+  Rakshit Rameshbabu \\
+  \small Vellore Institute of Technology, Chennai
 }
 
 \date{\today}
@@ -129,7 +129,7 @@ are aware of, including our own earlier versions of this work.
         real traces, two equally-sized co-queued jobs never receive different
         scores (0 violations). Seven of the twelve features vary across the
         queue in $0.0\%$ of instants, and every feature that does vary is a
-        deterministic function of the requested size. A ten-job queue receives
+        deterministic function of the requested size. A nine-job queue receives
         only $2.3$--$3.1$ distinct priority levels.
   \item \textbf{An equivalence result, not a null result}
         (\S\ref{sec:equivalence}). Using paired TOST rather than a failure to
@@ -157,30 +157,75 @@ are aware of, including our own earlier versions of this work.
 
 \section{Related Work}
 
+\paragraph{Predicting queue wait time.}
 Wait-time prediction for batch queues is long-standing: Downey's log-uniform
 lifetime models, template-based prediction from historical similar jobs, and the
 QBETS/Karnak line of quantile-based bound predictors all predate modern ML
-pipelines \cite{Feitelson1997, Feitelson2011}. Our contribution is not a better
-predictor; it is an observation about how such predictors behave when used as a
-\emph{ranking} score.
+pipelines \cite{Feitelson1997, Feitelson2011}. The recent line is explicitly
+ML-based. Park \cite{Park2019} predicts queue wait on a national
+supercomputer; Lovell et al.\ \cite{Lovell2024} use a hierarchical deep model
+for the same task; Ramachandran et al.\ \cite{Ramachandran2024} combine
+regressors with metaheuristic hyper-parameter search; and Barsanti and Sodan
+\cite{Barsanti2006} use predicted wait to drive adaptive resource allocation.
+Our contribution is not a better predictor. It is an observation about what
+happens when any such predictor is used as a \emph{ranking} score, and it
+applies to this whole line: the relevant question for each is whether the
+feature set contains a per-job attribute that is not a function of requested
+size given the cluster state (\S\ref{sec:fix}).
 
+\paragraph{Backfilling and user runtime estimates.}
 Backfilling \cite{SLURM2003} is the dominant production technique. EASY
 \cite{Mualem2001} reserves capacity for the queue head and backfills jobs that
 either finish before the reservation or fit in the surplus beyond the head's
-requirement. Conservative backfill reserves for every queued job. Both depend on
-user runtime estimates, whose inaccuracy is well documented; the standard model
-in the literature is the $f$-model, $\hat{r} = r \cdot f$ with $f \sim U(1, C)$
-\cite{Mualem2001}, and the observation that over-estimation can paradoxically
-\emph{help} backfill \cite{Tsafrir2005}. \S\ref{sec:estimates} shows this model
-misses a failure mode that real traces exhibit.
+requirement. Conservative backfill reserves for every queued job. Variants
+refine which job to pick and how much slack to allow: lookahead
+\cite{Shmueli2003}, slack-based priority \cite{Talby1999}, adaptive reservation
+\cite{Shmueli2005}, probabilistic backfilling on predicted-runtime
+distributions \cite{Nissimov2007}, and deviation backfilling \cite{Hai2023}.
+All depend on user runtime estimates, whose inaccuracy is well documented; the
+standard model is the $f$-model, $\hat{r} = r \cdot f$ with $f \sim U(1, C)$
+\cite{Mualem2001}, together with the observation that over-estimation can
+paradoxically \emph{help} backfill \cite{Tsafrir2005}. Feitelson
+\cite{Feitelson2005} shows how sensitive backfilling results are to exactly
+such evaluation choices. \S\ref{sec:estimates} shows the $f$-model misses a
+failure mode that real traces exhibit, because it cannot generate an
+under-estimate at all.
 
-Learning-based schedulers, including deep-RL approaches
-\cite{ML-Scheduling1, ML-Scheduling2}, generally learn a policy end-to-end
-rather than fitting a regressor and sorting by it, and so are not subject to the
-degeneracy as stated --- though the same question (what is the ML-free control?)
-applies to them. Bounded slowdown \cite{Feitelson2000} and Jain's index
-\cite{Jain1984} are the standard evaluation metrics; we report both, having
-found that mean wait alone hides the effect on short jobs.
+\paragraph{Replacing user estimates with predictions.}
+The closest prior work replaces the user's estimate with a system-generated one.
+Tsafrir et al.\ \cite{Tsafrir2007} predict runtimes from user history and
+backfill on the prediction; Minh and Wolters \cite{Minh2010} predict application
+runtimes from historical data for the same purpose; Park and Hong
+\cite{Park2025} improve runtime prediction by conditioning on application type.
+Yuan et al.\ \cite{Yuan2014} note that naively feeding predictions into EASY
+causes reservation violations and add fairness guarantees to prevent it. This
+line differs from ours in the quantity predicted: a runtime estimate is a
+genuine per-job attribute, so ordering by it is \emph{not} degenerate --- which
+is precisely why \textsc{Sjf\_UserEst} beats the wait-time model in
+\S\ref{sec:traces}, and why a runtime estimate is our first suggested fix.
+
+\paragraph{Learning-based schedulers.}
+Deep-RL approaches \cite{ML-Scheduling1, ML-Scheduling2} learn a policy
+end-to-end rather than fitting a regressor and sorting by it, and so are not
+subject to the degeneracy as stated --- though the same question (what is the
+ML-free control?) applies to them. Wang et al.\ \cite{Wang2023} schedule ML
+cluster jobs from model-level features, an example of a feature set that
+\emph{does} carry per-job information beyond size. Hovestadt et al.\
+\cite{Hovestadt2003} frame the underlying choice as queueing versus planning.
+
+\paragraph{Workloads and metrics.}
+Our synthetic substrate is a simple generator, not a validated workload model;
+Lublin and Feitelson \cite{Lublin2003}, Downey and Feitelson \cite{Downey1999},
+and Feitelson and Shmueli \cite{Feitelson2009} give the principled alternatives,
+and \S\ref{sec:threats} treats this as a limitation. Zhang et al.\
+\cite{Zhang2024} report cross-system variation in job characteristics of the
+kind that produces our LANL-versus-SDSC divergence. Bounded slowdown
+\cite{Feitelson2000} and Jain's index \cite{Jain1984} are the standard
+evaluation metrics; we report both, having found that mean wait alone hides the
+effect on short jobs. Goponenko et al.\ \cite{Goponenko2022} argue that these
+metrics correlate poorly with packing and fairness objectives, which is
+consistent with the metric-dependent verdicts we obtain in
+\S\ref{sec:equivalence}.
 
 \section{Experimental Setup}
 
@@ -196,7 +241,7 @@ published numbers.
 
 \paragraph{Trace-driven (for validity).}
 Two cleaned Parallel Workloads Archive traces: LANL CM-5 (1994, 1024
-processors, $122{,}060$ kept jobs) and SDSC SP2 (1998, 128 processors,
+processors, $122{,}055$ kept jobs) and SDSC SP2 (1998, 128 processors,
 $43{,}117$ kept jobs). We reserve the first $60\%$ of each trace's time span for
 model training and carve 20 evenly spaced evaluation windows from the remainder,
 each 3 simulated days of warm-up (not measured) followed by 7 measured days.
@@ -248,11 +293,12 @@ survives review.
 We instrumented every \textsc{Proactive} ranking decision in real simulations
 ($45{,}432$ instants with $\ge 2$ queued jobs) and recorded, per instant, which
 features differ across the queue and how the resulting order compares with
-ML-free orders. Table~\ref{tab:degeneracy} summarises.
+ML-free orders. Table~\ref{tab:degeneracy} summarises, and
+Figure~\ref{fig:degeneracy} shows the per-feature variation directly.
 
 \begin{table}[h]
 \centering
-\small
+\footnotesize
 \begin{tabular}{lrrr}
 \toprule
  & Synthetic & SDSC & LANL \\
@@ -269,9 +315,18 @@ Size table monotone     & 63.1\% & 57.1\% & 56.9\% \\
 \bottomrule
 \end{tabular}
 \caption{The learned score never distinguishes two equally-sized co-queued jobs.
-Cluster-state features vary across the queue in $0.0\%$ of instants.}
+Cluster-state features vary across the queue in $0.0\%$ of instants.
+{\small Source: \texttt{05\_results/degeneracy/ranking\_degeneracy.csv}}}
 \label{tab:degeneracy}
 \end{table}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{../../05_results/degeneracy/ranking_degeneracy.png}
+\caption{Feature variation in ranking decisions: only job-size features differ
+across the queue. Of 12 cluster-state features, 7 vary in 0.0\% of instants.}
+\label{fig:degeneracy}
+\end{figure*}
 
 Three observations. First, the \emph{zero} in row four is the claim: across
 $45{,}432$ instants there is no counterexample, exactly as the argument in
@@ -301,22 +356,25 @@ Table~\ref{tab:equiv} gives the paired TOST results.
 
 \begin{table}[h]
 \centering
-\small
+\footnotesize
+\setlength{\tabcolsep}{4pt}
 \begin{tabular}{llrrl}
 \toprule
-Substrate & Metric & $\Delta$ & $p_{\mathrm{TOST}}$ & Verdict \\
+Substrate & Metric & $\Delta$ & $p_{\mathrm{TOST}}$ & Eq.? \\
 \midrule
-Synthetic & mean wait & $+0.80\%$ & $2.6\times10^{-16}$ & equivalent \\
-Synthetic & bnd.\ slow. & $+0.69\%$ & $3.8\times10^{-18}$ & equivalent \\
-SDSC SP2  & mean wait & $-0.05\%$ & $1.8\times10^{-12}$ & equivalent \\
-SDSC SP2  & bnd.\ slow. & $+2.7\%$ & $7.4\times10^{-4}$ & equivalent \\
-LANL CM-5 & mean wait & $+14.4\%$ & $0.77$ & not equiv. \\
-LANL CM-5 & bnd.\ slow. & $+7.3\%$ & $0.30$ & not equiv. \\
+Synthetic & mean wait & $+0.80\%$ & $2.6\times10^{-16}$ & equiv. \\
+Synthetic & bnd.\ slow. & $+0.69\%$ & $3.8\times10^{-18}$ & equiv. \\
+SDSC SP2  & mean wait & $-0.05\%$ & $1.8\times10^{-12}$ & equiv. \\
+SDSC SP2  & bnd.\ slow. & $+2.7\%$ & $7.4\times10^{-4}$ & equiv. \\
+LANL CM-5 & mean wait & $+14.4\%$ & $0.77$ & no \\
+LANL CM-5 & bnd.\ slow. & $+7.3\%$ & $0.30$ & no \\
 \bottomrule
 \end{tabular}
 \caption{\textsc{Smallest\_First} versus \textsc{Proactive}. $\Delta$ is the
 difference in the metric (positive $=$ the size sort is worse). Equivalence
-margin $10\%$ of the reference.}
+margin $10\%$ of the reference. ``Eq.?'' is the TOST verdict at that margin.
+{\small Sources: the two \texttt{*\_equivalence.csv}
+files under \texttt{05\_results/}.}}
 \label{tab:equiv}
 \end{table}
 
@@ -329,7 +387,7 @@ the same point --- \textsc{NN} and \textsc{Smallest\_First} produce
 classes over the same features collapse to the same one-line sort.
 
 On LANL the equivalence test does not fire, and the honest verdict there is
-\emph{inconclusive} rather than "different". The size sort is $14.4\%$ worse on
+\emph{inconclusive} rather than ``different''. The size sort is $14.4\%$ worse on
 mean wait, but that difference does not survive Holm correction on the paired
 $t$-test ($p = 0.25$; the Wilcoxon test disagrees at $p = 0.015$), it shrinks to
 $+7.3\%$ and $p = 0.60$ on bounded slowdown, and TOST cannot certify equivalence
@@ -338,7 +396,7 @@ same on LANL nor establish that they differ.
 
 We initially attributed this to the learned size table being less monotone on
 LANL, and that explanation is wrong: the per-instant monotone fraction is
-$51.9\%$ on SDSC --- where equivalence \emph{does} hold --- against $61.5\%$ on
+$57.1\%$ on SDSC --- where equivalence \emph{does} hold --- against $56.9\%$ on
 LANL. Monotonicity does not track where the equivalence fires, so we report the
 LANL result as underpowered rather than mechanistically explained. What is not in
 question on either machine is the degeneracy itself (\S\ref{sec:degeneracy}), and
@@ -348,7 +406,8 @@ on LANL the ML scheduler also fails to beat plain FCFS ($p = 0.48$,
 \section{Trace-Driven Re-Evaluation}
 \label{sec:traces}
 
-Table~\ref{tab:traces} reports the twelve policies on both traces.
+Table~\ref{tab:traces} reports the twelve policies on both traces, and
+Figure~\ref{fig:trace-comparison} plots them.
 
 \begin{table}[h]
 \centering
@@ -374,9 +433,18 @@ Policy & wait & bsld & wait & bsld \\
 \bottomrule
 \end{tabular}
 \caption{Mean wait (minutes) and mean bounded slowdown, averaged over 20 paired
-7-day windows per trace at offered load $\approx 0.70$.}
+7-day windows per trace at offered load $\approx 0.70$. {\small Source: \texttt{trace\_schedulers/trace\_scheduler\_summary.csv}}}
 \label{tab:traces}
 \end{table}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{../../05_results/trace_schedulers/trace_scheduler_comparison.png}
+\caption{Twelve policies replayed through two real traces. The Proactive (ML)
+and Smallest-first (ML-free) bars are adjacent; every classical policy with a
+runtime estimate finishes ahead.}
+\label{fig:trace-comparison}
+\end{figure*}
 
 \paragraph{The synthetic gain does not replicate.}
 On the synthetic benchmark \textsc{Proactive} beats FCFS by $7.4\%$ (and by
@@ -429,7 +497,7 @@ Within $2\times$      & 24.0\% & 41.7\% & --- \\
 \textbf{Under-estimates} & 0.1\% & \textbf{36.3\%} & \textbf{0\%} \\
 \bottomrule
 \end{tabular}
-\caption{Real user runtime estimates versus the standard $f$-model.}
+\caption{Real user runtime estimates versus the standard $f$-model. {\small Source: \texttt{trace\_schedulers/trace\_estimate\_quality.csv}}}
 \label{tab:est}
 \end{table}
 
@@ -443,7 +511,10 @@ This is not a cosmetic difference. Our synthetic study concluded that EASY is
 ``nearly insensitive to estimate quality'' (mean wait $19.0$--$19.8$ ts across
 perfect, $f$-model, and modal estimates). On the traces, EASY with real
 estimates costs $+6.2\%$ mean wait versus perfect estimates on SDSC --- but
-$+74\%$ on LANL ($p = 0.025$). Under-estimates break the mechanism EASY depends
+$+74\%$ on LANL (paired $t$ $p = 0.025$ raw but $0.23$ after Holm; the Wilcoxon
+signed-rank test over the same 20 windows gives Holm $p = 2.1 \times 10^{-5}$, so the
+effect survives correction under the rank test and not under the $t$-test --- the
+wait distribution's tail is what carries it). Under-estimates break the mechanism EASY depends
 on: a job that claims it will finish before the reservation and does not
 \emph{does} delay the head, so the guarantee the reservation is supposed to
 provide fails exactly when it matters. An evaluation using only over-estimate
@@ -543,11 +614,11 @@ repository. \texttt{04\_scheduler/ranking\_degeneracy.py} reproduces
 
 \bibitem{SLURM2003} A. Yoo et al., \emph{SLURM: Simple Linux Utility for Resource Management}, JSSPP 2003.
 
-\bibitem{Jain1984} R. Jain et al., \emph{A Quantitative Measure of Fairness and Discrimination for Resource Allocation in Shared Computer Systems}, DEC-TR 506, 1984.
+\bibitem{Jain1984} R. Jain, D.-M. Chiu, and W. Hawe, \emph{A Quantitative Measure of Fairness and Discrimination for Resource Allocation in Shared Computer Systems}, DEC Research Report TR-301, 1984.
 
 \bibitem{Feitelson2000} D. G. Feitelson, \emph{Metrics for Parallel Job Scheduling and Their Convergence}, JSSPP 2001.
 
-\bibitem{Feitelson2011} D. G. Feitelson et al., \emph{Parallel Workloads Archive}, https://www.cs.huji.ac.il/labs/parallel/workload/.
+\bibitem{Feitelson2011} D. G. Feitelson, D. Tsafrir, and D. Krakov, \emph{Experience with Using the Parallel Workloads Archive}, J. Parallel Distrib. Comput. 74(10):2967--2982, 2014. \url{https://www.cs.huji.ac.il/labs/parallel/workload/}
 
 \bibitem{Mualem2001} A. W. Mu'alem and D. G. Feitelson, \emph{Utilization, Predictability, Workloads, and User Runtime Estimates in Scheduling the IBM SP2 with Backfilling}, IEEE TPDS 12(6), 2001.
 
@@ -556,6 +627,49 @@ repository. \texttt{04\_scheduler/ranking\_degeneracy.py} reproduces
 \bibitem{ML-Scheduling1} H. Mao, M. Alizadeh, I. Menache, and S. Kandula, \emph{Resource Management with Deep Reinforcement Learning}, HotNets 2016.
 
 \bibitem{ML-Scheduling2} H. Mao, M. Schwarzkopf, S. B. Venkatakrishnan, Z. Meng, and M. Alizadeh, \emph{Learning Scheduling Algorithms for Data Processing Clusters}, SIGCOMM 2019.
+
+
+\bibitem{Tsafrir2007} D. Tsafrir, Y. Etsion, and D. G. Feitelson, \emph{Backfilling Using System-Generated Predictions Rather Than User Runtime Estimates}, IEEE TPDS 18(6):789--803, 2007.
+
+\bibitem{Nissimov2007} A. Nissimov and D. G. Feitelson, \emph{Probabilistic Backfilling}, JSSPP 2007.
+
+\bibitem{Shmueli2003} E. Shmueli and D. G. Feitelson, \emph{Backfilling with Lookahead to Optimize the Packing of Parallel Jobs}, JSSPP 2003.
+
+\bibitem{Shmueli2005} E. Shmueli and D. G. Feitelson, \emph{Backfilling with System-Generated Job Runtime Estimates}, IPDPS 2005.
+
+\bibitem{Talby1999} D. Talby and D. G. Feitelson, \emph{Supporting Priorities and Improving Utilization of the IBM SP Scheduler Using Slack-Based Backfilling}, IPPS/SPDP 1999.
+
+\bibitem{Feitelson2005} D. G. Feitelson, \emph{Experimental Analysis of the Root Causes of Performance Evaluation Results: A Backfilling Case Study}, IEEE TPDS 16(2):175--182, 2005.
+
+\bibitem{Hai2023} T. H. L. Hai, K. N. Duy, T. N. Manh, D. M. Hoang, and N. Thoai, \emph{Deviation Backfilling: A Robust Backfilling Scheme for Improving the Efficiency of Job Scheduling on High Performance Computing Systems}, IEEE, 2023.
+
+\bibitem{Minh2010} T. N. Minh and L. Wolters, \emph{Using Historical Data to Predict Application Runtimes on Backfilling Parallel Systems}, IEEE, 2010.
+
+\bibitem{Yuan2014} Y. Yuan, Y. Wu, W. Zheng, and K. Li, \emph{Guarantee Strict Fairness and Utilize Prediction Better in Parallel Job Scheduling}, IEEE TPDS, 2014.
+
+\bibitem{Park2019} J.-W. Park, \emph{Queue Waiting Time Prediction for Large-scale High-performance Computing System}, IEEE, 2019.
+
+\bibitem{Park2025} J.-W. Park and T. Hong, \emph{Improving Runtime Prediction Performance Based on Application Type of Jobs on Large-scale Cluster System}, IEEE, 2025.
+
+\bibitem{Lovell2024} A. Lovell, P. Wisniewski, S. Rodenbeck, et al., \emph{A Hierarchical Deep Learning Approach for Predicting Job Queue Times in HPC Systems}, IEEE, 2024.
+
+\bibitem{Ramachandran2024} S. Ramachandran, M. L. Jayalal, et al., \emph{Combining Machine Learning and Metaheuristic Algorithms for Predicting Waiting Time of High Performance Computing Jobs}, IEEE, 2024.
+
+\bibitem{Barsanti2006} L. Barsanti and A. C. Sodan, \emph{Adaptive Job Scheduling via Predictive Job Resource Allocation}, JSSPP 2006.
+
+\bibitem{Wang2023} H. Wang, Z. Liu, and H. Shen, \emph{Machine Learning Feature Based Job Scheduling for Distributed Machine Learning Clusters}, IEEE/ACM Trans. Networking 31(1):58--72, 2023.
+
+\bibitem{Hovestadt2003} M. Hovestadt, O. Kao, A. Keller, and A. Streit, \emph{Scheduling in HPC Resource Management Systems: Queuing vs. Planning}, JSSPP 2003.
+
+\bibitem{Lublin2003} U. Lublin and D. G. Feitelson, \emph{The Workload on Parallel Supercomputers: Modeling the Characteristics of Rigid Jobs}, J. Parallel Distrib. Comput. 63(11):1105--1122, 2003.
+
+\bibitem{Downey1999} A. B. Downey and D. G. Feitelson, \emph{The Elusive Goal of Workload Characterization}, ACM SIGMETRICS Perf. Eval. Rev. 26(4):14--29, 1999.
+
+\bibitem{Feitelson2009} D. G. Feitelson and E. Shmueli, \emph{A Case for Conservative Workload Modeling: Parallel Job Scheduling with Daily Cycles of Activity}, MASCOTS 2009.
+
+\bibitem{Zhang2024} D. Zhang, M. S. Raj, B. Xie, S. Di, and D. Dai, \emph{Cross-System Analysis of Job Characterization and Scheduling in Large-Scale Computing Clusters}, IEEE, 2024.
+
+\bibitem{Goponenko2022} A. V. Goponenko, K. Lamar, C. Peterson, B. A. Allan, J. M. Brandt, and D. Dechev, \emph{Metrics for Packing Efficiency and Fairness of HPC Cluster Batch Job Scheduling}, IEEE, 2022.
 
 \end{thebibliography}
 

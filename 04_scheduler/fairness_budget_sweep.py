@@ -24,6 +24,44 @@
 # multi_scheduler_benchmark.py): release -> arrivals -> order -> dispatch ALL
 # jobs that fit this tick, greedy allocation across per-node GPU lists.
 #
+# Starvation is per-job: a completed job is starved when its wait exceeds 3x its
+# OWN runtime. This file previously used a distribution-relative definition
+# (wait > 3x the run's mean wait); it now matches 04_scheduler/fairness_analysis.py
+# and phase 27's SLA-2, so the repository has a single definition of starvation.
+#
+# EXPECTED CONSEQUENCE -- THE OVERALL DIRECTION FLIPS. Compared between the tightest
+# and the loosest budget, the old rule ends HIGHER than it starts and the new rule ends
+# LOWER. That is an endpoint-to-endpoint comparison only: NEITHER SERIES IS MONOTONE IN
+# B -- both rise and then fall in between -- so neither may be described as a trend.
+#
+#   definition                            B = 0    in between (not monotone)   B = None
+#   old: wait > 3x the run's MEAN wait      0.85    peaks at 19.65 (B = 80)      16.40
+#   new: wait > 3x the job's OWN runtime   29.45    peaks at 33.30 (B = 40)      20.70
+#
+# Full series over BUDGETS = [0, 10, 20, 30, 40, 60, 80, 120, None]:
+#   old (superseded rule, kept only for reference):
+#     0.85, 1.65, 1.60, 1.70, 5.60, 17.30, 19.65, 16.75, 16.40
+#   new (this file) -- 05_results/fairness/budget_sweep.csv, column
+#   'starved_jobs_wait_gt_3x_own_runtime':
+#     29.45, 29.35, 32.45, 32.45, 33.30, 29.60, 24.55, 21.45, 20.70
+#
+# The old rule is distribution-relative: a tight budget compresses the wait distribution,
+# which drags the mean down with it, so almost nothing clears 3x the mean and the count
+# sits at its LOWEST at B = 0 (0.85) and far higher unbounded (16.40) -- while still
+# turning over at B = 80 rather than climbing throughout. The new rule measures each job
+# against its own fixed yardstick, so a tight budget -- which really does make short jobs
+# sit behind escalated long ones -- starts HIGH at B = 0 (29.45) and lands lower unbounded
+# (20.70), after bulging to 33.30 at B = 40 on the way. A regenerated sweep whose
+# starvation column starts near 29.45, bulges at intermediate budgets, and ends near 20.70
+# is therefore correct, not a regression; it must not be read against the published
+# (old-definition) shape, and it must not be expected to fall step by step.
+#
+# Because both definitions would otherwise write a column called 'starvation', the
+# count is stored under a self-describing header instead --
+# 'starved_jobs_wait_gt_3x_own_runtime' (STARVATION_COLUMN) -- so the definition
+# travels with the data and a stale artefact is distinguishable from a correctly
+# regenerated one by inspection alone.
+#
 # Outputs:
 #   05_results/fairness/budget_sweep.csv        (one row per budget B)
 #   05_results/fairness/budget_pareto.png       (mean vs max wait; mean vs Gini)
@@ -55,7 +93,16 @@ GPUS_PER_NODE = 4
 NUM_JOBS = 110
 CAPACITY = NUM_NODES * GPUS_PER_NODE
 BUDGETS = [0, 10, 20, 30, 40, 60, 80, 120, None]   # None = pure proactive
-STARVATION_FACTOR = 3.0                            # starved: wait > 3x run mean
+# starved: wait > 3x the job's OWN runtime -- the definition used by
+# 04_scheduler/fairness_analysis.py and by phase 27's SLA-2, kept identical here so
+# the repository has one definition of starvation.
+STARVATION_RUNTIME_MULTIPLE = 3.0
+# The CSV header carries the DEFINITION, not just the concept: the superseded
+# distribution-relative rule also produced a column named 'starvation', and the two differ
+# by more than an order of magnitude at B = 0 and move in opposite overall directions
+# across the sweep (see the header note), so a bare name leaves a stale file and a correct
+# one indistinguishable. Keep this in sync with the multiple above.
+STARVATION_COLUMN = 'starved_jobs_wait_gt_3x_own_runtime'
 
 # ── Load wait_model_v2 (clean 12-feature model) ──────────────────────────────
 with open(MODEL_PATH, 'rb') as f:
@@ -167,7 +214,8 @@ def order_queue_budget(queue, t, cluster, running, budget):
 
 def run_once(jobs_in, policy, budget=None):
     """policy: 'fifo' (true FIFO reference) or 'budget' (proactive with hard
-    wait-budget; budget=None = pure proactive). Returns per-job wait list."""
+    wait-budget; budget=None = pure proactive). Returns one (wait, runtime) pair per
+    completed job -- the runtime is carried through because starvation is per-job."""
     cluster = Cluster(NUM_NODES, GPUS_PER_NODE)
     jobs = [Job(j.job_id, j.arrival_time, j.num_gpus, j.runtime) for j in jobs_in]
     queue, running, completed = [], [], []
@@ -193,10 +241,16 @@ def run_once(jobs_in, policy, budget=None):
                     running.append(job)
                     queue.remove(job)
 
-    waits = [j.start_time - j.arrival_time for j in completed if j.start_time is not None]
-    return waits
+    return [(j.start_time - j.arrival_time, j.runtime)
+            for j in completed if j.start_time is not None]
 
-def wait_metrics(waits):
+def wait_metrics(completed):
+    """`completed`: (wait, runtime) pairs from run_once(). Only 'starvation' uses the
+    runtime; the wait-distribution metrics are computed from the same waits as before.
+
+    The in-memory key stays short ('starvation'); it is summarize_runs() that writes it
+    out under STARVATION_COLUMN, the header that spells out which rule produced it."""
+    waits = [wait for wait, _ in completed]
     w = np.array(waits, dtype=float)
     m = float(np.mean(w))
     return {
@@ -204,11 +258,32 @@ def wait_metrics(waits):
         'p95_wait': float(np.percentile(w, 95)),
         'max_wait': float(np.max(w)),
         'gini': gini(waits),
-        'starvation': int(np.sum(w > STARVATION_FACTOR * m)),
+        'starvation': int(sum(1 for wait, runtime in completed
+                              if wait > STARVATION_RUNTIME_MULTIPLE * runtime)),
     }
 
 def budget_label(b):
     return 'None' if b is None else str(b)
+
+def summarize_runs(budget, runs, fifo_mean_waits):
+    """One CSV row for one budget: each metric averaged over the paired runs, plus the
+    per-run mean-wait improvement against the FIFO reference on the same seeds.
+
+    Kept out of main() so the row SCHEMA -- above all the self-describing starvation
+    header -- can be asserted without running the 20-run sweep or writing an artefact."""
+    mean_waits = np.array([m['mean_wait'] for m in runs])
+    # paired per-run improvement vs FIFO on the same seed
+    impr = (fifo_mean_waits - mean_waits) / fifo_mean_waits * 100.0
+    return {
+        'budget': budget_label(budget),
+        'mean_wait': float(np.mean(mean_waits)),
+        'mean_wait_std': float(np.std(mean_waits)),
+        'p95_wait': float(np.mean([m['p95_wait'] for m in runs])),
+        'max_wait': float(np.mean([m['max_wait'] for m in runs])),
+        'gini': float(np.mean([m['gini'] for m in runs])),
+        STARVATION_COLUMN: float(np.mean([m['starvation'] for m in runs])),
+        'mean_improvement_vs_fifo_pct': float(np.mean(impr)),
+    }
 
 def main():
     # per-run metrics: fifo_runs[run] and budget_runs[B][run]
@@ -227,7 +302,8 @@ def main():
         fifo_m = wait_metrics(run_once(jobs, 'fifo'))
         fifo_runs.append(fifo_m)
 
-        parts = [f"Run {run + 1:2d}: FIFO mean={fifo_m['mean_wait']:.2f} max={fifo_m['max_wait']:.0f}"]
+        parts = [f"Run {run + 1:2d}: FIFO mean={fifo_m['mean_wait']:.2f} "
+                 f"max={fifo_m['max_wait']:.0f}"]
         for b in BUDGETS:
             m = wait_metrics(run_once(jobs, 'budget', budget=b))
             budget_runs[b].append(m)
@@ -239,22 +315,7 @@ def main():
     fifo_agg = {k: float(np.mean([m[k] for m in fifo_runs]))
                 for k in ('mean_wait', 'p95_wait', 'max_wait', 'gini', 'starvation')}
 
-    rows = []
-    for b in BUDGETS:
-        runs = budget_runs[b]
-        mean_waits = np.array([m['mean_wait'] for m in runs])
-        # paired per-run improvement vs FIFO on the same seed
-        impr = (fifo_mean_waits - mean_waits) / fifo_mean_waits * 100.0
-        rows.append({
-            'budget': budget_label(b),
-            'mean_wait': float(np.mean(mean_waits)),
-            'mean_wait_std': float(np.std(mean_waits)),
-            'p95_wait': float(np.mean([m['p95_wait'] for m in runs])),
-            'max_wait': float(np.mean([m['max_wait'] for m in runs])),
-            'gini': float(np.mean([m['gini'] for m in runs])),
-            'starvation': float(np.mean([m['starvation'] for m in runs])),
-            'mean_improvement_vs_fifo_pct': float(np.mean(impr)),
-        })
+    rows = [summarize_runs(b, budget_runs[b], fifo_mean_waits) for b in BUDGETS]
 
     df = pd.DataFrame(rows)
     csv_path = os.path.join(OUT_DIR, 'budget_sweep.csv')
@@ -263,7 +324,7 @@ def main():
     print('\n=== FIFO reference (same seeds) ===')
     print(f"mean={fifo_agg['mean_wait']:.3f} p95={fifo_agg['p95_wait']:.3f} "
           f"max={fifo_agg['max_wait']:.3f} gini={fifo_agg['gini']:.3f} "
-          f"starvation={fifo_agg['starvation']:.2f}")
+          f"starved(wait>3x own runtime)={fifo_agg['starvation']:.2f}")
     print('\n=== Budget sweep summary (mean over runs) ===')
     print(df.to_string(index=False, formatters={
         'mean_wait': '{:.3f}'.format,
@@ -271,7 +332,7 @@ def main():
         'p95_wait': '{:.3f}'.format,
         'max_wait': '{:.3f}'.format,
         'gini': '{:.4f}'.format,
-        'starvation': '{:.2f}'.format,
+        STARVATION_COLUMN: '{:.2f}'.format,
         'mean_improvement_vs_fifo_pct': '{:.2f}'.format,
     }))
 

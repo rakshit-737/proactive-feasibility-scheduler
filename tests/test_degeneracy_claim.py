@@ -26,11 +26,35 @@ If any of that ever stops holding, the paper's central claim is false and the
 tests in this module fail. These tests also make honest the CHANGELOG's
 previously-uncommitted assertions about property tests.
 
+Sections (f)-(j) guard the ARTEFACT rather than the claim. The instant total the
+paper quotes is a sum over three settings AT the published protocol (20
+synthetic runs, 20 trace windows), so every way of producing a smaller number
+under the same column name has to be either impossible or loudly labelled:
+
+  (f) the two tie columns must mean what they say, and the strict one must be
+      bounded by the weaker one BY CONSTRUCTION rather than by assumption; the
+      1e-9 tie bin is itself pinned, at its definition AND at each counter that
+      applies it, and every published statistic that reads a prediction
+      (Kendall tau, the size -> priority table) must read it through that bin
+      rather than through the raw float;
+  (g) a missing trace is a hard error; --allow-partial records what was covered;
+  (h) --quick, --runs and --windows are equally capable of producing a
+      non-published total, so `partial` is derived from all of them;
+  (i) the figures a reader actually sees must carry the partial marker, and must
+      not describe synthetic instants as "real";
+  (j) --figures-only must refuse to re-render publication figures from artefacts
+      that are absent, partial, mutually inconsistent, duplicated across rows,
+      or short a column that would let any of that be checked -- and "partial"
+      must be read off the cell's TEXT, since bool('False') is True.
+
 Every test here is fast (a handful of jobs, no simulation loop, no benchmark)
-and pure (no artefact is written; artefact READS go through require()).
+and pure (no tracked artefact is written -- the totals-CSV tests write only into
+pytest's tmp_path, and the caption tests intercept the renderer so not even a
+temporary PNG is produced; artefact READS go through require()).
 """
 
 import numpy as np
+import pandas as pd
 import pytest
 
 # Repo-relative path to the trained model. Importing multi_scheduler_benchmark
@@ -333,3 +357,1022 @@ def test_a_true_per_job_feature_would_break_degeneracy(wait_model, make_job,
     # column, so the score gap equals that column's contribution -- the new
     # feature, not size, is doing the reordering.
     assert scores[1] - scores[0] == pytest.approx(extra[1, 0] - extra[0, 0])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# (f) The measured all-ties fraction, and why it is not the arrival-order column
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Two columns are enough to exercise the Collector: column 0 is the requested
+# size (ranking_degeneracy.SIZE_COL in both real feature vectors) and column 1
+# stands in for the cluster-only features, identical for every queued job.
+_UNIT_FEATURES = ('job_gpu', 'total_free')
+
+
+def _observe(col, make_job, sizes, preds, arrivals=None):
+    """Drive a Collector exactly the way the RANK_OBSERVER hook does at one
+    dispatch instant: (policy, queue, feature matrix, predictions).
+
+    Reuses the SimpleJob fixture the rest of this module builds queues from, so
+    the queue carries the real arrival_time/job_id tie-break attributes.
+    """
+    arrivals = list(range(len(sizes))) if arrivals is None else arrivals
+    queue = [make_job(job_id=i, arrival_time=a, num_gpus=int(s))
+             for i, (a, s) in enumerate(zip(arrivals, sizes))]
+    x = np.column_stack([np.asarray(sizes, dtype=float),
+                         np.full(len(sizes), 7.0)])
+    col('proactive', queue, x, np.asarray(preds, dtype=float))
+    return queue
+
+
+def test_pct_all_scores_tied_is_bounded_by_order_identical_to_arrival(make_job):
+    """INVARIANT: pct_all_scores_tied <= pct_order_identical_to_arrival, by
+    construction, and the two are NOT the same measurement.
+
+    The published sentence is "in X% of instants all scores tie, so the policy is
+    silently FCFS". All-tied does imply the induced order is arrival order (the
+    tie-break is (score, arrival, id)), but the converse fails: distinct scores
+    can rank the queue in arrival order too. So the arrival-order column is only
+    an UPPER BOUND, and quoting it as the all-ties fraction over-claims. This
+    test pins both the bound and the gap.
+    """
+    import ranking_degeneracy as rd
+
+    col = rd.Collector('unit test', list(_UNIT_FEATURES))
+
+    # instant 1: every queued job scores the same -> all tied, and necessarily
+    # ordered by (arrival, id)
+    _observe(col, make_job, sizes=[1, 2, 4], preds=[5.0, 5.0, 5.0])
+    assert col.all_tied == 1
+    assert col.same_as_arrival == 1
+
+    # instant 2: distinct scores that happen to increase with arrival -> the
+    # order is STILL arrival order, but nothing is tied. This single instant is
+    # the whole gap between the two columns.
+    _observe(col, make_job, sizes=[1, 2, 4], preds=[1.0, 2.0, 3.0])
+    assert col.all_tied == 1
+    assert col.same_as_arrival == 2
+
+    s = col.summary()
+    assert s['ranking_instants'] == 2
+    assert s['pct_all_scores_tied'] == pytest.approx(50.0)
+    assert s['pct_order_identical_to_arrival'] == pytest.approx(100.0)
+    assert s['pct_all_scores_tied'] <= s['pct_order_identical_to_arrival'], (
+        'all-tied implies order-identical-to-arrival, so the strict measure can '
+        'never exceed the bound')
+
+    # The CSV must keep the strict measure next to the bound it strengthens, so
+    # a reader cannot pick up one while meaning the other.
+    keys = list(s)
+    assert keys.index('pct_all_scores_tied') == \
+        keys.index('pct_order_identical_to_arrival') + 1
+
+
+def test_all_tied_and_the_induced_order_read_the_same_quantised_score(make_job):
+    """INVARIANT: all_tied <= same_as_arrival holds BY CONSTRUCTION, including
+    for scores that differ only below the tie tolerance.
+
+    The bound above is asserted as a mathematical consequence of the tie-break
+    being (score, arrival, id). That consequence needs the tie COUNTER and the
+    sort KEY to be the same number. They were not: `all_tied` incremented when
+    `len(np.unique(np.round(pred, 9))) == 1` while `model_order` sorted on the
+    raw `float(pred[i])`. Two predictions 3e-10 apart therefore counted as "all
+    scores tied" and still induced an order of their own, so pct_all_scores_tied
+    could exceed the column documented as its upper bound -- the comment and the
+    test above would have been asserting a convenient fiction.
+
+    The three scores below are the witness: they genuinely differ as floats, in
+    an order that is NOT arrival order, and they quantise to a single value.
+    With one definition of "tied" the instant is both all-tied and
+    arrival-ordered; with two definitions it is all-tied and not.
+    """
+    import ranking_degeneracy as rd
+
+    col = rd.Collector('unit test', list(_UNIT_FEATURES))
+
+    near = [5.0 + 3e-10, 5.0 + 1e-10, 5.0 + 2e-10]
+    assert len(set(near)) == 3, 'the raw scores must genuinely differ as floats'
+    assert len(np.unique(rd.tie_keys(near))) == 1, 'and must quantise to one'
+    # Sorting on the RAW floats gives 1, 2, 0 -- not the arrival order 0, 1, 2.
+    assert sorted(range(3), key=lambda i: near[i]) == [1, 2, 0]
+
+    _observe(col, make_job, sizes=[1, 2, 4], preds=near, arrivals=[0, 1, 2])
+
+    assert col.all_tied == 1
+    assert col.same_as_arrival == 1, (
+        'the instant was counted as all-tied but its induced order was NOT '
+        'arrival order: the tie counter and the sort key disagree, so '
+        'pct_all_scores_tied <= pct_order_identical_to_arrival is not a '
+        'guarantee')
+
+    s = col.summary()
+    assert s['pct_all_scores_tied'] == pytest.approx(100.0)
+    assert s['pct_all_scores_tied'] <= s['pct_order_identical_to_arrival']
+    # And the distinct-prediction count reads the same quantised score, so a
+    # queue reported as all-tied cannot simultaneously report >1 distinct score.
+    assert s['mean_distinct_predictions'] == pytest.approx(1.0)
+
+
+def test_equal_size_violations_use_the_same_tie_tolerance(make_job):
+    """INVARIANT: "equal size, different prediction" is decided by the same
+    quantised score as everything else in the Collector.
+
+    equal_size_diff_pred_violations is the executable form of "the score is a
+    function of requested size alone", and the published value is 0. If the
+    violation check used a looser notion of equality than the tie counter, a
+    genuine separation could be counted as a tie in one column and a violation
+    in another. Both directions are pinned here: scores inside one quantisation
+    bin are not a violation, scores plainly outside it are.
+    """
+    import ranking_degeneracy as rd
+
+    within = rd.Collector('unit test', list(_UNIT_FEATURES))
+    # two size-4 jobs whose scores differ by 3e-10 -- one bin, so not a violation
+    _observe(within, make_job, sizes=[4, 4, 1], preds=[2.0, 2.0 + 3e-10, 9.0])
+    assert within.violations == 0
+
+    beyond = rd.Collector('unit test', list(_UNIT_FEATURES))
+    # the same two jobs, now separated well beyond the tolerance
+    _observe(beyond, make_job, sizes=[4, 4, 1], preds=[2.0, 2.5, 9.0])
+    assert beyond.violations == 1, (
+        'two equally-sized jobs received clearly different scores and it was '
+        'not counted: the degeneracy claim would report 0 violations while the '
+        'score was not a function of size')
+
+
+def test_tie_tolerance_is_the_documented_one_and_is_never_looser():
+    """INVARIANT: the quantisation bin is 1e-9 wide -- the width the module
+    promises, and no other.
+
+    TIE_DECIMALS is the ONE definition of "these two scores are the same score",
+    and the comment beside it makes a specific, load-bearing promise: the
+    quantisation "is never LOOSER than the |spread| <= 1e-9 test it replaces".
+    Nothing enforced the number itself. Widening the bin to 1e-3 leaves every
+    other test in this suite green while silently calling genuinely different
+    scores tied: pct_all_scores_tied (a published headline) inflates, and the
+    equal-size/different-prediction counter goes blind to real separations, so
+    "the score is a function of requested size alone" would report 0 violations
+    for a score that is nothing of the kind.
+
+    Both directions are pinned, because a TIGHTER bin breaks the promise too:
+    the guarantee is that quantisation agrees with the spread test, not that it
+    is merely conservative.
+    """
+    import ranking_degeneracy as rd
+
+    assert rd.TIE_DECIMALS == 9
+    assert rd.TIE_ATOL == 1e-9
+    assert rd.TIE_ATOL == 10.0 ** -rd.TIE_DECIMALS, (
+        'the absolute tolerance and the rounding must describe ONE bin width; '
+        'two different widths is two definitions of "tied" again')
+
+    # The promised property, stated over the quantiser: values further apart
+    # than the tolerance can never share a bin ...
+    apart = rd.tie_keys([1.5, 1.5 + 1e-6])
+    assert len(np.unique(apart)) == 2, (
+        'scores 1e-6 apart -- a thousand tolerances -- landed in one bin: the '
+        'quantisation is LOOSER than the |spread| <= 1e-9 test it replaces, so '
+        'genuinely different scores are being counted as tied')
+    # ... and values the spread test called equal still share one.
+    together = rd.tie_keys([1.5, 1.5 + 3e-10])
+    assert len(np.unique(together)) == 1, (
+        'scores 3e-10 apart landed in different bins: the quantisation is '
+        'TIGHTER than the spread test, so a queue the documented tolerance '
+        'calls tied would be reported as carrying distinct scores')
+
+
+def test_tie_tolerance_is_pinned_where_the_collector_applies_it(make_job):
+    """INVARIANT: 1e-9 is the tolerance every Collector counter actually
+    applies -- not merely the number written beside TIE_DECIMALS.
+
+    The constant above can be pinned by a test that never runs the code that
+    uses it. This one drives the tolerance through the Collector, so a change to
+    the bin width has to survive the four places the width decides an answer:
+    the distinct-prediction count, the all-scores-tied counter, the monotone
+    size-table counter, and the equal-size violation check.
+
+    The witness is a separation of 1e-7: a hundred times the documented
+    tolerance, and still four orders of magnitude inside a 1e-3 bin. Under the
+    documented width the two jobs are plainly different; widen the bin -- or
+    widen TIE_ATOL alone, leaving the rounding where it is -- and every counter
+    below flips.
+    """
+    import ranking_degeneracy as rd
+
+    # (i) plainly separated scores must not be tied, must not be one distinct
+    #     score, and must not produce a "monotone" size -> priority table.
+    apart = rd.Collector('unit test', list(_UNIT_FEATURES))
+    _observe(apart, make_job, sizes=[1, 2], preds=[2.0, 2.0 - 1e-7])
+    assert apart.n_distinct_pred == [2], (
+        'two scores 1e-7 apart were counted as one distinct prediction')
+    assert apart.all_tied == 0, (
+        'an instant whose scores differ by 1e-7 was counted as all-tied, which '
+        'is the number the paper quotes as "the policy is silently FCFS"')
+    assert apart.monotone_instants == 0, (
+        'a size -> priority table that DECREASES by 1e-7 was called monotone: '
+        'the monotone check is applying a wider slack than the documented '
+        'TIE_ATOL, so pct_size_table_monotone is being inflated')
+
+    s = apart.summary()
+    assert s['mean_distinct_predictions'] == pytest.approx(2.0)
+    assert s['pct_all_scores_tied'] == pytest.approx(0.0)
+    assert s['pct_size_table_monotone'] == pytest.approx(0.0)
+
+    # (ii) and the other direction: inside one bin really is tied, so the bin
+    #      cannot be narrowed either.
+    close = rd.Collector('unit test', list(_UNIT_FEATURES))
+    _observe(close, make_job, sizes=[1, 2], preds=[2.0, 2.0 - 3e-10])
+    assert close.n_distinct_pred == [1]
+    assert close.all_tied == 1
+
+    # (iii) the violation counter -- the executable form of "the score is a
+    #       function of size alone" -- reads the same width. A looser bin hides
+    #       exactly the evidence that would falsify the claim.
+    viol = rd.Collector('unit test', list(_UNIT_FEATURES))
+    _observe(viol, make_job, sizes=[4, 4, 1], preds=[2.0, 2.0 - 1e-7, 9.0])
+    assert viol.violations == 1, (
+        'two equally-sized jobs scored 1e-7 apart and it was not counted as a '
+        'violation: the tie bin is wide enough to swallow a real breach of the '
+        'degeneracy claim, which would then be published as 0 violations')
+
+
+def test_kendall_tau_reads_the_quantised_score_not_the_raw_prediction(make_job):
+    """INVARIANT: the Kendall tau against smallest-size-first is computed on the
+    quantised keys, as the module says every prediction read is.
+
+    kendall_tau_vs_size_mean is a published column, and its SIGN is the whole
+    argument: positive means the learned score ranks the queue the way
+    smallest-first does. Feeding the raw predictions instead lets differences
+    below the tie tolerance -- float noise the module has already decided is not
+    a difference -- decide concordance, and that is enough to flip the sign.
+
+    The witness below is exactly that: four scores inside one 1e-9 bin, ordered
+    against size, plus one genuinely smaller score. Quantised, the bin is one
+    value and tau is strongly POSITIVE; raw, the noise inside the bin
+    contributes six discordant pairs and tau is NEGATIVE. The test computes both
+    so it cannot go vacuous.
+    """
+    from scipy import stats
+
+    import ranking_degeneracy as rd
+
+    sizes = [1, 2, 3, 4, 5]
+    # one genuinely low score, then four that differ only inside a single bin
+    # and do so in DECREASING order of size
+    preds = [1.0, 2.0 + 4e-10, 2.0 + 3e-10, 2.0 + 2e-10, 2.0 + 1e-10]
+    assert len(set(preds)) == 5, 'the raw scores must genuinely differ as floats'
+    assert len(np.unique(rd.tie_keys(preds))) == 2, (
+        'the four near scores must collapse to one bin, leaving two keys')
+
+    raw_tau = float(stats.kendalltau(preds, sizes).statistic)
+    quantised_tau = float(stats.kendalltau(rd.tie_keys(preds), sizes).statistic)
+    assert raw_tau < 0 < quantised_tau, (
+        'the witness no longer separates the two readings, so this test would '
+        'pass on either input')
+
+    col = rd.Collector('unit test', list(_UNIT_FEATURES))
+    _observe(col, make_job, sizes=sizes, preds=preds)
+
+    assert col.taus == [pytest.approx(quantised_tau)], (
+        'the recorded tau is the RAW-prediction tau: sub-tolerance float noise '
+        'inside one tie bin is deciding a published rank-agreement statistic')
+    assert col.summary()['kendall_tau_vs_size_mean'] == pytest.approx(quantised_tau)
+    assert col.summary()['kendall_tau_vs_size_mean'] > 0
+
+
+def test_size_priority_table_reads_the_quantised_score_not_the_raw_prediction(make_job):
+    """INVARIANT: the recovered size -> priority table is built from the
+    quantised keys, as the module says every prediction read is.
+
+    This table is published twice over: size_priority_table.csv and the figure
+    drawn from it, whose whole point is the SHAPE of the curve. The scores are
+    normalised WITHIN each instant, (table - lo) / (hi - lo), so the smaller the
+    spread the more any difference is magnified -- and reading the raw
+    predictions magnifies float noise all the way to full scale.
+
+    The first instant below is the witness: two sizes whose scores differ by
+    2e-10, i.e. by nothing. Quantised, hi == lo, the instant contributes no
+    point at all and the curve stays empty -- correctly, because there is no
+    size preference to recover. Raw, that 2e-10 is stretched across the whole
+    0..1 axis and manufactures a full-swing DECREASING preference out of
+    nothing. The second instant carries a real preference, so the assertions
+    below pin a curve with content rather than merely an empty frame.
+    """
+    import ranking_degeneracy as rd
+
+    col = rd.Collector('unit test', list(_UNIT_FEATURES))
+
+    # instant 1: no real size preference -- the scores are one bin apart
+    noise = [2.0 + 3e-10, 2.0 + 1e-10]
+    assert len(np.unique(rd.tie_keys(noise))) == 1, 'the witness must be one bin'
+    _observe(col, make_job, sizes=[1, 2], preds=noise)
+    assert col.size_score == [], (
+        'an instant whose scores differ by 2e-10 contributed a size -> priority '
+        'point: raw float noise is being normalised to full scale and published '
+        'as a learned size preference')
+
+    # instant 2: a genuine, increasing preference
+    _observe(col, make_job, sizes=[1, 2], preds=[1.0, 3.0])
+
+    curve = col.size_curve()
+    assert list(curve['size']) == [1.0, 2.0]
+    assert list(curve['n']) == [1, 1], (
+        'the noise instant contributed a second observation per size')
+    scores = dict(zip(curve['size'], curve['norm_score']))
+    assert scores[1.0] == pytest.approx(0.0)
+    assert scores[2.0] == pytest.approx(1.0), (
+        'the published size -> priority curve has been flattened by averaging a '
+        'real preference against one invented from sub-tolerance noise')
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# (g) A missing trace must be a hard failure, not a smaller published total
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _stub_pipeline(rd, monkeypatch, tmp_path, make_job, trace=None):
+    """Redirect the script's outputs to tmp_path and replace everything slow.
+
+    run_synthetic is stubbed with a Collector fed one hand-built instant (the
+    suite may not run a benchmark, and the behaviour under test is the control
+    flow around a missing trace, not the model); the two figure functions are
+    stubbed because no test may write a PNG. `trace` is the run_trace stand-in;
+    the default one reports every trace as absent.
+
+    Returns the list the figure stubs append their (name, args, kwargs) to, so a
+    caller can assert both WHETHER a figure was rendered and WHAT scope it was
+    handed.
+    """
+    monkeypatch.setattr(rd, 'OUT_DIR', str(tmp_path))
+
+    def fake_synthetic(n_runs):
+        col = rd.Collector('synthetic (unit test)', list(_UNIT_FEATURES))
+        _observe(col, make_job, sizes=[1, 2, 4], preds=[1.0, 2.0, 3.0])
+        return col
+
+    def missing(trace_key, *a, **k):
+        raise FileNotFoundError(f'02_data/{trace_key}.swf.gz')
+
+    rendered = []
+    monkeypatch.setattr(rd, 'run_synthetic', fake_synthetic)
+    monkeypatch.setattr(rd, 'run_trace', trace or missing)
+    monkeypatch.setattr(rd, 'make_figure',
+                        lambda *a, **k: rendered.append(('figure', a, k)))
+    monkeypatch.setattr(rd, 'make_size_table_figure',
+                        lambda *a, **k: rendered.append(('size_table', a, k)))
+    return rendered
+
+
+def _fake_trace(rd, make_job):
+    """A run_trace stand-in that succeeds, contributing one instant per trace."""
+    def trace(trace_key, *a, **k):
+        col = rd.Collector(f'{trace_key} (unit test)', list(_UNIT_FEATURES))
+        _observe(col, make_job, sizes=[1, 2, 4], preds=[1.0, 2.0, 3.0])
+        return col
+    return trace
+
+
+def test_missing_trace_is_a_hard_error_without_allow_partial(monkeypatch, tmp_path,
+                                                             make_job):
+    """INVARIANT: a trace that cannot be loaded aborts the run.
+
+    The published headline is the sum of ranking_instants over three settings.
+    The script used to catch FileNotFoundError per trace, print 'skipping ...'
+    and write the summary anyway, so 45,432 instants could collapse to the 3,646
+    synthetic ones with nothing in the artefact saying so. A missing trace must
+    now exit non-zero and write NOTHING.
+    """
+    import os
+    import sys
+
+    import ranking_degeneracy as rd
+    _stub_pipeline(rd, monkeypatch, tmp_path, make_job)
+    monkeypatch.setattr(sys, 'argv', ['ranking_degeneracy.py', '--quick'])
+
+    with pytest.raises(SystemExit) as exc:
+        rd.main()
+
+    msg = str(exc.value)
+    assert 'sdsc' in msg                     # names the trace that failed
+    assert '--allow-partial' in msg          # says how to proceed deliberately
+    assert '02_data' in msg                  # says how to fix it properly
+    for name in ('ranking_degeneracy.csv', 'ranking_degeneracy_totals.csv'):
+        assert not os.path.exists(os.path.join(str(tmp_path), name)), (
+            f'{name} was written despite a missing trace')
+
+
+def test_allow_partial_records_what_the_run_actually_covered(monkeypatch, tmp_path,
+                                                             make_job):
+    """INVARIANT: with --allow-partial the run succeeds but the artefact SAYS it
+    is partial -- which settings were expected, which are present, which traces
+    are missing. That totals row is what a reader (or a later consistency check)
+    consults instead of re-summing a table that may be short a setting.
+    """
+    import sys
+
+    import ranking_degeneracy as rd
+    _stub_pipeline(rd, monkeypatch, tmp_path, make_job)
+    monkeypatch.setattr(sys, 'argv',
+                        ['ranking_degeneracy.py', '--quick', '--allow-partial'])
+
+    rd.main()
+
+    totals = pd.read_csv(tmp_path / 'ranking_degeneracy_totals.csv')
+    assert len(totals) == 1
+    row = totals.iloc[0]
+    assert int(row['settings_expected']) == rd.EXPECTED_SETTINGS == 3
+    assert int(row['settings_present']) == 1          # synthetic only
+    assert bool(row['partial']) is True
+    assert sorted(row['missing_traces'].split(';')) == sorted(rd.TRACE_KEYS)
+    assert int(row['total_instants']) == 1            # the one stubbed instant
+    assert int(row['total_violations']) == 0
+
+    # The totals live in their OWN file: make_figure draws one bar pair per row
+    # of ranking_degeneracy.csv, so a TOTAL row there would plot as a fourth,
+    # non-existent setting.
+    summary = pd.read_csv(tmp_path / 'ranking_degeneracy.csv')
+    assert len(summary) == 1
+    assert 'TOTAL' not in set(summary['setting'])
+
+
+def test_quick_run_is_marked_partial_even_with_every_trace_present(monkeypatch,
+                                                                   tmp_path,
+                                                                   make_job,
+                                                                   capsys):
+    """INVARIANT: --quick reduces runs and windows, so its instant total is not
+    the published number even when no trace is missing. The totals row must say
+    so, and the printed line must report settings covered over settings expected.
+    """
+    import sys
+
+    import ranking_degeneracy as rd
+
+    _stub_pipeline(rd, monkeypatch, tmp_path, make_job,
+                   trace=_fake_trace(rd, make_job))
+    monkeypatch.setattr(sys, 'argv', ['ranking_degeneracy.py', '--quick'])
+
+    rd.main()
+
+    row = pd.read_csv(tmp_path / 'ranking_degeneracy_totals.csv').iloc[0]
+    assert int(row['settings_present']) == 3
+    # Nothing missing is written as the explicit sentinel 'none', never as an
+    # empty field: an empty CSV cell round-trips through pd.read_csv as NaN, so
+    # a consumer written as `row['missing_traces'] == ''` would never match and
+    # every read would have to special-case a float. 'none' is itself on the way
+    # back in, which is why this asserts equality rather than "NaN or empty".
+    assert row['missing_traces'] == rd.NO_MISSING_TRACES == 'none'
+    assert not pd.isna(row['missing_traces'])
+    assert bool(row['partial']) is True                # because of --quick alone
+    assert int(row['total_instants']) == 3
+
+    out = capsys.readouterr().out
+    assert 'Total ranking instants across 3/3 settings: 3' in out
+    assert 'partial=True' in out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# (h) --runs / --windows can under-report the total exactly as --quick can
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_the_published_protocol_is_the_argparse_default_and_is_not_partial(
+        monkeypatch, tmp_path, make_job):
+    """INVARIANT: the BARE invocation reproduces the published protocol and is
+    the only invocation NOT marked partial.
+
+    This is the non-vacuity half of the pair below. If `partial` were simply
+    always True, every test asserting partial=True would still pass while the
+    column stopped carrying any information. So the default run must land on
+    PUBLISHED_RUNS / PUBLISHED_WINDOWS, must record them in the totals row, and
+    must be the case that is not flagged.
+    """
+    import sys
+
+    import ranking_degeneracy as rd
+
+    _stub_pipeline(rd, monkeypatch, tmp_path, make_job,
+                   trace=_fake_trace(rd, make_job))
+    monkeypatch.setattr(sys, 'argv', ['ranking_degeneracy.py'])
+
+    rd.main()
+
+    row = pd.read_csv(tmp_path / 'ranking_degeneracy_totals.csv').iloc[0]
+    assert int(row['runs']) == rd.PUBLISHED_RUNS == 20
+    assert int(row['windows']) == rd.PUBLISHED_WINDOWS == 20
+    assert int(row['published_runs']) == rd.PUBLISHED_RUNS
+    assert int(row['published_windows']) == rd.PUBLISHED_WINDOWS
+    assert bool(row['partial']) is False
+    assert row['missing_traces'] == 'none'
+
+
+@pytest.mark.parametrize('flag, value, runs, windows', [
+    ('--windows', '2', 20, 2),
+    ('--runs', '5', 5, 20),
+])
+def test_reduced_runs_or_windows_is_partial_with_every_trace_present(
+        flag, value, runs, windows, monkeypatch, tmp_path, make_job):
+    """INVARIANT: ANY departure from the published protocol marks the run
+    partial -- not only --quick, and not only a missing trace.
+
+    --runs and --windows are user-settable and their defaults ARE the published
+    protocol, so `ranking_degeneracy.py --windows 2` produces a total that is
+    not 45,432 while every trace is present and nothing is quick. `partial` was
+    computed as `bool(missing) or bool(args.quick)`, so that run wrote
+    partial=False beside a number a reader would take for the published one.
+    The totals row must also record the runs/windows actually used, so the file
+    says what produced it without anyone having to recall the command line.
+    """
+    import sys
+
+    import ranking_degeneracy as rd
+
+    _stub_pipeline(rd, monkeypatch, tmp_path, make_job,
+                   trace=_fake_trace(rd, make_job))
+    monkeypatch.setattr(sys, 'argv', ['ranking_degeneracy.py', flag, value])
+
+    rd.main()
+
+    row = pd.read_csv(tmp_path / 'ranking_degeneracy_totals.csv').iloc[0]
+    assert int(row['settings_present']) == 3        # nothing is missing
+    assert row['missing_traces'] == 'none'
+    assert int(row['runs']) == runs
+    assert int(row['windows']) == windows
+    assert bool(row['partial']) is True, (
+        f'{flag} {value} departs from the published protocol '
+        f'({rd.PUBLISHED_RUNS} runs, {rd.PUBLISHED_WINDOWS} windows) yet the '
+        f'totals row claims these are the published numbers')
+
+
+def test_published_windows_matches_the_trace_benchmarks_own_protocol():
+    """INVARIANT: this script's window default is the trace benchmark's N_WINDOWS.
+
+    The degeneracy instants are collected by driving `trace_driven_benchmark`,
+    so "the published protocol" only means something if the two agree about how
+    many windows that is. If N_WINDOWS moves, PUBLISHED_WINDOWS has to move with
+    it, or the default invocation stops reproducing the published total while
+    still reporting partial=False.
+    """
+    pytest.importorskip('xgboost',
+                        reason='trace_driven_benchmark imports xgboost')
+    import ranking_degeneracy as rd
+    import trace_driven_benchmark as tdb
+
+    assert rd.PUBLISHED_WINDOWS == tdb.N_WINDOWS
+
+
+def test_run_scope_partial_predicate_covers_every_reduction():
+    """INVARIANT: RunScope is the single place `partial` is decided, and it
+    answers True for each independent way of shrinking the total.
+
+    Unit-level companion to the end-to-end tests above: it pins the predicate
+    itself, so a future caller that builds a RunScope by hand cannot get a
+    different answer from the one `main()` writes into the CSV.
+    """
+    import ranking_degeneracy as rd
+
+    full = rd.RunScope(runs=rd.PUBLISHED_RUNS, windows=rd.PUBLISHED_WINDOWS)
+    assert full.partial is False
+    assert full.reasons() == []
+    assert full.missing_field() == 'none'
+
+    for scope in (
+        rd.RunScope(runs=5, windows=rd.PUBLISHED_WINDOWS),
+        rd.RunScope(runs=rd.PUBLISHED_RUNS, windows=2),
+        rd.RunScope(runs=rd.PUBLISHED_RUNS, windows=rd.PUBLISHED_WINDOWS,
+                    missing=['sdsc']),
+        rd.RunScope(runs=rd.PUBLISHED_RUNS, windows=rd.PUBLISHED_WINDOWS,
+                    quick=True),
+    ):
+        assert scope.partial is True
+        assert scope.reasons(), 'a partial run must be able to say why'
+
+    assert rd.RunScope(runs=20, windows=20,
+                       missing=['sdsc', 'lanl']).missing_field() == 'sdsc;lanl'
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# (i) The FIGURE caption: the only part of the artefact most readers ever see
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _figure_frames():
+    """Minimal summary/feature/curve tables shaped like the real CSVs."""
+    summary = pd.DataFrame([
+        {'setting': 'synthetic (12 features)', 'ranking_instants': 3646,
+         'equal_size_diff_pred_violations': 0,
+         'pct_order_identical_to_size': 80.3,
+         'pct_order_identical_to_arrival': 19.7,
+         'pct_size_table_monotone': 63.1},
+        {'setting': 'SDSC SP2 (1998) (8 features)', 'ranking_instants': 11843,
+         'equal_size_diff_pred_violations': 0,
+         'pct_order_identical_to_size': 71.5,
+         'pct_order_identical_to_arrival': 18.1,
+         'pct_size_table_monotone': 57.1},
+    ])
+    feats = pd.DataFrame([
+        {'setting': 'synthetic (12 features)', 'feature': 'job_gpu',
+         'pct_instants_varying_across_queue': 100.0},
+        {'setting': 'synthetic (12 features)', 'feature': 'total_free',
+         'pct_instants_varying_across_queue': 0.0},
+    ])
+    curves = pd.DataFrame([
+        {'setting': 'synthetic (12 features)', 'size': 1.0, 'norm_score': 0.0,
+         'n': 10},
+        {'setting': 'synthetic (12 features)', 'size': 8.0, 'norm_score': 1.0,
+         'n': 10},
+        {'setting': 'SDSC SP2 (1998) (8 features)', 'size': 2.0,
+         'norm_score': 0.2, 'n': 5},
+        {'setting': 'SDSC SP2 (1998) (8 features)', 'size': 64.0,
+         'norm_score': 0.9, 'n': 5},
+    ])
+    return summary, feats, curves
+
+
+def _captions(rd, monkeypatch, scope):
+    """Render both figures with the renderer intercepted, returning subtitles.
+
+    `finish` is where every caption string lands and `save_both` is the only
+    call that touches the filesystem, so replacing the two means the real
+    caption code runs while no PNG is written anywhere -- not even a temporary
+    one.
+    """
+    summary, feats, curves = _figure_frames()
+    subtitles = []
+
+    def fake_finish(fig, mode='light', title=None, subtitle=None, **kw):
+        subtitles.append(subtitle)
+        return fig
+
+    monkeypatch.setattr(rd, 'finish', fake_finish)
+    monkeypatch.setattr(rd, 'save_both',
+                        lambda fig, stem, mode, **kw: rd.plt.close(fig))
+
+    rd.make_figure(summary, feats, curves, 'unused-stem', scope)
+    rd.make_size_table_figure(curves, summary, 'unused-stem', scope)
+    return subtitles
+
+
+def test_full_run_caption_splits_synthetic_from_trace_instants(monkeypatch):
+    """INVARIANT: the caption never calls the whole total "real" instants.
+
+    3,646 of the published 45,432 instants come from the synthetic simulator,
+    which is not a real machine. The caption read "Across 45,432 real dispatch
+    instants", which upgrades simulator output to field evidence for free. It
+    must report the split instead.
+    """
+    import ranking_degeneracy as rd
+
+    scope = rd.RunScope(runs=rd.PUBLISHED_RUNS, windows=rd.PUBLISHED_WINDOWS)
+    subtitles = _captions(rd, monkeypatch, scope)
+    assert subtitles, 'no caption was rendered'
+
+    main_caption = subtitles[0]
+    assert 'real dispatch instants' not in main_caption, (
+        'the caption describes synthetic simulator instants as real')
+    # 3646 + 11843 = 15489 in this fixture: the split must be stated, not just
+    # the bare total.
+    assert '15,489 dispatch instants' in main_caption
+    assert '3,646 synthetic' in main_caption
+    assert '11,843' in main_caption
+
+    for caption in subtitles:
+        assert 'PARTIAL' not in caption, (
+            'a complete run must not be labelled partial')
+
+
+def test_partial_run_caption_says_so_and_names_the_settings_present(monkeypatch):
+    """INVARIANT: a partial run's FIGURES say they are partial.
+
+    The hard failure on a missing trace exists so that a smaller total can never
+    be presented as the published one. --allow-partial reopened exactly that
+    hole at the figure: the caption printed "Across {total} real dispatch
+    instants" from the same sum with no marker at all, so a partial PNG was
+    indistinguishable from the published one. Both figures must carry the
+    marker, name the settings actually present, and say why the run is partial.
+    """
+    import ranking_degeneracy as rd
+
+    scope = rd.RunScope(runs=rd.PUBLISHED_RUNS, windows=2, missing=['lanl'])
+    subtitles = _captions(rd, monkeypatch, scope)
+    assert len(subtitles) >= 2, 'both figures must render a caption'
+
+    for caption in subtitles:
+        assert caption.startswith('PARTIAL RUN:'), (
+            'a partial run rendered a caption indistinguishable from the '
+            'published figure')
+        # the settings that ARE present, named
+        assert 'synthetic + SDSC SP2' in caption
+        # and why the run is partial, in the caption itself
+        assert 'lanl' in caption
+        assert '--windows 2' in caption
+        assert 'NOT the published totals' in caption
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# (j) --figures-only must not re-render from artefacts it cannot vouch for
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _complete_artefacts(rd, monkeypatch, tmp_path, make_job):
+    """Run the stubbed pipeline at the published protocol, leaving CSVs behind.
+
+    Returns the figure-call log, cleared, with argv already switched to
+    --figures-only: every test below then calls rd.main() once and inspects
+    whether anything was rendered.
+    """
+    import sys
+
+    rendered = _stub_pipeline(rd, monkeypatch, tmp_path, make_job,
+                              trace=_fake_trace(rd, make_job))
+    monkeypatch.setattr(sys, 'argv', ['ranking_degeneracy.py'])
+    rd.main()
+    seed = pd.read_csv(tmp_path / 'ranking_degeneracy_totals.csv').iloc[0]
+    assert bool(seed['partial']) is False, 'the seeded artefacts must be complete'
+    rendered.clear()
+    monkeypatch.setattr(sys, 'argv', ['ranking_degeneracy.py', '--figures-only'])
+    return rendered
+
+
+def test_figures_only_re_renders_when_the_totals_row_agrees(monkeypatch, tmp_path,
+                                                            make_job):
+    """INVARIANT (non-vacuity): a consistent, complete artefact set re-renders.
+
+    Without this, the four refusal tests below would all pass on a
+    --figures-only branch that refused unconditionally.
+    """
+    import ranking_degeneracy as rd
+
+    rendered = _complete_artefacts(rd, monkeypatch, tmp_path, make_job)
+    rd.main()
+
+    assert [name for name, _, _ in rendered] == ['figure', 'size_table']
+    # the scope handed to the renderer describes a complete run
+    scope = rendered[0][1][-1]
+    assert scope.partial is False
+
+
+def test_figures_only_refuses_when_the_totals_file_is_absent(monkeypatch, tmp_path,
+                                                             make_job):
+    """INVARIANT: no totals file => refuse, and say which file.
+
+    --figures-only recomputes nothing, so the totals row is the only record that
+    the CSVs it is about to caption came from a complete run. Proceeding without
+    it re-publishes a figure whose quoted total nothing vouches for.
+    """
+    import ranking_degeneracy as rd
+
+    rendered = _complete_artefacts(rd, monkeypatch, tmp_path, make_job)
+    (tmp_path / 'ranking_degeneracy_totals.csv').unlink()
+
+    with pytest.raises(SystemExit) as exc:
+        rd.main()
+
+    assert 'ranking_degeneracy_totals.csv' in str(exc.value)
+    assert not rendered, 'a figure was rendered despite the refusal'
+
+
+def test_figures_only_refuses_to_re_render_a_partial_run(monkeypatch, tmp_path,
+                                                         make_job):
+    """INVARIANT: partial=True in the totals row => refuse.
+
+    Re-rendering the publication figures from a partial run is precisely the
+    mistake the hard failure on a missing trace was added to prevent: the
+    caption would present a reduced total in the published figure's own words.
+    """
+    import ranking_degeneracy as rd
+
+    rendered = _complete_artefacts(rd, monkeypatch, tmp_path, make_job)
+    totals_path = tmp_path / 'ranking_degeneracy_totals.csv'
+    totals = pd.read_csv(totals_path)
+    totals.loc[0, 'partial'] = True
+    totals.loc[0, 'missing_traces'] = 'lanl'
+    totals.to_csv(totals_path, index=False)
+
+    with pytest.raises(SystemExit) as exc:
+        rd.main()
+
+    assert 'partial=True' in str(exc.value)
+    assert not rendered, 'a partial run was re-rendered as a publication figure'
+
+
+def test_figures_only_refuses_when_the_instant_total_is_stale(monkeypatch,
+                                                              tmp_path, make_job):
+    """INVARIANT: the totals row must add up to the table beside it.
+
+    --figures-only re-renders from ranking_degeneracy.csv while leaving the
+    totals row untouched, so the two drift apart the moment anything regenerates
+    one and not the other -- and nothing flagged the mismatch, so the figure
+    quoted the sum of whichever table it happened to read.
+    """
+    import ranking_degeneracy as rd
+
+    rendered = _complete_artefacts(rd, monkeypatch, tmp_path, make_job)
+    totals_path = tmp_path / 'ranking_degeneracy_totals.csv'
+    totals = pd.read_csv(totals_path)
+    # a plausible-looking larger total, the shape of a stale row left behind by
+    # an earlier, smaller run
+    totals.loc[0, 'total_instants'] = int(totals.loc[0, 'total_instants']) + 41786
+    totals.to_csv(totals_path, index=False)
+
+    with pytest.raises(SystemExit) as exc:
+        rd.main()
+
+    assert 'disagrees with ranking_degeneracy.csv' in str(exc.value)
+    assert not rendered, 'stale totals were re-rendered anyway'
+
+
+def test_figures_only_refuses_when_only_the_violation_total_is_stale(
+        monkeypatch, tmp_path, make_job):
+    """INVARIANT: the violation total is checked too, not only the instants.
+
+    equal_size_diff_pred_violations == 0 is a headline claim in its own right, so
+    a totals row that agrees about instants and disagrees about violations is
+    exactly as stale as one that disagrees about both. Checking a single column
+    would leave half the file unguarded.
+    """
+    import ranking_degeneracy as rd
+
+    rendered = _complete_artefacts(rd, monkeypatch, tmp_path, make_job)
+    totals_path = tmp_path / 'ranking_degeneracy_totals.csv'
+    totals = pd.read_csv(totals_path)
+    totals.loc[0, 'total_violations'] = int(totals.loc[0, 'total_violations']) + 7
+    totals.to_csv(totals_path, index=False)
+
+    with pytest.raises(SystemExit) as exc:
+        rd.main()
+
+    assert 'disagrees with ranking_degeneracy.csv' in str(exc.value)
+    assert not rendered
+
+
+# The columns scope_from_totals declares it needs before it will vouch for
+# anything. Spelled out here rather than read from the module so the test pins
+# the LIST as well as the check: dropping a column from TOTALS_COLUMNS would
+# otherwise silently drop it from the guard and from the test together.
+_REQUIRED_TOTALS_COLUMNS = ('settings_expected', 'settings_present',
+                            'missing_traces', 'runs', 'published_runs',
+                            'windows', 'published_windows', 'partial',
+                            'total_instants', 'total_violations')
+
+
+def _rewrite_partial_cell(totals_path, raw):
+    """Rewrite the single-row totals CSV so its `partial` field is `raw` text.
+
+    Done by hand rather than through pandas on purpose: DataFrame.to_csv renders
+    a Python bool back as the canonical `False`, which pd.read_csv coerces
+    straight to a numpy bool, so the string path _as_bool exists for is never
+    reached. Writing the field means the reader sees what a hand-edited or
+    foreign-tool-written totals file would actually contain.
+    """
+    lines = totals_path.read_text().splitlines()
+    header, fields = lines[0].split(','), lines[1].split(',')
+    fields[header.index('partial')] = raw
+    totals_path.write_text(lines[0] + '\n' + ','.join(fields) + '\n')
+
+
+def test_as_bool_refuses_the_string_that_bool_gets_wrong():
+    """INVARIANT: _as_bool reads a CSV cell's TEXT, not its truthiness.
+
+    The hazard is named in the function's own docstring and is the whole reason
+    it exists: `bool('False')` is True, so a guard written as
+    `if bool(row['partial'])` refuses a complete run, while `bool('no')` -- or
+    any other spelling a hand-edited totals file might carry -- is True as well
+    and a PARTIAL run sails past a guard that reads it the other way round.
+
+    This pins the helper at the exact string from the docstring, which is worth
+    doing separately: current pandas coerces a bare `False` cell to a numpy bool
+    before _as_bool ever sees it, so only the cells asserted in the two
+    end-to-end tests below reach it as text.
+    """
+    import ranking_degeneracy as rd
+
+    assert bool('False') is True, 'the hazard _as_bool exists for is gone'
+    for falsey in ('False', 'false', 'FALSE', ' False ', 'no', '0', 'NO'):
+        assert rd._as_bool(falsey) is False, f'{falsey!r} read as a true value'
+    for truthy in ('True', 'true', 'TRUE', ' True ', 'yes', '1'):
+        assert rd._as_bool(truthy) is True, f'{truthy!r} read as a false value'
+    # non-strings keep plain truthiness, which is what the real bool cell needs
+    assert rd._as_bool(True) is True
+    assert rd._as_bool(False) is False
+    assert rd._as_bool(np.False_) is False
+
+
+@pytest.mark.parametrize('cell', [' False', 'no'])
+def test_figures_only_accepts_a_string_false_partial_cell(cell, monkeypatch,
+                                                          tmp_path, make_job):
+    """INVARIANT: a totals row whose `partial` cell is a FALSE-spelling string
+    re-renders, because the guard reads the text rather than its truthiness.
+
+    This is the half a bare `bool()` gets backwards. Both cells below describe
+    complete runs; `bool(' False')` and `bool('no')` are True, so an unguarded
+    read refuses to re-render a perfectly good artefact set -- and, in the
+    mirror case _as_bool's docstring names, would wave a partial one through as
+    soon as its cell arrived as text.
+
+    The cells carry a space or an alternative spelling because pandas coerces a
+    bare `False` to a numpy bool before the guard sees it; the assertion below
+    fails rather than passing vacuously if that ever stops being true.
+    """
+    import ranking_degeneracy as rd
+
+    rendered = _complete_artefacts(rd, monkeypatch, tmp_path, make_job)
+    totals_path = tmp_path / 'ranking_degeneracy_totals.csv'
+    _rewrite_partial_cell(totals_path, cell)
+
+    parsed = pd.read_csv(totals_path).iloc[0]['partial']
+    assert isinstance(parsed, str), (
+        'pandas coerced the cell to a bool, so this test never exercises the '
+        'string path _as_bool exists for -- pick a cell it leaves as text')
+    assert bool(parsed) is True, 'the witness must be a string bool() gets wrong'
+
+    rd.main()
+
+    assert [name for name, _, _ in rendered] == ['figure', 'size_table'], (
+        'a complete run whose partial cell round-tripped as the STRING '
+        f'{cell!r} was refused: the guard is reading truthiness, not the text')
+    assert rendered[0][1][-1].partial is False
+
+
+@pytest.mark.parametrize('cell', [' True', 'yes'])
+def test_figures_only_refuses_a_string_true_partial_cell(cell, monkeypatch,
+                                                         tmp_path, make_job):
+    """INVARIANT: a totals row whose `partial` cell is a TRUE-spelling string is
+    still refused.
+
+    The companion to the test above, and the reason the guard cannot simply be
+    inverted: reading the text has to keep saying "no" to a partial run. A
+    string cell must not become a way of smuggling one past --figures-only and
+    re-publishing its reduced total in the published figure's own words.
+    """
+    import ranking_degeneracy as rd
+
+    rendered = _complete_artefacts(rd, monkeypatch, tmp_path, make_job)
+    totals_path = tmp_path / 'ranking_degeneracy_totals.csv'
+    _rewrite_partial_cell(totals_path, cell)
+    assert isinstance(pd.read_csv(totals_path).iloc[0]['partial'], str)
+
+    with pytest.raises(SystemExit) as exc:
+        rd.main()
+
+    assert 'partial=True' in str(exc.value)
+    assert not rendered, 'a partial run was re-rendered as a publication figure'
+
+
+def test_figures_only_refuses_a_totals_file_with_more_than_one_row(monkeypatch,
+                                                                   tmp_path,
+                                                                   make_job):
+    """INVARIANT: the totals file must hold EXACTLY one row.
+
+    scope_from_totals reads `totals.iloc[0]` and vouches for the whole artefact
+    set on the strength of it. A second row means the file is not what it claims
+    -- two runs appended, or a run that wrote twice -- and iloc[0] then describes
+    one of them while the figure captions the sum of the other table. Without
+    the check the extra rows are simply invisible: the first row here is the
+    good one, so a neutered guard sails straight through and renders.
+    """
+    import ranking_degeneracy as rd
+
+    rendered = _complete_artefacts(rd, monkeypatch, tmp_path, make_job)
+    totals_path = tmp_path / 'ranking_degeneracy_totals.csv'
+    totals = pd.read_csv(totals_path)
+    pd.concat([totals, totals], ignore_index=True).to_csv(totals_path, index=False)
+
+    with pytest.raises(SystemExit) as exc:
+        rd.main()
+
+    msg = str(exc.value)
+    assert 'holds 2 rows' in msg, f'the refusal does not name the problem: {msg}'
+    assert 'exactly 1' in msg
+    assert not rendered, 'a two-row totals file was vouched for anyway'
+
+
+@pytest.mark.parametrize('column', _REQUIRED_TOTALS_COLUMNS)
+def test_figures_only_refuses_a_totals_file_missing_a_required_column(
+        column, monkeypatch, tmp_path, make_job):
+    """INVARIANT: every column in TOTALS_COLUMNS must be present, or refuse.
+
+    A totals file that predates the columns recording what produced it cannot be
+    checked at all: `runs`/`windows` are how a reduced protocol is detected,
+    `partial` is the verdict itself, and the two totals are what the consistency
+    check compares. Four of the ten are not read after the guard, so dropping
+    one of those is completely silent without it -- the run proceeds and
+    re-publishes a figure from an artefact set nothing has vouched for.
+
+    Parametrised over the whole tuple so the guard cannot be narrowed to a
+    subset of the columns it declares.
+    """
+    import ranking_degeneracy as rd
+
+    assert rd.TOTALS_COLUMNS == _REQUIRED_TOTALS_COLUMNS, (
+        'the declared totals columns changed; this guard must be updated with '
+        'them, not around them')
+
+    rendered = _complete_artefacts(rd, monkeypatch, tmp_path, make_job)
+    totals_path = tmp_path / 'ranking_degeneracy_totals.csv'
+    totals = pd.read_csv(totals_path)
+    totals.drop(columns=[column]).to_csv(totals_path, index=False)
+
+    with pytest.raises(SystemExit) as exc:
+        rd.main()
+
+    msg = str(exc.value)
+    assert column in msg, f'the refusal does not name the missing column: {msg}'
+    assert 'missing' in msg
+    assert not rendered, (
+        f'a totals file with no {column!r} column was vouched for anyway')

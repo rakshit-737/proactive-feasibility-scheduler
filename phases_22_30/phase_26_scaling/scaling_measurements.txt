@@ -20,31 +20,33 @@ KEY METRICS ACROSS SCALES
 ----------------------------------------------------------------------
 Cluster      Wait (ts)    Throughput     Latency (ms)   Overhead  
 ----------------------------------------------------------------------
-Small           3743.83          10.4         48.05       4.81%
-Medium          3481.65          17.9          9.60       0.96%
-Large           2797.88          33.2         28.40       2.84%
-XLarge          1794.49          59.2         19.49       1.95%
+Small           3743.83          10.4         15.18       1.52%
+Medium          3481.65          17.9         15.49       1.55%
+Large           2797.88          33.2         12.57       1.26%
+XLarge          1794.49          59.2         10.24       1.02%
 
 
-SCALING LAW ANALYSIS
+INFERENCE LATENCY: WHAT WAS MEASURED
 ----------------------------------------------------------------------
-Model: latency = 64.547 * (n_gpus)^-0.23
-Complexity: O(1)
-Exponent: -0.234
+Points: 4
+Range: 10.24 - 15.49 ms (1.5x spread)
+Monotone in cluster size: NO
 
-VERDICT: Inference latency is CONSTANT regardless of cluster size.
-        → Excellent scalability for HPC deployment.
+No complexity class is inferred from these numbers, and no
+projection past the largest measured cluster is made.
+inference_latency_ms is a wall-clock measurement: on a repeat
+run of this repository the timing columns moved by up to 84%
+while every non-timing column was bit-identical. Four noisy,
+non-monotone points cannot identify a scaling law. Earlier
+versions of this file fitted one anyway and reported
+'O(1) / latency is CONSTANT' from a fitted exponent of -0.234,
+then extrapolated that to 4,096 GPUs. The verdict and the
+projections are withdrawn (v3.6).
 
-PRODUCTION RECOMMENDATIONS
+SCHEDULING OVERHEAD
 ----------------------------------------------------------------------
-✓ Scheduling overhead is acceptable (< 5%).
-⚠ Inference latency is non-trivial (48.05 ms).
-
-
-PROJECTED PERFORMANCE AT FUTURE SCALES
-----------------------------------------------------------------------
-    512 GPUs: ~14.98 ms inference latency
-   1024 GPUs: ~12.74 ms inference latency
-   4096 GPUs: ~9.21 ms inference latency
+Peak scheduling overhead: 1.55% of throughput
+Worst inference latency: 15.49 ms (at 64 GPUs)
+Both are wall-clock and machine-dependent.
 
 ======================================================================

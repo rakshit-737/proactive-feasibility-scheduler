@@ -14,7 +14,7 @@ distributions):
       (fifo, proactive, proactive_starvation): per-job Gini, per-job max
       wait, starvation counts (jobs waiting > 3x their runtime).
   - 05_results/schedulers/multi_scheduler_benchmark.csv
-      Per-job fairness numbers for SJF / NN / PRIORITY (and FIFO /
+      Per-job fairness numbers for SJF / NN / STATIC_PRIORITY (and FIFO /
       PROACTIVE duplicates, which are skipped in favour of the source
       above).
 
@@ -66,7 +66,7 @@ POLICY_KEY = {
     "proactive_starvation": "PROACTIVE",
     "sjf": "SJF",
     "nn": "NN",
-    "priority": "PRIORITY",
+    "static_priority": "STATIC_PRIORITY",
 }
 POLICY_TICK = {
     "fifo": label_of("FIFO"),
@@ -74,7 +74,7 @@ POLICY_TICK = {
     "proactive_starvation": "Proactive + starvation guard",
     "sjf": label_of("SJF"),
     "nn": label_of("NN"),
-    "priority": label_of("PRIORITY"),
+    "static_priority": label_of("STATIC_PRIORITY"),
 }
 
 # Real result files produced by the phases 01-21 pipeline
@@ -171,7 +171,8 @@ def load_per_job_aggregates() -> Dict[str, Dict]:
 
     if os.path.exists(REAL_MULTI_SCHED_CSV):
         multi = pd.read_csv(REAL_MULTI_SCHED_CSV)
-        name_map = {"SJF": "SJF", "NN": "Neural Network", "PRIORITY": "Priority"}
+        name_map = {"SJF": "SJF", "NN": "Neural Network",
+                    "STATIC_PRIORITY": "Static priority"}
         for _, r in multi.iterrows():
             key = str(r["scheduler"]).lower()
             if key in aggregates:
@@ -187,7 +188,7 @@ def load_per_job_aggregates() -> Dict[str, Dict]:
                 "completed_jobs": float("nan"),
             }
     else:
-        print(f"  WARNING: {REAL_MULTI_SCHED_CSV} not found; SJF/NN/Priority rows omitted")
+        print(f"  WARNING: {REAL_MULTI_SCHED_CSV} not found; SJF/NN/static-priority rows omitted")
 
     return aggregates
 

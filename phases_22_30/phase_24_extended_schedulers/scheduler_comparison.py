@@ -6,12 +6,12 @@ Compare the proactive scheduler against the baselines actually implemented
 and benchmarked in this project (04_scheduler/multi_scheduler_benchmark.py):
   - FIFO (arrival-order baseline)
   - SJF (shortest-job-first heuristic)
-  - Priority (priority-score heuristic)
+  - Static priority (priority-score + fixed arrival bonus; no aging)
   - Neural Network scheduler (MLP-based, Phase 14)
   - Proactive (XGBoost wait-model ordering, Phase 09)
 
 All numbers are read from REAL benchmark outputs:
-  - 05_results/schedulers/multi_scheduler_benchmark.csv (15-run multi-scheduler
+  - 05_results/schedulers/multi_scheduler_benchmark.csv (20-run multi-scheduler
     benchmark, per-scheduler means)
   - 05_results/benchmark_statistical_results.csv (40-run paired FIFO-vs-proactive
     benchmark, per-run rows) for the statistical significance test.
@@ -91,10 +91,12 @@ SCHEDULERS = {
         "type": "heuristic_baseline",
         "reference": "04_scheduler/sjf_scheduler.py (f-model estimates, C=5)",
     },
-    "PRIORITY": {
-        "name": "Priority",
+    "STATIC_PRIORITY": {
+        "name": "Static priority",
         "type": "heuristic_baseline",
-        "reference": "04_scheduler/priority_scheduler.py",
+        # Renamed from PRIORITY: the key's current_time term cancels pairwise,
+        # so the order is time-invariant -- a static priority, never aging.
+        "reference": "04_scheduler/priority_scheduler.py (time-invariant key)",
     },
     "HRRN": {
         "name": "Highest Response Ratio Next",
@@ -253,6 +255,36 @@ def _load_scheduler_results() -> pd.DataFrame:
     return df
 
 
+def _scheduler_info(sched_key: str) -> Dict[str, str]:
+    """Metadata for one scheduler key, or a hard error naming the mismatch.
+
+    This used to be `SCHEDULERS.get(key, {'name': key, 'type': 'unknown', ...})`.
+    A key present in the benchmark CSV but absent from the table above therefore
+    reached `baseline_comparison.csv` -- and from there the manuscript's
+    comparison table -- as a row of real measured numbers carrying the type
+    'unknown' and the reference 'n/a'. That row looks published and vetted; it
+    is neither. Renaming a scheduler (PRIORITY -> STATIC_PRIORITY) is exactly
+    how it happens, and the degraded row is the one artefact that would not
+    reveal the rename.
+
+    The repository's rule is that a mismatch between two tables fails loudly
+    rather than producing a plausible-looking row.
+    """
+    try:
+        return SCHEDULERS[sched_key]
+    except KeyError:
+        raise SystemExit(
+            f"[Phase 24] ERROR: unknown scheduler key {sched_key!r}.\n"
+            f"  It appears in: {MULTI_SCHEDULER_CSV}\n"
+            f"  It is missing from: the SCHEDULERS table in "
+            f"{os.path.relpath(os.path.abspath(__file__), PROJECT_ROOT).replace(os.sep, '/')}\n"
+            f"  Known keys: {sorted(SCHEDULERS)}\n"
+            "Add a (name, type, reference) entry for it there, or -- if the key "
+            "was renamed -- regenerate the benchmark CSV. Phase 24 will not "
+            "publish a row labelled 'unknown' alongside verified ones."
+        ) from None
+
+
 def _compute_improvements_vs_fifo(summary_df: pd.DataFrame) -> Dict[str, Dict[str, float]]:
     """
     Compute mean improvements for each scheduler vs. FIFO baseline
@@ -289,9 +321,7 @@ def build_comparison_dataframe(summary_df: pd.DataFrame) -> pd.DataFrame:
 
     for _, r in summary_df.iterrows():
         sched_key = r["scheduler"]
-        sched_info = SCHEDULERS.get(
-            sched_key, {"name": sched_key, "type": "unknown", "reference": "n/a"}
-        )
+        sched_info = _scheduler_info(sched_key)
         # pred_wait_mae is only defined for predictor-driven schedulers
         # (PROACTIVE, NN); others carry NaN.
         pred_mae = float(r[pred_mae_col]) if pred_mae_col is not None else float("nan")
@@ -467,7 +497,7 @@ def write_novelty_claim(
             + os.path.relpath(MULTI_SCHEDULER_CSV, PROJECT_ROOT).replace(os.sep, "/")
             + "\n"
         )
-        f.write("    (15-run multi-scheduler benchmark, per-scheduler means)\n")
+        f.write("    (20-run multi-scheduler benchmark, per-scheduler means)\n")
         if paired_stats is not None:
             f.write("  • 05_results/benchmark_statistical_results.csv\n")
             f.write(f"    ({paired_stats['n_runs']}-run paired FIFO-vs-proactive benchmark)\n")
@@ -505,7 +535,7 @@ def write_novelty_claim(
         f.write("2. RANKING BY MEAN-WAIT IMPROVEMENT vs. FIFO\n")
         sorted_by_wait = sorted(improvements.items(), key=lambda x: x[1]["wait_improvement_pct"], reverse=True)
         for rank, (sched_name, impr) in enumerate(sorted_by_wait, 1):
-            sched_label = SCHEDULERS.get(sched_name, {"name": sched_name})["name"]
+            sched_label = _scheduler_info(sched_name)["name"]
             f.write(f"   {rank}. {sched_label:<25} {impr['wait_improvement_pct']:+6.2f}%\n")
 
         f.write("\n3. FAIRNESS (Gini coefficient of wait times, lower is fairer)\n")
@@ -534,7 +564,7 @@ def write_novelty_claim(
         for sched_name, impr in improvements.items():
             if sched_name in ("PROACTIVE", "FIFO"):
                 continue  # FIFO-vs-proactive already covered in finding 1
-            sched_label = SCHEDULERS.get(sched_name, {"name": sched_name})["name"]
+            sched_label = _scheduler_info(sched_name)["name"]
             their_imp = impr["wait_improvement_pct"]
             if proactive_wait_imp > their_imp:
                 beats_wait.append(sched_label)

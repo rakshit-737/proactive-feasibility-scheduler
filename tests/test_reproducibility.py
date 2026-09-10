@@ -434,7 +434,7 @@ def test_color_of_is_stable_regardless_of_call_order():
         for p in reversed(policies):
             vizstyle.color_of('HRRN', mode)
             backward[p] = vizstyle.color_of(p, mode)
-            vizstyle.color_of('PRIORITY', 'light' if mode == 'dark' else 'dark')
+            vizstyle.color_of('STATIC_PRIORITY', 'light' if mode == 'dark' else 'dark')
         assert forward == backward
 
         # The encoding must actually distinguish the three roles, otherwise a

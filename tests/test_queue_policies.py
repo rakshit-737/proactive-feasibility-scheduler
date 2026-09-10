@@ -1,4 +1,4 @@
-"""Queue-ordering policy helpers: SJF, HRRN, smallest-size, priority.
+"""Queue-ordering policy helpers: SJF, HRRN, smallest-size, static priority.
 
 These four modules are the classical baselines the whole benchmark is measured
 against. They are pure functions -- queue in, reordered queue out -- which makes
@@ -260,8 +260,8 @@ def test_hrrn_order_is_a_live_function_of_current_time(make_job):
 
     Two jobs, fixed attributes, only `current_time` differs between the two
     calls, and the order flips. That is the property that distinguishes an aging
-    policy from a static key, and (see the priority test below) it is NOT shared
-    by priority_scheduler.
+    policy from a static key, and (see test_static_priority_order_is_time_invariant
+    below) it is NOT shared by priority_scheduler.
     """
     long_job = make_job(job_id=1, arrival_time=0, runtime=100)
     short_job = make_job(job_id=2, arrival_time=99, runtime=1)
@@ -310,10 +310,10 @@ def test_size_ignores_current_time(make_job):
 
 
 # --------------------------------------------------------------------------
-# priority_scheduler: lower score first, with an aging discount.
+# priority_scheduler (the STATIC_PRIORITY baseline): lower score first, no aging.
 # --------------------------------------------------------------------------
 
-def test_priority_lower_score_first(make_job):
+def test_static_priority_lower_score_first(make_job):
     """INVARIANT: in priority_scheduler a LOWER priority_score means dispatch sooner.
 
     The sign convention is the opposite of the everyday meaning of "priority"
@@ -327,27 +327,31 @@ def test_priority_lower_score_first(make_job):
     assert [j.priority_score for j in out] == [1, 5, 9]
 
 
-def test_priority_aging_never_reorders_two_queued_jobs(make_job):
-    """DOCUMENTED CURRENT BEHAVIOUR (suspected defect), not an endorsement.
+def test_static_priority_order_is_time_invariant(make_job):
+    """INVARIANT: the STATIC_PRIORITY order never changes as jobs wait.
 
-    priority_scheduler advertises "aging", but its key is
+    This is the defining property of the policy, and the reason it is named
+    STATIC_PRIORITY rather than "priority + aging". Its key is
         priority_score - 0.03 * (current_time - arrival_time)
     which expands to
         (priority_score + 0.03 * arrival_time) - 0.03 * current_time.
-    The `- 0.03 * current_time` term is IDENTICAL for every job in the queue, so
-    it cancels out of every pairwise comparison. The induced order is therefore
-    the static key (priority_score + 0.03 * arrival_time) and does not change as
-    jobs wait: a low-priority job can never overtake a high-priority one by
-    waiting, no matter how long it waits. The aging term acts as a one-off
-    arrival-time bonus, not as anti-starvation aging.
+    The `- 0.03 * current_time` term is IDENTICAL for every job in the queue at
+    any one instant, so it cancels out of every pairwise comparison. What
+    actually induces the order is the time-independent key
+    (priority_score + 0.03 * arrival_time): the 0.03 coefficient buys a one-off
+    arrival-time bonus, never anti-starvation aging. A low-priority job can
+    therefore never overtake a high-priority one by waiting, however long it
+    waits.
 
-    (The clamp `max(0, ...)` does not rescue this: queued jobs always have
-    arrival_time <= current_time, so the clamp is never active in the dispatch
+    (The clamp `max(0, ...)` does not change this: queued jobs always have
+    arrival_time <= current_time, so the clamp never fires in the dispatch
     loop.)
 
-    This test pins the behaviour as it is today. If someone fixes the policy so
-    aging really does bite, this test SHOULD fail and be rewritten -- that is
-    the point of it.
+    This matters beyond naming: STATIC_PRIORITY is the deliberately un-aged
+    contrast to hrrn_scheduler, whose order IS a live function of current_time
+    (test_hrrn_order_is_a_live_function_of_current_time above). If someone adds
+    real aging here, this test SHOULD fail -- the baseline would have changed
+    identity and every number attributed to it would need regenerating.
     """
     # id=1 is very low priority (high score) and has waited since t=0;
     # id=2 is top priority and arrives at t=90.
@@ -358,8 +362,9 @@ def test_priority_aging_never_reorders_two_queued_jobs(make_job):
     # Even after ~11 simulated days of waiting the order is byte-identical.
     for now in (90, 100, 1000, 100000, 1000000):
         assert _ids(priority_scheduler.order_queue(queue, now)) == [2, 1], (
-            f'order changed at current_time={now}; if aging was fixed, '
-            'rewrite this test')
+            f'order changed at current_time={now}; STATIC_PRIORITY is supposed '
+            'to be time-invariant -- if aging was added, the baseline changed '
+            'identity and its published numbers must be regenerated')
 
 
 # --------------------------------------------------------------------------

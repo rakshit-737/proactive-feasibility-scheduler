@@ -47,10 +47,20 @@ USAGE
 """
 
 import os
+import warnings
 
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+
+
+class UnknownPolicyLabel(UserWarning):
+    """`label_of` was asked for a scheduler key POLICY_LABEL does not name.
+
+    Its own category so a caller that wants the strict reading can escalate it
+    (`warnings.simplefilter('error', vizstyle.UnknownPolicyLabel)`) without
+    turning every other UserWarning in a plotting run into a failure.
+    """
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Palette (reference instance; light | dark steps of the same hues)
@@ -105,7 +115,7 @@ POLICY_ROLE = {
     'FIFO': 'baseline', 'FCFS': 'baseline', 'FIFO_STRICT': 'baseline',
     'SJF': 'baseline', 'SJF_EST': 'baseline', 'SJF_MODAL': 'baseline',
     'SJF_ORACLE': 'baseline', 'SJF_USEREST': 'baseline',
-    'HRRN': 'baseline', 'HRRN_USEREST': 'baseline', 'PRIORITY': 'baseline',
+    'HRRN': 'baseline', 'HRRN_USEREST': 'baseline', 'STATIC_PRIORITY': 'baseline',
     'BACKFILL': 'baseline', 'BACKFILL_EST': 'baseline', 'BACKFILL_MODAL': 'baseline',
     'EASY_ORACLE': 'baseline', 'EASY_USEREST': 'baseline',
     'CONS_BF': 'baseline', 'CONS_BF_USEREST': 'baseline',
@@ -130,12 +140,20 @@ POLICY_LABEL = {
     'SJF': 'SJF (oracle)', 'SJF_EST': 'SJF (f-model estimates)',
     'SJF_MODAL': 'SJF (modal estimates)', 'HRRN': 'HRRN',
     'SMALLEST': 'Smallest-first (no ML)', 'NN': 'Neural network (MLP)',
-    'PRIORITY': 'Priority + aging', 'FIFO': 'FCFS + first-fit',
+    'STATIC_PRIORITY': 'Static priority', 'FIFO': 'FCFS + first-fit',
     'BACKFILL': 'EASY backfill (oracle)',
     'BACKFILL_EST': 'EASY backfill (estimates)',
+    'BACKFILL_MODAL': 'EASY backfill (modal estimates)',
     'CONS_BF': 'Conservative backfill', 'SRPT': 'SRPT (oracle, preemptive)',
     'PROACTIVE_BF': 'EASY + predicted-wait scan',
 }
+
+# Deliberately NOT here: an alias from a renamed key to its new label. 'PRIORITY'
+# became 'STATIC_PRIORITY' because the old name asserted aging the scheduler does
+# not do; an alias would keep the retired name renderable forever and hide the
+# very mismatch the warning below exists to surface. A results CSV that still
+# carries a retired key is a CSV that needs regenerating, not a table that needs
+# a synonym.
 
 
 def role_of(policy):
@@ -143,12 +161,52 @@ def role_of(policy):
 
 
 def color_of(policy, mode='light'):
-    """Colour for a scheduler, by role. Same entity -> same colour, always."""
+    """Colour for a scheduler, by role. Same entity -> same colour, always.
+
+    Unknown keys fall back to the baseline grey SILENTLY, and unlike `label_of`
+    below that silence is deliberate and load-bearing. Two reasons:
+
+      * the fallback is CORRECT rather than merely tolerable. Grey is the
+        recessive ink reserved for "a policy that is not the point of the
+        chart", so an unrecognised key renders as a de-emphasised mark that
+        asserts nothing false about the entity. A label fallback has no such
+        safe value: it prints the raw key into the figure and claims that
+        string is the policy's name.
+      * callers rely on it. `phases_22_30/phase_27_fairness/
+        fairness_sla_analysis.py` draws `color_of(POLICY_KEY.get(k, k), mode)`
+        and pairs it with a human name taken from the CSV, and
+        `04_scheduler/estimate_sensitivity.py` supplies its own tick labels for
+        policies vizstyle colours but does not name. Both are asking for a
+        colour for a key that is intentionally outside POLICY_LABEL.
+
+    The real guard against a mis-coloured policy is not a warning here: it is
+    `tests/test_reproducibility.py::test_every_scheduler_in_the_results_csvs_
+    has_a_policy_role`, which fails if a published CSV names a policy this table
+    does not know.
+    """
     return PALETTE[mode][ROLE_KEY[role_of(policy)]]
 
 
 def label_of(policy):
-    return POLICY_LABEL.get(str(policy).upper(), str(policy))
+    """Human-readable tick label for a scheduler key.
+
+    An unknown key still returns the raw string -- a long plotting run must not
+    die at the last draw call -- but it WARNS on the way out, because the silent
+    version of this fallback is indistinguishable from success: a renamed key in
+    a not-yet-regenerated CSV renders as a raw 'PRIORITY' tick in a published
+    figure and nothing anywhere reports it. See `color_of` for why the two
+    functions differ on this.
+    """
+    key = str(policy).upper()
+    if key not in POLICY_LABEL:
+        warnings.warn(
+            f'vizstyle.label_of: no label for scheduler key {key!r}; the raw key '
+            f'will be drawn as a tick label. Add it to POLICY_LABEL in '
+            f'vizstyle.py, or regenerate the results CSV that still carries a '
+            f'retired key.',
+            UnknownPolicyLabel, stacklevel=2)
+        return str(policy)
+    return POLICY_LABEL[key]
 
 
 def ROLE_COLORS(mode='light'):

@@ -13,7 +13,7 @@ QoS) are NOT simulated here, so no claims are made about them.
 DATA SOURCES
 ----------------------------------------------------------------------
   • 05_results/schedulers/multi_scheduler_benchmark.csv
-    (15-run multi-scheduler benchmark, per-scheduler means)
+    (20-run multi-scheduler benchmark, per-scheduler means)
   • 05_results/benchmark_statistical_results.csv
     (40-run paired FIFO-vs-proactive benchmark)
 
@@ -39,16 +39,16 @@ SCHEDULERS COMPARED
     Reference: Phase 09 proactive feasibility scheduler
     Mean wait: 15.95 ts | Max wait: 128.8 ts | Gini: 0.793
 
-  • Neural Network (MLP)           (ml_baseline)
-    Reference: 04_scheduler/neural_network_scheduler.py (Phase 14)
-    Mean wait: 16.07 ts | Max wait: 136.3 ts | Gini: 0.797
-
   • Smallest requested size first (no ML) (degeneracy_control)
     Reference: 04_scheduler/size_scheduler.py (the ML-free control implied by ranking_degeneracy.py: the wait model's per-job features are all functions of requested size)
     Mean wait: 16.07 ts | Max wait: 136.3 ts | Gini: 0.797
 
-  • Priority                       (heuristic_baseline)
-    Reference: 04_scheduler/priority_scheduler.py
+  • Neural Network (MLP)           (ml_baseline)
+    Reference: 04_scheduler/neural_network_scheduler.py (Phase 14)
+    Mean wait: 16.07 ts | Max wait: 136.3 ts | Gini: 0.797
+
+  • Static priority                (heuristic_baseline)
+    Reference: 04_scheduler/priority_scheduler.py (time-invariant key)
     Mean wait: 16.53 ts | Max wait: 131.7 ts | Gini: 0.743
 
   • FCFS + first-fit (liberal dispatch) (baseline)
@@ -93,9 +93,9 @@ KEY FINDINGS
    3. Preemptive SRPT (+1 tick overhead) +18.55%
    4. Highest Response Ratio Next  +9.66%
    5. Proactive (XGBoost)        +7.37%
-   6. Neural Network (MLP)       +6.63%
-   7. Smallest requested size first (no ML)  +6.63%
-   8. Priority                   +3.97%
+   6. Smallest requested size first (no ML)  +6.63%
+   7. Neural Network (MLP)       +6.63%
+   8. Static priority            +3.97%
    9. FCFS + first-fit (liberal dispatch)  +0.00%
    10. EASY backfill + predicted-wait scan -11.53%
    11. EASY backfill (user estimates) -11.69%
@@ -127,14 +127,14 @@ POSITIONING vs. IMPLEMENTED BASELINES
 ✗ Proactive does NOT beat Highest Response Ratio Next on mean-wait reduction vs. FIFO
   - Proactive +7.37% vs. Highest Response Ratio Next +9.66%
 
-✓ Proactive achieves a larger mean-wait reduction vs. FIFO than Neural Network (MLP)
-  - Proactive +7.37% vs. Neural Network (MLP) +6.63%
-
 ✓ Proactive achieves a larger mean-wait reduction vs. FIFO than Smallest requested size first (no ML)
   - Proactive +7.37% vs. Smallest requested size first (no ML) +6.63%
 
-✓ Proactive achieves a larger mean-wait reduction vs. FIFO than Priority
-  - Proactive +7.37% vs. Priority +3.97%
+✓ Proactive achieves a larger mean-wait reduction vs. FIFO than Neural Network (MLP)
+  - Proactive +7.37% vs. Neural Network (MLP) +6.63%
+
+✓ Proactive achieves a larger mean-wait reduction vs. FIFO than Static priority
+  - Proactive +7.37% vs. Static priority +3.97%
 
 ✓ Proactive achieves a larger mean-wait reduction vs. FIFO than EASY backfill + predicted-wait scan
   - Proactive +7.37% vs. EASY backfill + predicted-wait scan -11.53%
@@ -160,7 +160,7 @@ CONCLUSION
 ======================================================================
 In the paired 40-run benchmark, the proactive scheduler reduces
 mean wait vs. FIFO by 7.90% on average (p = 2.00e-06).
-In the multi-scheduler benchmark it outperforms Neural Network (MLP), Smallest requested size first (no ML), Priority, EASY backfill + predicted-wait scan, EASY backfill (user estimates), EASY backfill (oracle), Conservative backfill, FIFO (head-blocking) on mean-wait reduction.
+In the multi-scheduler benchmark it outperforms Smallest requested size first (no ML), Neural Network (MLP), Static priority, EASY backfill + predicted-wait scan, EASY backfill (user estimates), EASY backfill (oracle), Conservative backfill, FIFO (head-blocking) on mean-wait reduction.
 However, it is outperformed on mean wait by Shortest Job First (oracle), SJF (user estimates), Preemptive SRPT (+1 tick overhead), Highest Response Ratio Next,
 and its wait-time Gini coefficient is higher (less fair) than FIFO's.
 These comparisons cover only the schedulers implemented in this

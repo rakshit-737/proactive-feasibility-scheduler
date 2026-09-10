@@ -13,7 +13,8 @@ paths = {
     'Scheduler Benchmark': os.path.join(PROJECT_ROOT, '05_results', 'schedulers', 'multi_scheduler_benchmark.csv'),
     'Fairness': os.path.join(PROJECT_ROOT, '05_results', 'fairness', 'fairness_metrics.csv'),
     'Scaling': os.path.join(PROJECT_ROOT, '05_results', 'scaling', 'scaling_analysis.csv'),
-    'Trace Validation': os.path.join(PROJECT_ROOT, '05_results', 'traces', 'lanl_validation_results.csv'),
+    'Synthetic-proxy OOD check': os.path.join(PROJECT_ROOT, '05_results', 'traces', 'synthetic_proxy_validation_results.csv'),
+    'Real-trace validation (LANL CM-5, SDSC SP2)': os.path.join(PROJECT_ROOT, '05_results', 'traces', 'real_trace_validation.csv'),
     'ROI': os.path.join(PROJECT_ROOT, '05_results', 'roi', 'cost_benefit_analysis.csv'),
 }
 

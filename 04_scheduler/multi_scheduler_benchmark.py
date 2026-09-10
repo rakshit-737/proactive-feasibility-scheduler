@@ -12,7 +12,7 @@ from matplotlib.patches import Patch
 from sklearn.neural_network import MLPRegressor
 
 from sjf_scheduler import order_queue as order_sjf, order_queue_estimated as order_sjf_est
-from priority_scheduler import order_queue as order_priority
+from priority_scheduler import order_queue as order_static_priority
 from hrrn_scheduler import order_queue as order_hrrn
 from size_scheduler import order_queue as order_smallest
 from neural_network_scheduler import order_queue as order_nn, build_feature_vector
@@ -175,8 +175,11 @@ def rank_queue(queue, t, cluster, running, scheduler, nn_model):
         return order_sjf(queue, t)
     if scheduler == 'sjf_est':
         return order_sjf_est(queue, t)
-    if scheduler == 'priority':
-        return order_priority(queue, t)
+    if scheduler == 'static_priority':
+        # Renamed from 'priority': the module's key is time-invariant (the
+        # current_time term cancels pairwise), so it is a static priority
+        # order, not the "priority + aging" it used to be labelled.
+        return order_static_priority(queue, t)
     if scheduler == 'hrrn':
         return order_hrrn(queue, t)
     if scheduler == 'smallest':
@@ -365,7 +368,7 @@ def run_once_preemptive(jobs_in, overhead=PREEMPT_OVERHEAD):
 
 def main():
     nn_model = train_nn_predictor()
-    schedulers = ['fifo', 'fifo_strict', 'sjf', 'sjf_est', 'priority', 'hrrn',
+    schedulers = ['fifo', 'fifo_strict', 'sjf', 'sjf_est', 'static_priority', 'hrrn',
                   'smallest', 'proactive', 'nn',
                   'backfill', 'backfill_est', 'cons_bf', 'proactive_bf',
                   'srpt']

@@ -40,6 +40,8 @@ import random
 import numpy as np
 import pandas as pd
 
+from swf_io import open_swf
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(PROJECT_ROOT, '02_data')
 
@@ -53,14 +55,18 @@ KEEP_STATUS = (0, 1, -1)   # completed / failed / unknown; drop cancelled+partia
 
 
 def parse_swf(path, max_lines=None):
-    """Parse an SWF file. Returns (capacity, list-of-job-dicts, filter stats)."""
+    """Parse an SWF file. Returns (capacity, list-of-job-dicts, filter stats).
+
+    Opened through swf_io.open_swf: only the `.swf.gz` copies are committed, so
+    a bare open() on the plain `.swf` name cannot run on a fresh clone.
+    """
     capacity = None
     max_nodes = None
     jobs = []
     stats = {'total': 0, 'bad_procs': 0, 'bad_runtime': 0,
              'bad_wait': 0, 'bad_status': 0, 'kept': 0}
 
-    with open(path, 'r', encoding='utf-8', errors='replace') as f:
+    with open_swf(path) as f:
         n_data = 0
         for line in f:
             line = line.strip()
