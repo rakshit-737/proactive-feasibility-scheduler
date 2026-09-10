@@ -1,19 +1,16 @@
 # Artefact verification
 
 mode: full (HEAD)
-tree: C:\Users\Rakshit\AppData\Local\Temp\verify_artifacts_146x8xuo\tree
+tree: C:\Users\Rakshit\AppData\Local\Temp\verify_artifacts_rznltwx0\tree
 
 pipeline exit code: 0
 
 | status | artefact | detail |
 | --- | --- | --- |
-| MISMATCH | `phases_22_30/phase_26_scaling/scaling_measurements.txt` | first difference at line 23: expected 'Small           3743.83          10.4         15.18       1.52%', got 'Small           3743.83          10.4         15.42       1.54%' |
-| STALE | `05_results/feature_importance_improved.png` | not rewritten by the pipeline |
-| STALE | `05_results/scatter_pred_vs_actual-dark.png` | not rewritten by the pipeline |
-| STALE | `05_results/scatter_pred_vs_actual.png` | not rewritten by the pipeline |
 | TIMING | `05_results/model_comparison_table1.csv` | wall-clock columns only, exempt by NONDETERMINISTIC_COLUMNS: training_time_sec (7 cells) |
 | TIMING | `05_results/scaling/scaling_analysis.csv` | wall-clock columns only, exempt by NONDETERMINISTIC_COLUMNS: scheduler_overhead_sec (4 cells), inference_time_sec (4 cells), proactive_total_sim_time_sec (4 cells) |
 | TIMING | `phases_22_30/phase_26_scaling/scaling_benchmark.csv` | wall-clock columns only, exempt by NONDETERMINISTIC_COLUMNS: inference_latency_ms (4 cells), throughput_overhead_pct (4 cells) |
+| TIMING | `phases_22_30/phase_26_scaling/scaling_measurements.txt` | identical apart from 7 wall-clock line(s), exempt by NONDETERMINISTIC_TEXT |
 | OK | `02_data/dataset.csv` | 110 rows x 7 cols identical |
 | OK | `02_data/improved_wait_dataset.csv` | 2200 rows x 13 cols identical |
 | OK | `03_models/feature_importance_v2-dark.png` | 124558 bytes (bytes not compared) |
@@ -50,8 +47,8 @@ pipeline exit code: 0
 | OK | `05_results/roi/cost_benefit_analysis.csv` | 1 rows x 10 cols identical |
 | OK | `05_results/roi/roi_summary-dark.png` | 107461 bytes (bytes not compared) |
 | OK | `05_results/roi/roi_summary.png` | 109073 bytes (bytes not compared) |
-| OK | `05_results/scaling/scaling_curves-dark.png` | 157639 bytes (bytes not compared) |
-| OK | `05_results/scaling/scaling_curves.png` | 159658 bytes (bytes not compared) |
+| OK | `05_results/scaling/scaling_curves-dark.png` | 157050 bytes (bytes not compared) |
+| OK | `05_results/scaling/scaling_curves.png` | 159060 bytes (bytes not compared) |
 | OK | `05_results/schedulers/estimate_sensitivity-dark.png` | 169731 bytes (bytes not compared) |
 | OK | `05_results/schedulers/estimate_sensitivity.csv` | 320 rows x 13 cols identical |
 | OK | `05_results/schedulers/estimate_sensitivity.png` | 172279 bytes (bytes not compared) |
@@ -131,8 +128,8 @@ pipeline exit code: 0
 | OK | `phases_22_30/phase_25_real_traces/real_vs_synthetic_comparison-dark.png` | 229692 bytes (bytes not compared) |
 | OK | `phases_22_30/phase_25_real_traces/real_vs_synthetic_comparison.png` | 232563 bytes (bytes not compared) |
 | OK | `phases_22_30/phase_25_real_traces/trace_inventory.csv` | 1 rows x 7 cols identical |
-| OK | `phases_22_30/phase_26_scaling/inference_overhead_plot-dark.png` | 277772 bytes (bytes not compared) |
-| OK | `phases_22_30/phase_26_scaling/inference_overhead_plot.png` | 281869 bytes (bytes not compared) |
+| OK | `phases_22_30/phase_26_scaling/inference_overhead_plot-dark.png` | 268667 bytes (bytes not compared) |
+| OK | `phases_22_30/phase_26_scaling/inference_overhead_plot.png` | 272463 bytes (bytes not compared) |
 | OK | `phases_22_30/phase_27_fairness/dropped_schedulers.txt` | 12 lines identical |
 | OK | `phases_22_30/phase_27_fairness/fairness_metrics.csv` | 15 rows x 14 cols identical |
 | OK | `phases_22_30/phase_27_fairness/sla_compliance.csv` | 15 rows x 7 cols identical |
@@ -150,5 +147,15 @@ same files is compared strictly:
 * `05_results/scaling/scaling_analysis.csv`: inference_time_sec, proactive_total_sim_time_sec, scheduler_overhead_sec
 * `phases_22_30/phase_26_scaling/scaling_benchmark.csv`: inference_latency_ms, throughput_overhead_pct
 
-131 artefacts: 1 MISMATCH, 3 STALE, 3 TIMING, 124 OK -- 1567.6 s elapsed
-STALE means no script rewrote the file; rerun with --strict-stale to fail on it.
+The same exemption applies to the text reports that RENDER those
+columns -- a wall-clock number does not stop being wall-clock because
+a script printed it into a .txt. Only the named fields are masked;
+every other field on those lines, and every other line, is compared
+exactly:
+
+* `phases_22_30/phase_26_scaling/scaling_measurements.txt`: latency and overhead columns of the metrics table
+* `phases_22_30/phase_26_scaling/scaling_measurements.txt`: measured latency range
+* `phases_22_30/phase_26_scaling/scaling_measurements.txt`: peak overhead
+* `phases_22_30/phase_26_scaling/scaling_measurements.txt`: worst latency
+
+128 artefacts: 4 TIMING, 124 OK -- 1559.2 s elapsed
