@@ -1,13 +1,70 @@
-"""SHAP explanation of the wait-time model, drawn in the repository figure style.
+"""SHAP explanation of the wait-time model, computed on HELD-OUT rows only.
 
-WHAT THIS PRODUCES (unchanged set of artefacts, restyled)
----------------------------------------------------------
-  05_results/shap/shap_summary.png             global beeswarm over 400 sampled rows
-  05_results/shap/shap_dependence_<feature>.png  one per model feature (12)
-  05_results/shap/shap_force_<i>.png           per-row contribution breakdown (3)
+WHAT THIS PRODUCES
+------------------
+  05_results/shap/shap_summary.png              global beeswarm over the explained rows
+  05_results/shap/shap_dependence_<feature>.png one per model feature (12)
+  05_results/shap/shap_force_<i>.png            per-row contribution breakdown (3)
+  05_results/shap/shap_provenance.csv           what the explanations were computed on
+  05_results/shap/shap_explained_rows.csv       the dataset row labels actually explained
 
-Each of the above is now written as a light/dark pair via vizstyle.save_both, so
-the light-mode filename is exactly what it always was and `<stem>-dark.png` is new.
+Each figure is written as a light/dark pair via vizstyle.save_both, so the
+light-mode filename is exactly what it always was and `<stem>-dark.png` is new.
+
+WHY THE SPLIT IS RECONSTRUCTED HERE
+-----------------------------------
+`03_models/train_improved_model.py` fits on `train_test_split(X, y,
+test_size=0.2, random_state=42)` over the twelve features in that order. This
+file reproduces that call exactly -- same frame, same feature order, same
+random_state -- and then ASSERTS the reconstruction by scoring the loaded model
+on the reconstructed test split: it must reproduce the published hold-out MAE
+(EXPECTED_TEST_MAE) or the script aborts. A silently wrong reconstruction would
+be worse than explaining training rows, because the artefact would then claim a
+hold-out provenance it does not have.
+
+WHAT WAS WRONG BEFORE, PRECISELY
+--------------------------------
+The previous version sampled 400 rows from the FULL 2200-row frame and passed
+the FULL frame as the masker.
+
+  * The SAMPLE was in fact already clean, but only by an undocumented accident:
+    `X.sample(n=400, random_state=42)` is `RandomState(42).permutation(2200)[:400]`,
+    and `train_test_split(..., random_state=42)` takes `permutation(2200)[:440]`
+    as its test set -- the same permutation, so the 400 explained rows were the
+    first 400 of the 440 test rows. Change either seed, or the row count, and
+    ~80% of the explained rows become training rows (with random_state=7,
+    312 of 400 do). Nothing recorded that, so nothing defended it.
+  * The BACKGROUND was genuinely contaminated: shap subsampled 100 rows from all
+    2200, so roughly 80 of the 100 reference rows were rows the model had fitted.
+    That moved the base value the explanations are measured against.
+
+Both are now explicit: rows are drawn from the test split by name, the masker is
+the test split, and 05_results/shap/shap_provenance.csv records it.
+
+WHY THE PROVENANCE IS MEASURED RATHER THAN DECLARED
+---------------------------------------------------
+A provenance row assembled from this script's own intentions ("split=test",
+"n_background=len(background)") is a self-report: reintroduce the defect and the
+row keeps saying what the script meant rather than what it did. So every claim in
+shap_provenance.csv is now derived from the objects actually handed to shap:
+
+  * `split`, `rows_from_training`, `rows_from_test` are computed by testing the
+    explained frame's own index against the reconstructed train and test indices,
+    and the run aborts unless the answer is "all test, none train".
+  * `explained_index_sha256` fingerprints the row labels of that same frame, and
+    the labels themselves are written to shap_explained_rows.csv. A reader can
+    recompute the fingerprint from that file and check the row set against an
+    independently reconstructed split. Overlap counts cannot separate a held-out
+    sampler from a whole-dataset one on this dataset (see `explanation_frames`);
+    the row set can, because the two draws share only 364 of their 400 rows.
+  * `n_background_rows_used` is read off the masker, not off the frame handed to
+    it, and `background_rows_not_in_test_split` compares the masker's own value
+    matrix against the held-out split.
+
+Two fields remain declarations and are named so: `sample_source_rows_declared`
+(the size of the frame this script pointed the sampler at) and the constants at
+the bottom of the row. They are kept because they are legible, not because they
+are evidence.
 
 WHY THE PLOTS ARE HAND-DRAWN RATHER THAN shap.*_plot
 ----------------------------------------------------
@@ -15,10 +72,10 @@ shap's own plotting helpers hard-code a red/blue ramp, a "#333333" axis colour a
 a white canvas, and shap.dependence_plot auto-picks an *interaction* feature and
 spends a third hue on it. That breaks three rules of the repo's figure standard at
 once (extra hues, colour that tracks the panel rather than the entity, no dark
-mode). The SHAP *values* below are computed exactly as before -- same explainer,
-same background, same sample, same random_state -- and only the rendering changed.
+mode). Only the rendering is bespoke; the SHAP values are shap's own.
 """
 
+import hashlib
 import os
 import pickle
 import sys
@@ -31,6 +88,8 @@ from matplotlib.cm import ScalarMappable
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.patches import Patch
 import shap
+from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.model_selection import train_test_split
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
@@ -39,10 +98,33 @@ from vizstyle import figure, finish, save_both, bar_ends, PALETTE  # noqa: E402
 MODEL_PATH = os.path.join(PROJECT_ROOT, '03_models', 'wait_model_v2.pkl')
 DATA_PATH = os.path.join(PROJECT_ROOT, '02_data', 'improved_wait_dataset.csv')
 OUT_DIR = os.path.join(PROJECT_ROOT, '05_results', 'shap')
+PROVENANCE_PATH = os.path.join(OUT_DIR, 'shap_provenance.csv')
+EXPLAINED_INDEX_PATH = os.path.join(OUT_DIR, 'shap_explained_rows.csv')
 os.makedirs(OUT_DIR, exist_ok=True)
 
-SOURCE = '02_data/improved_wait_dataset.csv — 03_models/wait_model_v2.pkl'
+SOURCE = ('02_data/improved_wait_dataset.csv — 03_models/wait_model_v2.pkl '
+          '— held-out test split only')
 UNIT = 'simulation time steps'
+
+# --- the split the model was trained under -----------------------------------
+# These three constants MUST mirror 03_models/train_improved_model.py. They are
+# not tuning knobs: change one and the reconstruction assertion below fails,
+# which is the intended alarm rather than something to silence.
+TARGET = 'wait_time'
+TEST_SIZE = 0.2
+SPLIT_RANDOM_STATE = 42
+
+# Published hold-out MAE of wait_model_v2 on that split (train_improved_model.py).
+EXPECTED_TEST_MAE = 4.6935
+MAE_TOLERANCE = 5e-4          # half a unit in the last published decimal
+
+# The test split holds 440 rows. We explain 400 of them -- the same count the
+# figures have always carried, so the beeswarm density and every dependence
+# panel stay visually comparable with the previously published versions -- and
+# use ALL 440 as the reference distribution, since a background is cheap to
+# widen and a wider one is a better estimate of E[f(X)] on held-out data.
+N_EXPLAIN = 400
+EXPLAIN_RANDOM_STATE = 42
 
 with open(MODEL_PATH, 'rb') as f:
     bundle = pickle.load(f)
@@ -144,7 +226,7 @@ def make_summary(shap_matrix, sample_values, features, stem):
 
         finish(fig, mode,
                title='What moves the wait-time prediction, and in which direction',
-               subtitle=f'One dot per feature per sampled cluster state '
+               subtitle=f'One dot per feature per held-out cluster state '
                         f'({n_pts} rows), features ordered by mean |SHAP|. Dots right '
                         f'of the rule push the predicted wait up, dots left push it '
                         f'down;\ncolour is the feature value itself, so a colour split '
@@ -177,7 +259,7 @@ def make_dependence(shap_matrix, sample_values, features, j, stem):
         ax.set_axisbelow(True)
         finish(fig, mode,
                title=f'How {feat} moves the predicted wait',
-               subtitle='Each dot is one sampled cluster state. Vertical spread at a '
+               subtitle='Each dot is one held-out cluster state. Vertical spread at a '
                         'given x is what the other features do to this one.',
                source=SOURCE)
         fig.subplots_adjust(top=0.78, bottom=0.13, left=0.105, right=0.985)
@@ -224,8 +306,9 @@ def make_contributions(shap_matrix, sample_values, features, base_value, idx, st
                   loc='lower left' if vals[-1] < 0 else 'lower right')
 
         finish(fig, mode,
-               title=f'Why the model predicted this wait — sampled row {idx}',
-               subtitle=f'Baseline (the model’s average output over the data) '
+               title=f'Why the model predicted this wait — held-out row {idx}',
+               subtitle=f'Baseline (the model’s average output over the held-out '
+                        f'background) '
                         f'{base_value:.2f} {UNIT}; this row’s features move it to '
                         f'{prediction:.2f}.\nBars are ordered by size of effect and '
                         f'labelled with the feature value that produced them.',
@@ -234,16 +317,236 @@ def make_contributions(shap_matrix, sample_values, features, base_value, idx, st
         save_both(fig, stem, mode)
 
 
-def main():
-    df = pd.read_csv(DATA_PATH)
-    x = df[FEATURES]
-    sample = x.sample(n=min(400, len(x)), random_state=42)
+# ─────────────────────────────────────────────────────────────────────────────
+# Measurements. Everything the provenance file claims is produced here, from the
+# frames actually handed to shap -- never from what this script meant to do.
+# ─────────────────────────────────────────────────────────────────────────────
 
-    explainer = shap.Explainer(model, x)
+def index_fingerprint(index):
+    """sha256 over the sorted row labels present in `index`.
+
+    Order-independent, so it identifies the SET of dataset rows that was
+    explained and nothing else. This is the field an auditor can recompute:
+    from shap_explained_rows.csv, and from their own reconstruction of the
+    split. See `explanation_frames` for why a count of training rows cannot
+    stand in for it on this dataset.
+    """
+    labels = sorted(int(i) for i in index)
+    payload = ','.join(str(i) for i in labels).encode('utf-8')
+    return hashlib.sha256(payload).hexdigest()
+
+
+def classify_rows(index, train_index, test_index):
+    """Where a frame's rows actually sit. Returns (n_train, n_test, label).
+
+    The label is a measurement, not a declaration: 'test' is returned only when
+    every row is in the reconstructed test index and none is in the train index.
+    'unknown' means rows were found in neither, i.e. they are not rows of the
+    frame the split was reconstructed from at all.
+    """
+    idx = pd.Index(index)
+    n = len(idx)
+    n_train = int(idx.isin(train_index).sum())
+    n_test = int(idx.isin(test_index).sum())
+    if n == 0:
+        label = 'empty'
+    elif n_test == n and n_train == 0:
+        label = 'test'
+    elif n_train == n and n_test == 0:
+        label = 'train'
+    elif n_train and n_test:
+        label = 'mixed'
+    else:
+        label = 'unknown'
+    return n_train, n_test, label
+
+
+def rows_absent_from(matrix, reference):
+    """How many rows of `matrix` carry a feature vector found nowhere in `reference`.
+
+    Value-level rather than label-level, because `shap.maskers.Independent`
+    stores a bare ndarray: the background rows shap uses have no row labels left
+    to check. Honest limit: the dataset holds 33 duplicated feature vectors, so a
+    training row that happens to duplicate a held-out one would pass this check.
+    It detects a background drawn from a wider frame; it does not prove
+    label-level provenance, which is what `background_rows_from_training` (an
+    index test on the frame supplied to the masker) is for.
+    """
+    ref = {tuple(row) for row in np.asarray(reference, dtype=float)}
+    return int(sum(tuple(row) not in ref for row in np.asarray(matrix, dtype=float)))
+
+
+def reconstruct_split():
+    """Rebuild the exact split `train_improved_model.py` fitted under, and prove it.
+
+    Returns (x_train, x_test, y_test, test_mae, test_r2).
+
+    The proof is the model's own MAE on the reconstructed test split: if the
+    frame, the feature order, the test fraction or the seed differed by anything
+    at all, the loaded model would score differently and we abort. "Held out"
+    has to be checkable, not asserted.
+    """
+    df = pd.read_csv(DATA_PATH)
+    missing = [c for c in FEATURES + [TARGET] if c not in df.columns]
+    if missing:
+        raise SystemExit(f'dataset is missing required columns: {missing}')
+
+    # run_id and arrival_time are bookkeeping, NOT features: selecting by
+    # FEATURES (the model bundle's own list, in its own order) keeps them out.
+    x = df[FEATURES]
+    y = df[TARGET]
+    x_train, x_test, _, y_test = train_test_split(
+        x, y, test_size=TEST_SIZE, random_state=SPLIT_RANDOM_STATE)
+
+    pred = model.predict(x_test)
+    test_mae = float(mean_absolute_error(y_test, pred))
+    test_r2 = float(r2_score(y_test, pred))
+
+    if abs(test_mae - EXPECTED_TEST_MAE) > MAE_TOLERANCE:
+        raise SystemExit(
+            'SPLIT RECONSTRUCTION FAILED.\n'
+            f'  model MAE on the reconstructed test split : {test_mae:.6f}\n'
+            f'  published hold-out MAE of wait_model_v2   : {EXPECTED_TEST_MAE:.6f}\n'
+            f'  tolerance                                 : {MAE_TOLERANCE:g}\n'
+            'The rows this script would call "held out" are therefore not the rows '
+            'the model was held out from, so every SHAP value below would carry a '
+            'false provenance. Refusing to write it. Check that FEATURES, TEST_SIZE '
+            'and SPLIT_RANDOM_STATE still match 03_models/train_improved_model.py '
+            'and that the model and the dataset were regenerated together.')
+
+    return x_train, x_test, y_test, test_mae, test_r2
+
+
+def explanation_frames(x_test):
+    """The rows to explain and the reference distribution the SHAP values are
+    measured against. Both come from ONE frame, named once, here.
+
+    Returns (source, sample, background).
+
+    `source` is returned, and its length recorded as
+    `sample_source_rows_declared`, because "no explained row is a training row"
+    is a weaker guarantee than it looks on this dataset.
+    `X.sample(n=400, random_state=42)` over the full 2200 rows is
+    `RandomState(42).permutation(2200)[:400]`, and `train_test_split(...,
+    random_state=42)` takes `permutation(2200)[:440]` as its test set -- so
+    sampling the FULL frame with this seed happens to return 400 held-out rows
+    and an overlap count of zero. The overlap count therefore cannot, by itself,
+    tell a held-out sampler from a whole-dataset one. The size of the frame the
+    sampler was pointed at can, and so can the identity of the rows it returned:
+    the two draws share only 364 of their 400 rows, so `index_fingerprint` of the
+    explained frame separates them even though the overlap count does not. The
+    frame size is written down as a declaration; the fingerprint is the evidence.
+    """
+    source = x_test
+    n = min(N_EXPLAIN, len(source))
+    sample = source.sample(n=n, random_state=EXPLAIN_RANDOM_STATE)
+    background = source
+    return source, sample, background
+
+
+def write_explained_index(sample):
+    """Write the row labels of the rows actually explained, and fingerprint them.
+
+    Line k+1 of the file is the dataset row the figures call "held-out row k", so
+    shap_force_0.png can be traced back to a row of
+    02_data/improved_wait_dataset.csv. Draw order is preserved here; the
+    fingerprint is taken over the sorted labels, so it identifies the row set
+    independently of the order.
+    """
+    labels = [int(i) for i in sample.index]
+    pd.DataFrame({'row_index': labels}).to_csv(EXPLAINED_INDEX_PATH, index=False)
+    return index_fingerprint(sample.index)
+
+
+def write_provenance(*, n_explained, explained_index_sha256, split,
+                     rows_from_training, rows_from_test,
+                     sample_source_rows_declared, n_background_rows_supplied,
+                     n_background_rows_used, background_rows_from_training,
+                     background_rows_not_in_test_split, test_split_size,
+                     test_mae, test_r2, base_value):
+    """Record what the explanations were computed on.
+
+    An explanation that cannot say what it was computed on is not evidence, so
+    this file is part of the result, not a log. Keyword-only because a mis-wired
+    call site would otherwise quietly write a number under the wrong name, which
+    is exactly the failure this file exists to prevent.
+
+    Two background counts, deliberately:
+      * `n_background_rows_supplied` -- rows in the frame handed to the masker.
+      * `n_background_rows_used`     -- rows the masker actually holds, read back
+        off it. `shap.maskers.Independent` subsamples to `max_samples` (100 by
+        default) and only warns, so the supplied count alone can stay at 440
+        while the reference distribution is a hundredth-size sample of it. A gap
+        between the two names that happening instead of hiding it.
+    """
+    row = {
+        'n_explained': int(n_explained),
+        'explained_index_sha256': str(explained_index_sha256),
+        'split': str(split),
+        'rows_from_training': int(rows_from_training),
+        'rows_from_test': int(rows_from_test),
+        'sample_source_rows_declared': int(sample_source_rows_declared),
+        'n_background_rows_supplied': int(n_background_rows_supplied),
+        'n_background_rows_used': int(n_background_rows_used),
+        'background_rows_from_training': int(background_rows_from_training),
+        'background_rows_not_in_test_split': int(background_rows_not_in_test_split),
+        'test_split_size': int(test_split_size),
+        'model_test_mae': round(float(test_mae), 6),
+        'model_test_r2': round(float(test_r2), 6),
+        'expected_test_mae': float(EXPECTED_TEST_MAE),
+        'shap_base_value': round(float(base_value), 6),
+        'split_random_state': int(SPLIT_RANDOM_STATE),
+        'explain_random_state': int(EXPLAIN_RANDOM_STATE),
+        'test_size': float(TEST_SIZE),
+    }
+    pd.DataFrame([row]).to_csv(PROVENANCE_PATH, index=False)
+    return row
+
+
+def main():
+    x_train, x_test, _, test_mae, test_r2 = reconstruct_split()
+    source, sample, background = explanation_frames(x_test)
+    n_explain = len(sample)
+
+    # Belt and braces on top of the MAE check, and the source of the provenance
+    # row: neither an explained row nor a background row may carry an index that
+    # landed in the training half. Measured on the frames themselves.
+    rows_from_training, rows_from_test, split_label = classify_rows(
+        sample.index, x_train.index, x_test.index)
+    bg_from_training, _, bg_label = classify_rows(
+        background.index, x_train.index, x_test.index)
+    if rows_from_training or bg_from_training or split_label != 'test' or bg_label != 'test':
+        raise SystemExit(
+            f'{rows_from_training} of {n_explain} explained rows (classified '
+            f'"{split_label}") and {bg_from_training} of {len(background)} background '
+            f'rows (classified "{bg_label}") are training rows. Explanations of '
+            'memorised rows, or against a memorised reference distribution, are not '
+            'explanations of behaviour. Refusing to write it.')
+
+    # max_samples is pinned to the whole background frame because shap otherwise
+    # subsamples it to 100 rows and only warns; n_background_rows_used below is
+    # read back off the masker so that a subsample shows up instead of hiding.
+    masker = shap.maskers.Independent(background, max_samples=len(background))
+    explainer = shap.Explainer(model, masker)
     shap_values = explainer(sample)
 
     shap_matrix = np.asarray(shap_values.values, dtype=float)
     sample_values = sample.to_numpy(dtype=float)
+    base_values = np.asarray(shap_values.base_values, dtype=float).reshape(-1)
+
+    # The recorded row labels only describe these figures if the explanation
+    # matrix is row-for-row the frame whose labels we are about to write down.
+    if shap_matrix.shape != (n_explain, len(FEATURES)):
+        raise SystemExit(
+            f'shap returned a {shap_matrix.shape} matrix for a frame of {n_explain} '
+            f'rows x {len(FEATURES)} features. The explained rows can no longer be '
+            'identified with the rows this script selected, so the provenance record '
+            'would be unfounded. Refusing to write it.')
+
+    # What shap actually used as its reference distribution, read off the masker.
+    masker_data = np.asarray(masker.data, dtype=float)
+    n_background_used = int(masker_data.shape[0])
+    bg_not_in_test = rows_absent_from(masker_data, x_test)
 
     make_summary(shap_matrix, sample_values, FEATURES,
                  os.path.join(OUT_DIR, 'shap_summary'))
@@ -252,12 +555,40 @@ def main():
         make_dependence(shap_matrix, sample_values, FEATURES, j,
                         os.path.join(OUT_DIR, f'shap_dependence_{feat}'))
 
-    force_indexes = [0, min(1, len(sample) - 1), min(2, len(sample) - 1)]
-    base_value = float(np.array(shap_values.base_values).reshape(-1)[0])
+    # Each explanation carries its OWN base value. The previous version read
+    # base_values[0] once and reused it for all three force plots, so two of the
+    # three captions stated a baseline that was not theirs -- harmless while a
+    # fixed background makes every base value identical, wrong the moment it does
+    # not (a per-row or clustered masker), and unverifiable either way.
+    force_indexes = [i for i in (0, 1, 2) if i < len(sample)]
     for idx in force_indexes:
-        make_contributions(shap_matrix, sample_values, FEATURES, base_value, idx,
+        make_contributions(shap_matrix, sample_values, FEATURES,
+                           float(base_values[idx]), idx,
                            os.path.join(OUT_DIR, f'shap_force_{idx}'))
 
+    fingerprint = write_explained_index(sample)
+    row = write_provenance(
+        n_explained=n_explain,
+        explained_index_sha256=fingerprint,
+        split=split_label,
+        rows_from_training=rows_from_training,
+        rows_from_test=rows_from_test,
+        sample_source_rows_declared=len(source),
+        n_background_rows_supplied=len(background),
+        n_background_rows_used=n_background_used,
+        background_rows_from_training=bg_from_training,
+        background_rows_not_in_test_split=bg_not_in_test,
+        test_split_size=len(x_test),
+        test_mae=test_mae,
+        test_r2=test_r2,
+        base_value=base_values[0])
+
+    order = np.argsort(np.abs(shap_matrix).mean(axis=0))[::-1]
+    print('Held-out SHAP, ordered by mean |SHAP|:')
+    for rank, j in enumerate(order, start=1):
+        print(f'  {rank:2d}. {FEATURES[j]:<20s} {np.abs(shap_matrix[:, j]).mean():.4f}')
+    print(f'\nProvenance: {row}')
+    print(f'Explained row labels: {EXPLAINED_INDEX_PATH}')
     print('Saved SHAP outputs in', OUT_DIR)
 
 
