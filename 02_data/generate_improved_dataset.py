@@ -142,6 +142,15 @@ def run_simulation():
         if job.feature_snapshot is not None and job.start_time is not None:
             row = job.feature_snapshot.copy()
             row["wait_time"] = job.start_time - job.arrival_time
+            # Bookkeeping columns, NOT model features. They exist so that an
+            # honest evaluation split can be built explicitly instead of being
+            # inferred from row order: rows are appended in COMPLETION order
+            # within a run, so "the first 80% of the file" is neither a
+            # chronological split nor a run-wise one. run_id groups rows that
+            # share a simulation (and therefore share cluster state), and
+            # arrival_time orders them in time. Every model script selects
+            # df[FEATURES], so adding these changes no fitted model.
+            row["arrival_time"] = job.arrival_time
             dataset.append(row)
 
     return dataset
@@ -160,6 +169,8 @@ if __name__ == "__main__":
         random.seed(42 + i)
         np.random.seed(42 + i)
         result = run_simulation()
+        for row in result:
+            row["run_id"] = i
         all_data.extend(result)
         print(f"Run {i+1}/{NUM_RUNS} — {len(result)} samples")
 
