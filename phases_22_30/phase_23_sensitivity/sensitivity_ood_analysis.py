@@ -12,6 +12,13 @@ scenario with the model-guided proactive queue ordering vs FIFO.
 
 There is NO heuristic fallback: if the model file is missing the script fails
 loudly rather than silently substituting synthetic predictions.
+
+Scenarios are then RANKED rather than labelled. The categorical taxonomy this
+script used to emit collapsed to one constant value (see the long note above
+SEVERITY_DIMENSIONS); it has been replaced by a continuous severity score,
+data-derived quantile bands, and a dominant-axis label. Severity is standardised
+WITHIN this grid, so it says which shifted regimes are worse than which -- never
+that any regime is good. None of them are.
 """
 
 import os
@@ -60,7 +67,6 @@ FIGURE_SOURCE = (
 ARRIVAL_MULTIPLIERS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
 CLUSTER_SIZES = [4, 8, 16, 32]  # total GPUs; nodes = size / GPUS_PER_NODE
 JOB_DISTRIBUTIONS = ["short_heavy", "balanced", "long_heavy"]
-HIGH_RISK_IMPROVEMENT_THRESHOLD = -2.0
 GPUS_PER_NODE = 4
 
 # Training configuration (generate_improved_dataset.py): 110 jobs arriving in
@@ -474,47 +480,235 @@ def evaluate_ood_scenario(model, model_features, scenario_params, baseline_mean_
     }
 
 
-# Failure mode detection
-def detect_failure_mode(improvement_pct, r2_value, mape, arrival_rate_multiplier, cluster_size):
+# ---------------------------------------------------------------------------
+# Severity measure and failure taxonomy
+# ---------------------------------------------------------------------------
+# WHY THE OLD CATEGORICAL TAXONOMY WAS REPLACED (2026-09-10)
+#
+# `detect_failure_mode()` used to assign one of eight labels from a chain of
+# hard-coded cut-points. Its third branch fired on `mape >= 35.0`. The MINIMUM
+# MAPE over the 72 scenarios in ood_failure_modes.csv is 54.01, so that branch
+# fired for EVERY scenario that reached it, and the two branches ahead of it
+# (which additionally required improvement_pct < -2.0 together with either
+# R2 > 0.8 or a small saturated cluster) matched NOTHING. The committed
+# artefact therefore held a single value:
+#
+#     failure_mode == "DISTRIBUTION_MISMATCH" for all 72 of 72 rows
+#
+# A column with zero entropy carries no information: the old labels were worth
+# nothing, and seven of the eight categories were unreachable by construction.
+# The cut-points had gone stale against the numbers they were meant to describe
+# and nothing detected it, because nothing ever checked that more than one
+# category was produced.
+#
+# The replacement (Option A of the Phase C brief) is a CONTINUOUS severity
+# score over the dimensions that actually vary across the grid, plus bands and
+# labels derived from the observed distribution rather than from constants:
+#
+#   severity_score  mean of the four dimensions standardised WITHIN this grid
+#                   and oriented so that LARGER ALWAYS MEANS WORSE.
+#   severity_band   quartile of severity_score, cut at the 25/50/75th
+#                   percentiles OF THE 72 SCENARIOS THEMSELVES. Every band is
+#                   populated by construction, so this cannot go stale the way
+#                   35.0 did; re-running on different numbers re-derives the
+#                   cuts along with them.
+#   failure_mode    which dimension DOMINATES this scenario's severity, i.e.
+#                   the largest oriented z-score, but only when that z-score is
+#                   positive (worse than the grid mean). The comparison point is
+#                   the mean of the data, not a tuned constant.
+#   risk_level      keeps the legacy vocabulary (LOW/MEDIUM/HIGH_RISK) so
+#                   downstream readers keep working, but is now derived from the
+#                   severity band plus the SIGN of improvement_pct and of
+#                   r2_score -- two natural zeros (does the policy help or hurt?
+#                   does the model beat predicting the mean wait?), not fitted
+#                   thresholds. See assign_risk_levels for exactly how weak a
+#                   floor those two signs are: LOW_RISK is a within-grid rank,
+#                   not a statement that any regime is safe.
+#
+# READ SEVERITY AS RELATIVE, NOT ABSOLUTE. Standardising within the grid ranks
+# the 72 scenarios against EACH OTHER. It does not say the model works anywhere:
+# every scenario in this sweep has MAPE >= 54% and the mean R2 over the grid is
+# below zero. "Q1_LEAST_SEVERE" means "least bad of 72 uniformly bad regimes",
+# never "safe". The raw dimensions travel in the same CSV precisely so a reader
+# can check that for themselves instead of trusting the band name.
+
+# (column, orientation, label). Orientation is +1 when a LARGER raw value is
+# WORSE and -1 when a larger value is BETTER; after multiplying, every oriented
+# z-score points the same way (bigger = worse).
+SEVERITY_DIMENSIONS = (
+    ("mape", +1.0, "CALIBRATION_DOMINATED"),
+    ("r2_score", -1.0, "FIT_DOMINATED"),
+    ("improvement_pct", -1.0, "POLICY_DOMINATED"),
+    ("failure_rate_pct", +1.0, "COMPLETION_DOMINATED"),
+)
+NO_DOMINANT_AXIS = "NO_DOMINANT_AXIS"
+FAILURE_MODE_LABELS = tuple(label for _, _, label in SEVERITY_DIMENSIONS) + (NO_DOMINANT_AXIS,)
+
+# Quantiles, not values: the cut-points are recomputed from whatever the sweep
+# produces. Three interior quantiles give four bands.
+SEVERITY_BAND_QUANTILES = (0.25, 0.50, 0.75)
+SEVERITY_BAND_LABELS = (
+    "Q1_LEAST_SEVERE",
+    "Q2_BELOW_MEDIAN",
+    "Q3_ABOVE_MEDIAN",
+    "Q4_MOST_SEVERE",
+)
+RISK_LEVELS = ("LOW_RISK", "MEDIUM_RISK", "HIGH_RISK")
+
+# Column names added to the artefact. The twelve pre-existing columns keep both
+# their names and their order; these are appended.
+Z_COLUMNS = tuple(f"z_{column}" for column, _, _ in SEVERITY_DIMENSIONS)
+
+
+def oriented_zscore(values, orientation):
+    """Standardise one dimension so that a LARGER result always means WORSE.
+
+    A dimension that does not vary across the grid cannot discriminate between
+    scenarios, so it contributes 0 rather than a divide-by-zero.
     """
-    Categorize failures:
-    - NONE: improvement > 2%
-    - MODEL_OVERCONFIDENCE: improvement < -2% but R² > 0.8
-    - SATURATION: improvement < -2% at high arrival rates
-    - DISTRIBUTION_MISMATCH: high MAPE
-    Returns: failure_mode_str, risk_level
+    values = np.asarray(values, dtype=float)
+    if values.size == 0:
+        return values
+    spread = float(np.nanstd(values))
+    if not np.isfinite(spread) or spread == 0.0:
+        return np.zeros_like(values)
+    return orientation * (values - float(np.nanmean(values))) / spread
+
+
+def severity_zmatrix(results_df):
+    """(len(SEVERITY_DIMENSIONS), n_scenarios) matrix of oriented z-scores."""
+    return np.vstack(
+        [
+            oriented_zscore(results_df[column].to_numpy(dtype=float), orientation)
+            for column, orientation, _ in SEVERITY_DIMENSIONS
+        ]
+    )
+
+
+def compute_severity_score(zmatrix):
+    """Mean oriented z-score across the dimensions that are defined for a row.
+
+    nanmean, so a scenario whose R2 is undefined (constant target) is still
+    scored on the three dimensions that ARE defined instead of being dropped.
     """
-    # Per Phase 23 requirement, scenarios below -2% improvement are flagged as HIGH_RISK.
-    if improvement_pct < HIGH_RISK_IMPROVEMENT_THRESHOLD and r2_value > 0.8:
-        return "MODEL_OVERCONFIDENCE", "HIGH_RISK"
+    with np.errstate(invalid="ignore"):
+        return np.nanmean(zmatrix, axis=0)
 
-    if (
-        improvement_pct < HIGH_RISK_IMPROVEMENT_THRESHOLD
-        and arrival_rate_multiplier >= 1.5
-        and cluster_size <= 8
-    ):
-        return "SATURATION", "HIGH_RISK"
 
-    if mape >= 35.0:
-        return (
-            "DISTRIBUTION_MISMATCH",
-            "HIGH_RISK" if improvement_pct < HIGH_RISK_IMPROVEMENT_THRESHOLD else "MEDIUM_RISK",
-        )
+def derive_severity_cutpoints(severity):
+    """Band edges read off the observed severity distribution.
 
-    if arrival_rate_multiplier >= 1.5 and mape >= 25.0:
-        return "ARRIVAL_SPIKE", "MEDIUM_RISK"
+    Data-derived by construction: there is no constant here to fall out of date.
+    """
+    severity = np.asarray(severity, dtype=float)
+    finite = severity[np.isfinite(severity)]
+    if finite.size == 0:
+        return np.array([0.0, 0.0, 0.0])
+    return np.asarray(np.quantile(finite, SEVERITY_BAND_QUANTILES), dtype=float)
 
-    if improvement_pct < HIGH_RISK_IMPROVEMENT_THRESHOLD:
-        return "GENERAL_REGRESSION", "HIGH_RISK"
 
-    if improvement_pct > 2.0 and r2_value >= 0.5 and mape <= 30.0:
-        return "NONE", "LOW_RISK"
+def assign_severity_bands(severity, cutpoints):
+    """Label each scenario by which quantile band its severity falls in.
 
-    return "MARGINAL_GAIN", "MEDIUM_RISK"
+    A non-finite severity is banded MOST severe: an undefined metric is a
+    failure to measure, and the pessimistic reading is the honest one.
+    """
+    severity = np.asarray(severity, dtype=float)
+    index = np.digitize(np.where(np.isfinite(severity), severity, np.inf), cutpoints)
+    index = np.clip(index, 0, len(SEVERITY_BAND_LABELS) - 1)
+    return [SEVERITY_BAND_LABELS[i] for i in index]
+
+
+def assign_failure_modes(zmatrix):
+    """Name the dimension that dominates each scenario's severity.
+
+    Only a dimension that is WORSE THAN THE GRID MEAN (oriented z > 0) can be
+    named: when a scenario is better than average on all four axes there is no
+    dominant failure axis to report, and inventing one would be a false label.
+    """
+    filled = np.where(np.isfinite(zmatrix), zmatrix, -np.inf)
+    top = np.argmax(filled, axis=0)
+    top_z = filled[top, np.arange(filled.shape[1])]
+    labels = [label for _, _, label in SEVERITY_DIMENSIONS]
+    return [
+        labels[i] if np.isfinite(z) and z > 0.0 else NO_DOMINANT_AXIS
+        for i, z in zip(top, top_z)
+    ]
+
+
+def assign_risk_levels(bands, improvement_pct, r2_score):
+    """Legacy LOW/MEDIUM/HIGH vocabulary, re-derived from band + two sign tests.
+
+    HIGH_RISK   worst severity band, OR the policy makes waits worse than FIFO
+                (improvement_pct < 0).
+    LOW_RISK    mildest severity band AND the policy helps (improvement_pct > 0)
+                AND the wait model beats predicting the mean wait (r2_score > 0).
+    MEDIUM_RISK everything else. That is where a scenario with an undefined
+                improvement or R2 lands unless the worst band has already made
+                it HIGH_RISK: an axis that could not be measured never earns the
+                mildest label, but it does not by itself earn the worst one.
+
+    WHAT LOW_RISK DOES AND DOES NOT GUARANTEE (read this before quoting it).
+    Half of the rule is purely RELATIVE. The mildest band is the bottom quartile
+    of THIS grid, and a quartile is populated by construction, so the band alone
+    would keep handing out LOW_RISK no matter how badly the whole grid did --
+    including a grid where the model was anti-predictive everywhere. The two
+    sign tests are the only ABSOLUTE floor under the label, and they are
+    deliberately weak ones: r2_score > 0 says the model beats a constant
+    prediction, not that its wait estimate is usable, and improvement_pct > 0
+    says the ordering helps, not that it helps by an amount worth having. Every
+    scenario in this sweep still has MAPE >= 54%. So a LOW_RISK row reads
+    "least-alarming quarter of a uniformly badly-calibrated grid, where the
+    ordering does help and the model does beat a constant" -- never "safe here".
+
+    Both comparisons are against a natural zero (does the ordering help or hurt;
+    does the model beat the mean predictor), not against a fitted cut-point, so
+    neither can go stale the way the retired `mape >= 35.0` gate did.
+    """
+    improvement = np.asarray(improvement_pct, dtype=float)
+    fit = np.asarray(r2_score, dtype=float)
+    bands = np.asarray(bands, dtype=object)
+    worst, mildest = SEVERITY_BAND_LABELS[-1], SEVERITY_BAND_LABELS[0]
+
+    levels = []
+    for band, gain, r2 in zip(bands, improvement, fit):
+        if band == worst or (np.isfinite(gain) and gain < 0.0):
+            levels.append("HIGH_RISK")
+        elif (band == mildest and np.isfinite(gain) and gain > 0.0
+                and np.isfinite(r2) and r2 > 0.0):
+            levels.append("LOW_RISK")
+        else:
+            levels.append("MEDIUM_RISK")
+    return levels
+
+
+def classify_scenarios(results_df):
+    """Attach the severity score, its bands and the derived labels to a frame.
+
+    Pure: returns a copy, so a caller (or a test) can classify any frame that
+    carries the four SEVERITY_DIMENSIONS columns plus improvement_pct.
+    """
+    out = results_df.copy()
+    zmatrix = severity_zmatrix(out)
+    severity = compute_severity_score(zmatrix)
+    cutpoints = derive_severity_cutpoints(severity)
+    bands = assign_severity_bands(severity, cutpoints)
+
+    out["severity_score"] = severity
+    out["severity_band"] = bands
+    out["failure_mode"] = assign_failure_modes(zmatrix)
+    out["risk_level"] = assign_risk_levels(
+        bands,
+        out["improvement_pct"].to_numpy(dtype=float),
+        out["r2_score"].to_numpy(dtype=float),
+    )
+    for name, row in zip(Z_COLUMNS, zmatrix):
+        out[name] = row
+    return out, cutpoints
 
 
 # Visualization
-def _signed_cmap(mode):
+def _signed_cmap(mode, reverse=False):
     """Diverging ramp for a SIGNED quantity: the ML-free/regression side in orange,
     the neutral hairline grey exactly at break-even, the ML-wins side in blue.
 
@@ -522,10 +716,16 @@ def _signed_cmap(mode):
     three hues, and red/green is the one pair a protanope cannot separate, so the
     single most important read of this chart (win vs loss) was carried by the
     weakest possible channel.
+
+    `reverse` is for a quantity whose sign convention is inverted -- severity,
+    where LARGER is WORSE. Orange must stay the "bad" hue across all panels; a
+    panel that silently flipped which end was orange would be worse than no
+    colour at all.
     """
     p = PALETTE[mode]
+    stops = [p["series_2"], p["grid"], p["series_1"]]
     return LinearSegmentedColormap.from_list(
-        "ood_signed", [p["series_2"], p["grid"], p["series_1"]]
+        "ood_signed", stops[::-1] if reverse else stops
     )
 
 
@@ -552,7 +752,7 @@ def _cell_ink(rgba):
     return PALETTE["light"]["ink"] if luminance > 0.55 else PALETTE["dark"]["ink"]
 
 
-def _draw_matrix(ax, grid, mode, fmt, outline_negative=False):
+def _draw_matrix(ax, grid, mode, fmt, outline_negative=False, reverse=False):
     """One domain-shift matrix: rows = arrival multiplier, cols = cluster size.
 
     Every cell is annotated on purpose. In a matrix, colour is the ONLY channel
@@ -560,7 +760,7 @@ def _draw_matrix(ax, grid, mode, fmt, outline_negative=False):
     the readout, not a redundant decoration on top of a bar.
     """
     p = PALETTE[mode]
-    cmap = _signed_cmap(mode)
+    cmap = _signed_cmap(mode, reverse=reverse)
     norm = _symmetric_norm(grid)
     im = ax.imshow(grid, cmap=cmap, norm=norm, aspect="auto", origin="upper")
 
@@ -614,21 +814,18 @@ def plot_ood_heatmap(results_df):
     2D form of a dual axis -- so it is now its own panel on a shared y-axis. Both
     grids are the same aggregation of the same numbers as before.
     """
-    heat = (
-        results_df.groupby(["arrival_rate_multiplier", "cluster_size"], as_index=False)["improvement_pct"]
-        .mean()
-        .pivot(index="arrival_rate_multiplier", columns="cluster_size", values="improvement_pct")
-        .reindex(index=ARRIVAL_MULTIPLIERS, columns=CLUSTER_SIZES)
-    )
-    r2_heat = (
-        results_df.groupby(["arrival_rate_multiplier", "cluster_size"], as_index=False)["r2_score"]
-        .mean()
-        .pivot(index="arrival_rate_multiplier", columns="cluster_size", values="r2_score")
-        .reindex(index=ARRIVAL_MULTIPLIERS, columns=CLUSTER_SIZES)
-    )
+    def _grid(column):
+        return (
+            results_df.groupby(["arrival_rate_multiplier", "cluster_size"], as_index=False)[column]
+            .mean()
+            .pivot(index="arrival_rate_multiplier", columns="cluster_size", values=column)
+            .reindex(index=ARRIVAL_MULTIPLIERS, columns=CLUSTER_SIZES)
+            .to_numpy(dtype=float)
+        )
 
-    imp_grid = heat.to_numpy(dtype=float)
-    r2_grid = r2_heat.to_numpy(dtype=float)
+    imp_grid = _grid("improvement_pct")
+    r2_grid = _grid("r2_score")
+    sev_grid = _grid("severity_score")
 
     n_cells = int(np.isfinite(imp_grid).sum())
     n_win = int(np.sum(np.isfinite(imp_grid) & (imp_grid > 0)))
@@ -642,7 +839,7 @@ def plot_ood_heatmap(results_df):
     )
 
     for mode in ("light", "dark"):
-        fig, axes = figure(mode, figsize=(12.4, 6.2), nrows=1, ncols=2, sharey=True)
+        fig, axes = figure(mode, figsize=(17.2, 6.2), nrows=1, ncols=3, sharey=True)
 
         # ── Panel 1: what the POLICY does under the shift ─────────────────────
         im_imp = _draw_matrix(
@@ -658,6 +855,17 @@ def plot_ood_heatmap(results_df):
         axes[1].set_title("Wait-model accuracy (R²)")
         _style_colorbar(fig, im_r2, axes[1], mode, "R² of the trained wait model")
 
+        # ── Panel 3: the composite severity RANK over the same grid ───────────
+        # Reversed ramp: severity is oriented so larger = worse, so the orange
+        # end has to sit at the top of the scale to keep "orange = bad" true
+        # across all three panels.
+        im_sev = _draw_matrix(
+            axes[2], sev_grid, mode, lambda v: f"{v:+.2f}", reverse=True
+        )
+        axes[2].tick_params(axis="y", length=0)
+        axes[2].set_title("Composite severity (higher = worse)")
+        _style_colorbar(fig, im_sev, axes[2], mode, "Severity (grid-standardised)")
+
         fig.tight_layout(rect=(0, 0.03, 1, 0.82))
         finish(
             fig, mode,
@@ -668,7 +876,11 @@ def plot_ood_heatmap(results_df):
                      f"profiles x {RUNS_PER_SCENARIO} seeded runs.\n"
                      f"R² is below zero in {n_r2_neg} of {n_cells} cells: the "
                      f"absolute wait estimate degrades off-distribution while the "
-                     f"queue ORDER it implies still helps." + outline_note,
+                     f"queue ORDER it implies still helps." + outline_note
+                     + "\nSeverity averages MAPE, R², improvement and unfinished-job "
+                     f"rate standardised ACROSS THIS GRID, so it ranks the "
+                     f"{len(results_df)} scenarios against each other; every one of "
+                     f"them has MAPE ≥ {results_df['mape'].min():.0f}%.",
             source=FIGURE_SOURCE,
         )
         save_both(fig, OUTPUT_HEATMAP_STEM, mode)
@@ -689,25 +901,19 @@ def main():
         result = evaluate_ood_scenario(
             model, model_features, params, baseline_mean_improvement, scenario_index
         )
-        mode, risk = detect_failure_mode(
-            result["improvement_pct"],
-            result["r2_score"],
-            result["mape"],
-            result["arrival_rate_multiplier"],
-            result["cluster_size"],
-        )
-        result["failure_mode"] = mode
-        result["risk_level"] = risk
         result["scenario"] = scenario_name
         results.append(result)
         print(
             f"[{scenario_index + 1:2d}/{len(scenarios)}] {scenario_name}: "
             f"R2={result['r2_score']:.3f} MAPE={result['mape']:.1f}% "
-            f"improvement={result['improvement_pct']:.2f}% ({risk})"
+            f"improvement={result['improvement_pct']:.2f}%"
         )
 
-    results_df = pd.DataFrame(results)
+    # Severity is standardised across the completed sweep, so classification
+    # happens once, on the whole frame, rather than per scenario.
+    results_df, cutpoints = classify_scenarios(pd.DataFrame(results))
     ordered_columns = [
+        # The twelve original columns, names and order unchanged.
         "scenario",
         "arrival_rate_multiplier",
         "cluster_size",
@@ -720,6 +926,10 @@ def main():
         "improvement_degradation_pct",
         "failure_rate_pct",
         "n_samples",
+        # Added by the severity taxonomy.
+        "severity_score",
+        "severity_band",
+        *Z_COLUMNS,
     ]
     results_df = results_df[ordered_columns]
 
@@ -735,6 +945,24 @@ def main():
     print(f"High-risk scenarios: {len(high_risk)}")
     print(f"Dangerous zones (<= -5%): {len(dangerous)}")
     print(f"Average improvement across OOD: {results_df['improvement_pct'].mean():.2f}%")
+
+    # Print the taxonomy's spread every run. A taxonomy that has silently
+    # collapsed to one value -- the defect this replaced -- is then visible in
+    # the log rather than only in the CSV nobody re-opens.
+    print(
+        "Severity band cut-points (quantiles "
+        + ", ".join(f"{q:.2f}" for q in SEVERITY_BAND_QUANTILES)
+        + "): "
+        + ", ".join(f"{c:.6f}" for c in cutpoints)
+    )
+    print(f"Severity range: {results_df['severity_score'].min():.6f} "
+          f".. {results_df['severity_score'].max():.6f}")
+    for column in ("severity_band", "failure_mode", "risk_level"):
+        counts = results_df[column].value_counts()
+        print(f"{column} ({counts.size} distinct): "
+              + ", ".join(f"{k}={v}" for k, v in counts.items()))
+    print(f"Worst MAPE {results_df['mape'].max():.2f}%, best MAPE "
+          f"{results_df['mape'].min():.2f}% — no band in this grid is 'safe'.")
     print(f"Saved: {OUTPUT_CSV}")
     print(f"Saved: {OUTPUT_HEATMAP}")
 
