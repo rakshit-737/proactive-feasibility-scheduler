@@ -44,7 +44,7 @@
 ### Phase 23: OOD Sensitivity (72 scenarios)
 - Scores the **actual trained model** (`wait_model_v2.pkl`) on freshly simulated shifted workloads.
 - **Prediction quality collapses OOD**: mean R² ≈ **−0.31** (range −2.32 … +0.85).
-- Scheduling improvement is erratic OOD: −10% … +53%, mean failure rate ≈ 32%.
+- Scheduling improvement is erratic OOD: −10% … +53%, mean failure rate 31.5%.
 - Conclusion: retrain per deployment regime; keep a FIFO fallback.
 
 ### Phase 24: Extended Scheduler Comparison
@@ -146,7 +146,7 @@ projection past the largest measured cluster.
   that definition has been removed, and any prose still describing it is describing a rule the
   repository no longer computes. On the surviving definition: 22.25 (FIFO) / 18.35 (Proactive) /
   30.20 (anti-starvation) starved jobs per run.
-- SLA compliance: FIFO 0.933, Proactive 0.945, anti-starvation 0.863. Run-level Jain: 0.918 vs 0.922.
+- SLA compliance: FIFO 0.933, Proactive 0.945, anti-starvation 0.863. Run-level Jain: 0.918 (FIFO) vs 0.924 (proactive).
 
 #### ⚠️ Withdrawn claim: "proactive ≥ FIFO on fairness"
 
@@ -200,7 +200,7 @@ Four research extensions, all regenerated from artifacts on disk.
   (current regeneration; the benchmark now spans 14 schedulers — subset shown):
   SJF 12.34/145.7/0.785 · NN 16.07/136.4/0.797 · PROACTIVE 15.95/128.8/0.793 ·
   STATIC_PRIORITY 16.53/131.7/0.743 · FIFO 17.22/54.7/0.516 · PROACTIVE_BF 19.20/53.8/0.479 ·
-  BACKFILL(EASY) 19.25/51.6/0.451. Utilisation 0.637 and throughput identical across all.
+  BACKFILL(EASY) 19.25/51.6/0.451. Throughput is identical across all 14 (0.3667). Utilisation is 0.6375 for 13 of them; preemptive SRPT is the exception at 0.6545.
 - **Semantics caveat**: the benchmark's "FIFO" dispatches every fitting job each tick,
   i.e. it is already unrestricted no-reservation backfilling. EASY's head-job reservation
   (canonical two-condition rule, v3.3) costs +11.8% mean wait but delivers among the

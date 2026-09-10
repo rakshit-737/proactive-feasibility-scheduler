@@ -880,7 +880,7 @@ for job in queue:              # 4. dispatch ALL
 
   <div class="callout">
     <div class="t">The backfill result, read correctly (v3.2)</div>
-    This benchmark's "FIFO" dispatches <em>every job that fits, every tick</em> — which is already <strong>unrestricted, no-reservation backfilling</strong>. EASY backfill (SLURM's real policy) is <em>stricter</em>: it guarantees the head job a reservation that no backfilled job may delay — even with perfect runtime estimates (our implementation gives it those, the strongest possible baseline). Under the canonical two-condition rule (v3.3) that guarantee costs <strong>+11.8% mean wait</strong> on this workload (19.25 vs 17.22 ts — an earlier stricter variant overstated it at ~45%) but buys among the <strong>best fairness in the study</strong> (Gini 0.451 vs FIFO's 0.516) and a FIFO-class tail (max ~52 ts). The reservation price is now measured, not assumed. And the hybrid — EASY's reservation with model-ordered backfilling — ties plain EASY (19.20 vs 19.25 ts, n.s.): an honest null result; once a reservation constrains the schedule, backfill <em>order</em> barely matters here.
+    This benchmark's "FIFO" dispatches <em>every job that fits, every tick</em> — which is already <strong>unrestricted, no-reservation backfilling</strong>. EASY backfill (SLURM's real policy) is <em>stricter</em>: it guarantees the head job a reservation that no backfilled job may delay — even with perfect runtime estimates (our implementation gives it those, the strongest possible baseline). Under the canonical two-condition rule (v3.3) that guarantee costs <strong>+11.8% mean wait</strong> on this workload (19.25 vs 17.22 ts — an earlier stricter variant overstated it at ~45%) but buys among the <strong>best fairness in the study</strong> (Gini 0.451 vs FIFO's 0.516) and a FIFO-class tail (max ~52 ts). The reservation price is now measured, not assumed. And the hybrid — EASY's reservation with model-ordered backfilling — lands at 19.20 ts against plain EASY's 19.25 — a 0.05 ts gap on a ~19 ts mean, and the honest reading is that it buys nothing visible. The <em>&ldquo;n.s.&rdquo;</em> this page once attached to that pair is withdrawn (v3.6): no paired test between <code>PROACTIVE_BF</code> and <code>BACKFILL</code> exists anywhere in the repository, so the two means stand but the null was never tested; once a reservation constrains the schedule, backfill <em>order</em> barely matters here.
   </div>
 </section>
 
@@ -1005,7 +1005,7 @@ for job in queue:              # 4. dispatch ALL
 
   <div class="callout warn" style="margin-top:14px">
     <div class="t">The honest half of the finding: signal is machine-dependent</div>
-    LANL CM-5 was a largely interactive machine — median wait ≈ 4 <em>seconds</em>, with waits driven by bursty exceptions rather than queue physics. There, even the retrained model only reaches R²(log) 0.10 and cannot beat the median baseline's MAE. Wait-time prediction pays off where queueing dominates (SDSC-style batch systems), not everywhere. Both results are reported; only one is flattering.
+    LANL CM-5 was a largely interactive machine — the recorded per-window median wait averages <strong>2.0 seconds</strong> across the 20 measured windows (<code>05_results/trace_schedulers/trace_fidelity.csv</code>), with waits driven by bursty exceptions rather than queue physics. There, even the retrained model only reaches R²(log) 0.10 and cannot beat the median baseline's MAE. Wait-time prediction pays off where queueing dominates (SDSC-style batch systems), not everywhere. Both results are reported; only one is flattering.
   </div>
 
   <div class="imggrid">
@@ -1084,7 +1084,7 @@ for job in queue:              # 4. dispatch ALL
   <div class="tablewrap"><table>
     <thead><tr><th>File</th><th>What it does</th><th>Outputs</th></tr></thead>
     <tbody>
-      <tr><td><code>generate_improved_dataset.py</code></td><td><strong>The canonical generator</strong> (pipeline step 0): 20 seeded simulation runs, 12 leak-free features per arrival, continuous wait-time label.</td><td><code>improved_wait_dataset.csv</code> (2,200 × 13)</td></tr>
+      <tr><td><code>generate_improved_dataset.py</code></td><td><strong>The canonical generator</strong> (pipeline step 1 of 20): 20 seeded simulation runs, 12 leak-free features per arrival, continuous wait-time label.</td><td><code>improved_wait_dataset.csv</code> (2,200 × 13)</td></tr>
       <tr><td><code>load_real_traces.py</code></td><td>Standard Workload Format (SWF) parser for real HPC traces (field mapping fixed by audit) with a <em>loud, honestly-labelled</em> synthetic fallback when no trace file exists.</td><td><code>synthetic_proxy_lanl_schema_trace.csv</code></td></tr>
       <tr><td><code>build_real_trace_datasets.py</code> · <code>real_trace_validation.py</code> <span class="chip info">v3.2</span></td><td>Real-trace pipeline (<strong>pipeline step 11</strong>): SWF parsing + chronological replay reconstruction of cluster-state features, then transfer/retrain/baseline evaluation on LANL CM-5 and SDSC SP2 (committed as <code>.swf.gz</code>).</td><td><code>05_results/traces/real_trace_validation.csv</code> + 4 plots</td></tr>
       <tr><td><code>synthetic_vs_real_comparison.py</code></td><td>Scores the trained model on the synthetic holdout vs the synthetic proxy trace — the sim-to-real gap measurement (<strong>pipeline step 13</strong>). Split-before-fit bug fixed by audit.</td><td><code>05_results/traces/synthetic_proxy_validation_results.csv</code></td></tr>
@@ -1378,7 +1378,10 @@ for job in queue:              # 4. dispatch ALL
   document.querySelectorAll('main section[id]').forEach(function (s) { obs.observe(s); });
 })();
 
-/* ================= Chart data (regenerated 2026-07) ================= */
+/* ========== Chart data (regenerated 2026-09, v3.6) ==========
+   Every series below is transcribed from a committed CSV under 05_results/ or
+   phases_22_30/. When an artefact is regenerated these must be re-transcribed:
+   nothing in the pipeline writes this file, so it cannot self-correct. */
 var DATA = {
   featImportance: [
     { label: 'job_gpu', v: 0.2609 }, { label: 'queue_length', v: 0.2234 },

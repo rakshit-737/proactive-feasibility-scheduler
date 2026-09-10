@@ -49,7 +49,7 @@ conflation was wrong. Neither number changes the equivalence result.
 | proactive per-job Gini | 0.80 | **0.79363** | same |
 | contended-cluster advantage | 14.4% | **14.5%** (14.5219) | rounding error carried across four documents |
 | utilisation at all scales | ">99.7%" | **above 99.69%** (minimum 99.694) | the stated bound was false as written |
-| batched inference latency | "10–48 ms" | the committed run records **10.24–15.49 ms** | wall-clock, machine-dependent, and not the range in the artefact |
+| batched inference latency | "10–48 ms" | the committed run records **10.24–15.49 ms** | wall-clock and machine-dependent; the quoted range did not match the artefact even when written (that run recorded 9.60–48.05 ms) |
 | proxy-trace transfer R² | 0.015 | **0.0321** (MAE 14.98 → 13.53) | the committed proxy was a v3.1 artefact the pipeline could not overwrite |
 | phase-24 header | "15-run benchmark" | **20-run** | the producer's own literal contradicted its numbers; every scheduler has exactly 20 runs |
 
@@ -59,10 +59,14 @@ conflation was wrong. Neither number changes the equivalence result.
   *"VERDICT: inference latency is CONSTANT regardless of cluster size"* from a fitted
   exponent of **−0.234**, then projected it to 512, 1024 and 4096 GPUs. Three independent
   defects: the classifier's test was `exponent < 0.1`, one-sided, so a strongly
-  *negative* exponent was labelled constant by fall-through; the four latencies are
-  **non-monotone** (48.05, 9.60, 28.40, 19.49 ms — a 5× spread); and
-  `inference_latency_ms` is a wall-clock column, observed drifting up to **84%** between
-  two runs on one machine while every non-timing column stayed bit-identical. Four noisy
+  *negative* exponent was labelled constant by fall-through; the four latencies it was
+  fitted to were **non-monotone** (48.05, 9.60, 28.40, 19.49 ms — a 5× spread); and
+  `inference_latency_ms` is a wall-clock column. How wall-clock: the *current* committed
+  run of the same benchmark records 15.18, 15.49, 12.57, 10.24 ms for those same four
+  cluster sizes, and the Phase A fresh-clone run measured the related timing columns in
+  `scaling_analysis.csv` moving by up to **84%** while every non-timing column stayed
+  bit-identical (`reports/phase_A_report.md` §5). A "law" whose inputs move that much
+  between runs of identical code is fitting the machine, not the algorithm. Four noisy
   points cannot identify a complexity class. The verdict, the complexity label and all
   three projections are withdrawn; the file is renamed `scaling_measurements.txt` and
   reports what was measured. What survives: scheduling overhead stayed under 5% of

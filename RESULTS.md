@@ -47,8 +47,9 @@ feature that does vary (`job_gpu`/`job_procs`, `can_fit_now`, `gpu_fit_ratio`,
 `node_availability`, `queue_pressure`) is a deterministic function of the
 requested size. A ~9-job queue is partitioned into only 2.3–3.1 priority classes;
 the learned order coincides with plain arrival order in **18–27%** of instants,
-and every queued job receives an *identical* score in **14–21%** of them, so the
-policy silently reduces to FCFS.
+and — a separate, smaller count over the same instants, not a subset of that
+figure — every queued job receives an *identical* score in **14–21%**. In the
+latter the policy silently reduces to FCFS outright.
 
 **Correction (v3.6).** An earlier draft of this paragraph read the 18–27% figure
 *as* the all-tied fraction. That was a conflation and is retracted: 18–27% is
@@ -157,7 +158,7 @@ in backfill studies.
 
 Against the recorded waits in the traces, simulated FCFS is close on LANL (38.8 vs
 33.2 min mean — the simulator is slightly *pessimistic*) but far more permissive on
-SDSC (174.6 vs 630.9 min mean, against a recorded **median** of 19.3 min). SDSC's
+SDSC (174.6 vs 630.9 min mean, against a recorded per-window median averaging 19.3 min — a mean of the 20 window medians, not a pooled median, which is 7.2 min). SDSC's
 recorded mean is dominated by an extreme tail our capacity-only model cannot
 reproduce, because SWF records no per-node placement or site policy (partitions,
 per-user limits, administrative holds). SDSC results should be read as "a correctly
@@ -184,7 +185,7 @@ substrates. See `trace_fidelity.csv`.
 - Phase 16–19: scaling (advantage 14.5% on small contended clusters → 0% when capacity removes queueing), online learning (drifted-stream MAE 6.98 → 6.88 with incremental updates), concept drift detection (rolling-MAE triggers), and an assumption-heavy ROI estimate (~$80k/yr — $79,930 on 35,540 saved GPU-hours — and a 90% first-year ROI; the committed figure previously lagged the current 7.9% improvement, and the model's assumptions remain unvalidated, so treat it as illustrative).
 - Phase 22 statistics: the headline improvement carries a genuine percentile-bootstrap CI — **[4.9%, 10.7%]** (`phases_22_30/phase_22_stats/stats_bootstrap.py`) — alongside BH-corrected p-values; degenerate comparisons (zero-variance utilisation/completions) are explicitly reported as "n/a (zero variance)" instead of fake significance. This is the *only* bootstrap in the repository: the blanket claim that "all headline claims carry bootstrap CIs" is withdrawn, because the intervals produced by `04_scheduler/benchmark_statistical.py` are Student-t.
 - Phase 26 stress test: at 32–256 GPUs under saturation, utilisation stays **above 99.69%** (the minimum, at 256 GPUs, is 99.694% — the previously quoted ">99.7%" bound is false as written) and scheduling overhead stays **<5% of throughput** (peak 1.55%). Inference latency is a wall-clock measurement and is machine-dependent: the committed run records **10.24–15.49 ms** per decision across the four scales, non-monotone in cluster size, and on a repeat run of this repository the timing columns moved by up to 84% while every non-timing column stayed bit-identical. The previously quoted "10–48 ms" is not the range in the committed artefact and is withdrawn.
-- **Scaling verdict withdrawn (v3.6).** Earlier versions fitted a scaling law to those four latency points and reported "O(1) / latency is CONSTANT", "excellent scalability", and projections to 512 / 1024 / 4096 GPUs. **All of that is retracted.** The fitted exponent was −0.234 over four non-monotone wall-clock points, and the classifier's test was one-sided, so a *negative* exponent was labelled "constant" by fall-through. Four noisy, non-monotone points cannot identify a complexity class, and no projection past the largest measured cluster is defensible. `phases_22_30/phase_26_scaling/scaling_law_fit.txt` is accordingly renamed `scaling_measurements.txt` and reports no complexity class. What survives is the overhead and utilisation bound above.
+- **Scaling verdict withdrawn (v3.6).** Earlier versions fitted a scaling law to the latency points committed at that time (48.05, 9.60, 28.40, 19.49 ms — not the four above, because this column is wall-clock and moves between runs, which is itself the objection) and reported "O(1) / latency is CONSTANT", "excellent scalability", and projections to 512 / 1024 / 4096 GPUs. **All of that is retracted.** The fitted exponent was −0.234 over four non-monotone wall-clock points, and the classifier's test was one-sided, so a *negative* exponent was labelled "constant" by fall-through. Four noisy, non-monotone points cannot identify a complexity class, and no projection past the largest measured cluster is defensible. `phases_22_30/phase_26_scaling/scaling_law_fit.txt` is accordingly renamed `scaling_measurements.txt` and reports no complexity class. What survives is the overhead and utilisation bound above.
 
 ## Artifact index
 - **Ranking degeneracy (v3.4)**: `05_results/degeneracy/*` — `ranking_degeneracy.csv`, `feature_variation.csv`, `size_priority_table.csv`, `ranking_degeneracy.png`
