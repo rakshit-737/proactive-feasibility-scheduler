@@ -148,7 +148,7 @@ construction (`est = runtime · U(1,C)`) **cannot produce an under-estimate at a
 This is not cosmetic: v3.3 concluded from the f-model that EASY is "nearly
 insensitive to estimate quality" (18.9–19.8 ts across perfect/f-model/modal). On the
 traces, real estimate error costs EASY **+6.2% mean wait on SDSC but +74% on LANL**
-(p=0.025) versus perfect estimates. Under-estimates break the mechanism the
+(paired t p = 0.025 raw, 0.23 after Holm; the Wilcoxon signed-rank test on the same 20 windows gives Holm p = 2.1e-05 — the effect is real but the heavy tail is what carries it, so the rank test survives correction and the t-test does not) versus perfect estimates. Under-estimates break the mechanism the
 reservation depends on — a job that claims it finishes before the shadow time and
 does not *does* delay the head. An evaluation using over-estimate noise only cannot
 observe this failure mode; the f-model should not be the sole estimate-error model

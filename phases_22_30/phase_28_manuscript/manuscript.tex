@@ -511,7 +511,10 @@ This is not a cosmetic difference. Our synthetic study concluded that EASY is
 ``nearly insensitive to estimate quality'' (mean wait $19.0$--$19.8$ ts across
 perfect, $f$-model, and modal estimates). On the traces, EASY with real
 estimates costs $+6.2\%$ mean wait versus perfect estimates on SDSC --- but
-$+74\%$ on LANL ($p = 0.025$). Under-estimates break the mechanism EASY depends
+$+74\%$ on LANL (paired $t$ $p = 0.025$ raw but $0.23$ after Holm; the Wilcoxon
+signed-rank test over the same 20 windows gives Holm $p = 2.1 \times 10^{-5}$, so the
+effect survives correction under the rank test and not under the $t$-test --- the
+wait distribution's tail is what carries it). Under-estimates break the mechanism EASY depends
 on: a job that claims it will finish before the reservation and does not
 \emph{does} delay the head, so the guarantee the reservation is supposed to
 provide fails exactly when it matters. An evaluation using only over-estimate

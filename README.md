@@ -115,7 +115,7 @@ best case: a model retrained on that machine's own earlier data.
   −20.4% on SDSC (p=0.042) but **−4.5%, p=0.48 on LANL CM-5**: indistinguishable
   from doing nothing.
 - **Any runtime signal dominates.** SJF on the estimate the user actually typed beats
-  Proactive by 20.2% on SDSC (Holm p=0.009) and 15.3% on LANL.
+  Proactive by 20.2% on SDSC (Holm p=0.009) and by 15.3% on LANL, though on LANL that gap does **not** survive Holm correction (t p=0.54, Wilcoxon p=0.43) — the SDSC result carries this claim, LANL only points the same way.
 - **ML adds nothing on top of the estimate.** Give the model the estimate as a
   feature — so it can learn everything SJF exploits *plus* the cluster state — and it
   still loses to plain SJF on both machines. The pipeline's ceiling is the sort it is
@@ -135,7 +135,7 @@ simulated. The backfill literature models it as `est = runtime × U(1,C)`:
 The two machines sit in opposite regimes and neither is the f-model, which by
 construction **cannot produce an under-estimate at all**. This matters: v3.3 concluded
 from the f-model that EASY backfill is "nearly insensitive to estimate quality". On the
-traces, real estimate error costs EASY **+6.2% on SDSC but +74% on LANL** (p=0.025) —
+traces, real estimate error costs EASY **+6.2% on SDSC but +74% on LANL** (paired *t* p = 0.025 raw, **0.23 after Holm**; the Wilcoxon signed-rank test on the same 20 windows gives Holm p = 2.1e-05 — the effect is real but the heavy tail is what carries it, so the rank test survives correction and the *t*-test does not) —
 under-estimates break the reservation guarantee, and over-estimate-only noise cannot
 reveal it.
 
