@@ -451,6 +451,13 @@ def test_a_runtime_signal_beats_the_learned_score_on_both_real_machines():
 
 # ---------------------------------------------------------------------------
 # 7. Numbers the operator-facing documentation quotes
+#
+# The ROI study that used to be pinned here was DELETED in v3.6. It converted a
+# wait-time percentage into GPU-hours saved, but this repository's own 40-run
+# benchmark records utilisation identical to six decimal places and the same 110
+# jobs completing under both policies -- the cluster does the same compute either
+# way. The saving being monetised was measured at zero, so the model was not an
+# uncertain estimate but a category error, and no pin can rescue it.
 # ---------------------------------------------------------------------------
 
 def test_the_fairness_cost_of_reordering():
@@ -480,19 +487,6 @@ def test_phase_27_agrees_with_the_root_fairness_table():
             root.loc[name, 'fairness_gini'], rel=REL), name
         assert ph27.loc[name, 'starvation_count'] == pytest.approx(
             root.loc[name, 'starvation_count'], rel=REL), name
-
-
-def test_the_roi_study_is_computed_from_the_current_improvement():
-    """The committed ROI table was once derived from a superseded 7.7144% while the
-    prose beside it quoted 7.9%. The producer reads the improvement at run time, so
-    the two must agree; this test is what notices when they stop."""
-    roi = read('05_results/roi/cost_benefit_analysis.csv').iloc[0]
-    stats = dict(zip(*read('05_results/benchmark_statistical_summary.csv')
-                     [['metric', 'value']].values.T))
-    assert roi['mean_wait_improvement_pct'] == pytest.approx(
-        stats['mean_improvement_pct'], rel=REL)
-    assert roi['total_annual_savings_usd'] == pytest.approx(79930.31597539439, rel=REL)
-    assert roi['roi_pct'] == pytest.approx(90.31027613189141, rel=REL)
 
 
 def test_the_contended_cluster_advantage():

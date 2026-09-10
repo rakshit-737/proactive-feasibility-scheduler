@@ -17,13 +17,14 @@ PY="${PY:-$(command -v python3 || command -v python)}"
 # cp1252 console encoding when output is piped or redirected.
 export PYTHONUTF8=1
 
-# SMOKE=1 selects the reduced configuration of the two long steps. A smoke run
+# SMOKE=1 selects the reduced configuration of the long steps. A smoke run
 # writes REDUCED numbers and its outputs must never be committed;
 # tools/verify_artifacts.py --smoke therefore runs it inside a scratch copy.
 SMOKE_DEG="${SMOKE:+--quick}"
 SMOKE_TDB="${SMOKE:+--smoke}"
+SMOKE_POWER="${SMOKE:+--replicates 2000}"
 
-TOTAL=20
+TOTAL=22
 
 # ---------------------------------------------------------------------------
 # Step 0 regenerates the dataset and the v2 model so the pipeline works on a
@@ -69,45 +70,77 @@ echo "[9/$TOTAL] Ranking-degeneracy diagnostic (is the ML score a function of si
 echo "[10/$TOTAL] Trace-driven scheduler benchmark (real SWF traces, real user estimates)"
 ( cd 04_scheduler && "$PY" trace_driven_benchmark.py $SMOKE_TDB )
 
-echo "[11/$TOTAL] Real-trace datasets (SWF replay) and real-trace validation"
+# ---------------------------------------------------------------------------
+# Reads step 10's per-window CSV and asks whether the equivalence tests printed
+# there could have concluded anything at all. On LANL the published 20-window
+# TOST had ~0.5% power at the observed effect, so its failure to certify
+# equivalence is INCONCLUSIVE, not evidence of a difference. This step also
+# counts the disjoint windows each trace can actually supply, so a required n
+# can be compared against what the trace physically has. It changes no
+# published number and does NOT raise the benchmark's window count.
+# ---------------------------------------------------------------------------
+echo "[11/$TOTAL] Power of the trace-driven equivalence tests (how many windows would be needed?)"
+"$PY" 04_scheduler/tost_power.py $SMOKE_POWER
+
+echo "[12/$TOTAL] Real-trace datasets (SWF replay) and real-trace validation"
 "$PY" 02_data/build_real_trace_datasets.py
 "$PY" 02_data/real_trace_validation.py
 
-echo "[12/$TOTAL] SHAP explainability"
+echo "[13/$TOTAL] SHAP explainability"
 "$PY" 03_models/explainability_shap.py
 
-echo "[13/$TOTAL] Synthetic-proxy trace: out-of-distribution check (NOT real trace data)"
+echo "[14/$TOTAL] Synthetic-proxy trace: out-of-distribution check (NOT real trace data)"
 "$PY" 02_data/load_real_traces.py
 "$PY" 02_data/synthetic_vs_real_comparison.py
 
-echo "[14/$TOTAL] Scaling analysis"
+echo "[15/$TOTAL] Scaling analysis"
 "$PY" 04_scheduler/scaling_analysis.py
 
-echo "[15/$TOTAL] Uncertainty-aware scheduling benchmark (quantile intervals, OOD)"
+echo "[16/$TOTAL] Uncertainty-aware scheduling benchmark (quantile intervals, OOD)"
 "$PY" 04_scheduler/uncertainty_scheduler_benchmark.py
 
-echo "[16/$TOTAL] Online learning and concept drift"
+# Audits step 16's own headline. Under load a policy's published mean wait is
+# taken over the jobs it managed to START, and different policies strand
+# different jobs, so the improvement column can compare two different job
+# populations. This step re-runs the same simulations (same 7000+run seeds) and
+# reports the paired common-set comparison and each policy's started fraction
+# beside the published number. It reads the two trained models (steps 1 and 3)
+# and must follow step 16, whose committed CSV it reproduces cell for cell.
+echo "[17/$TOTAL] Censoring / selection-bias audit of the uncertainty benchmark"
+"$PY" 04_scheduler/censoring_analysis.py
+
+echo "[18/$TOTAL] Online learning and concept drift"
 "$PY" 03_models/online_learning.py
 "$PY" 03_models/concept_drift_detection.py
 
-echo "[17/$TOTAL] Baseline statistical benchmark refresh"
+echo "[19/$TOTAL] Baseline statistical benchmark refresh"
 "$PY" 04_scheduler/benchmark_statistical.py
 
-echo "[18/$TOTAL] ROI analysis"
-"$PY" 05_results/roi_analysis.py
-
-echo "[19/$TOTAL] Multi-model comparison (Table 1)"
+echo "[20/$TOTAL] Multi-model comparison (Table 1)"
 "$PY" 03_models/compare_multiple_models.py
+
+# ---------------------------------------------------------------------------
+# The published model score comes from a uniformly random 80/20 row split, but
+# the 2200 rows are 20 simulation runs of 110 jobs: a random split puts rows of
+# the SAME run -- and adjacent instants of it -- on both sides. This step
+# re-scores the identical model configuration under a run-wise grouped split
+# and a within-run chronological split, plus constant baselines, so the
+# generalisation number is reported next to the optimistic one. It reads only
+# 02_data/improved_wait_dataset.csv (step 1) and nothing reads its output, so
+# it sits with the other model-evaluation steps.
+# ---------------------------------------------------------------------------
+echo "[21/$TOTAL] Honest split comparison (random vs run-wise vs chronological)"
+"$PY" 03_models/evaluate_splits.py
 
 # ---------------------------------------------------------------------------
 # Phases 22-27, formerly phases_22_30/run_all_experiments_v2.sh. They read
 # 05_results/benchmark_statistical_results.csv,
 # 05_results/schedulers/multi_scheduler_benchmark.csv and
 # 05_results/fairness/fairness_metrics.csv, so they must follow steps 5, 7
-# and 17. Folding them in gives the repository ONE entry point, so that
+# and 19. Folding them in gives the repository ONE entry point, so that
 # "run_all_experiments.sh regenerates every result" is a true statement.
 # ---------------------------------------------------------------------------
-echo "[20/$TOTAL] Phases 22-27: bootstrap CIs, OOD sensitivity, scheduler landscape, traces, scaling, fairness/SLA"
+echo "[22/$TOTAL] Phases 22-27: bootstrap CIs, OOD sensitivity, scheduler landscape, traces, scaling, fairness/SLA"
 "$PY" phases_22_30/phase_22_stats/stats_bootstrap.py
 "$PY" phases_22_30/phase_23_sensitivity/sensitivity_ood_analysis.py
 "$PY" phases_22_30/phase_24_extended_schedulers/scheduler_comparison.py
