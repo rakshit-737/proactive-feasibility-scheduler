@@ -17,6 +17,7 @@ addopts = "-q --strict-markers --strict-config"
 markers = [
     "slow: takes more than a second; deselect with -m 'not slow'",
     "artefact: needs a generated artefact from run_all_experiments.sh (skips if absent)",
+    "golden: reads a COMMITTED artefact and pins a published number; FAILS rather than skips if it is missing, because absence means a broken checkout, not an un-run pipeline",
 ]
 filterwarnings = ["error::DeprecationWarning:tests.*"]
 
