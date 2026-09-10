@@ -23,9 +23,10 @@ so out loud. It must never produce output that is indistinguishable from success
      fallback on purpose; the asymmetry is asserted below so a later "tidy-up"
      cannot collapse the two.
 
-Nothing here writes a tracked artefact: the SWF fixtures are built in `tmp_path`
-and the Phase 24 functions under test are pure (the ones that write to
-`phases_22_30/` are deliberately never called).
+Nothing here writes a tracked artefact: the SWF fixtures are built in `tmp_path`,
+and the one Phase 24 function under test that writes (`write_novelty_claim`) is
+called only through the `redirected_claim` fixture, which points `OUTPUT_CLAIM`
+into `tmp_path` and then asserts the tracked file was not touched.
 """
 
 import ast
@@ -220,6 +221,37 @@ def _summary_row(scheduler, mean_wait=10.0):
     }
 
 
+def _improvement_row(wait_pct):
+    """One entry of the `improvements` mapping `write_novelty_claim` consumes."""
+    return {
+        'wait_improvement_pct': wait_pct,
+        'throughput_improvement_pct': 1.0,
+        'util_improvement_pct': 1.0,
+        'fairness_improvement_pct': 1.0,
+    }
+
+
+@pytest.fixture
+def redirected_claim(phase24, tmp_path, monkeypatch):
+    """Send `novelty_claim.txt` to `tmp_path`, and prove the tracked one is untouched.
+
+    `write_novelty_claim` is the only function exercised here that writes, and
+    what it writes is a committed artefact. The fixture yields the temporary
+    destination and, on teardown, fails if the real file changed -- so a future
+    edit that drops the redirection is caught by the suite rather than by
+    `git status`.
+    """
+    tracked = phase24.OUTPUT_CLAIM
+    before = os.stat(tracked).st_mtime_ns if os.path.exists(tracked) else None
+    target = tmp_path / 'novelty_claim.txt'
+    monkeypatch.setattr(phase24, 'OUTPUT_CLAIM', str(target))
+
+    yield target
+
+    after = os.stat(tracked).st_mtime_ns if os.path.exists(tracked) else None
+    assert after == before, f'the test wrote the tracked artefact {tracked}'
+
+
 def test_build_comparison_dataframe_rejects_an_unknown_scheduler_key(phase24):
     """INVARIANT: a key the SCHEDULERS table does not know stops the phase.
 
@@ -275,32 +307,153 @@ def test_build_comparison_dataframe_keeps_documented_metadata_for_known_keys(pha
     assert 'n/a' not in set(out['reference'])
 
 
-def test_no_silent_scheduler_lookup_survives_anywhere_in_phase_24():
-    """INVARIANT: the whole file goes through the strict lookup.
+def test_scheduler_info_refuses_an_unknown_key_however_the_lookup_is_written(phase24):
+    """INVARIANT: the one lookup helper raises on a key the table does not have.
 
-    `build_comparison_dataframe` was not the only `SCHEDULERS.get(key, ...)` in
-    this script -- `write_novelty_claim` used the same pattern twice to label
-    ranked rows. Fixing one and leaving the others is how a fix looks complete
-    while the defect survives in the artefact nobody diffs.
+    Every scheduler lookup in the script goes through `_scheduler_info`, so this
+    is the narrowest place the guarantee can be pinned -- and it is pinned as
+    BEHAVIOUR (what the function does with an unknown key) rather than as the
+    shape of the code. A silent fallback has unlimited spellings --
+    `SCHEDULERS.get(k, default)`, the same call through a local alias,
+    `try: SCHEDULERS[k] except KeyError:`, `k if k in SCHEDULERS else ...`, a
+    `dict(SCHEDULERS)` copy -- and every one of them fails this assertion, while
+    a check on the source can only ever enumerate the spellings somebody
+    happened to think of.
+    """
+    with pytest.raises(SystemExit) as excinfo:
+        phase24._scheduler_info('NOT_A_SCHEDULER')
+
+    message = str(excinfo.value)
+    assert 'NOT_A_SCHEDULER' in message, message
+    assert 'SCHEDULERS' in message and 'scheduler_comparison.py' in message, message
+
+    # ...and the strictness costs the normal path nothing: a known key still
+    # returns the table's own entry, not a copy or a reconstruction of it.
+    assert phase24._scheduler_info('FIFO') is phase24.SCHEDULERS['FIFO']
+
+
+def test_write_novelty_claim_also_refuses_an_unknown_scheduler_key(phase24,
+                                                                   redirected_claim):
+    """INVARIANT: the OTHER consumer of the table refuses the key too.
+
+    `build_comparison_dataframe` was never the only lookup: `write_novelty_claim`
+    labels the ranked rows and the head-to-head section the same way, and it is
+    the function that writes `novelty_claim.txt` -- the artefact the manuscript
+    quotes. Fixing the lookup in one function and leaving it defaulted in the
+    other is how a fix looks complete while the defect survives in the file
+    nobody diffs, so this asserts the second function's behaviour directly
+    instead of inferring it from the source.
+
+    Both of its lookups feed off the same `improvements` mapping, so the ranking
+    loop is the one an unknown key reaches first; the syntactic guard below is
+    what watches the head-to-head site separately.
+    """
+    comparison = phase24.build_comparison_dataframe(
+        pd.DataFrame([_summary_row('FIFO'), _summary_row('PROACTIVE')]))
+    improvements = {
+        'PROACTIVE': _improvement_row(12.0),
+        'NOT_A_SCHEDULER': _improvement_row(5.0),
+        'FIFO': _improvement_row(0.0),
+    }
+
+    with pytest.raises(SystemExit) as excinfo:
+        phase24.write_novelty_claim(comparison, improvements, None)
+
+    assert 'NOT_A_SCHEDULER' in str(excinfo.value), str(excinfo.value)
+
+    # This second assertion is not decoration: the function has two lookups, so
+    # degrading only the first still ends in SystemExit from the second -- and a
+    # test that stopped at `raises` would pass while the ranked list had already
+    # been written with a fabricated label. What the artefact CONTAINS is the
+    # thing that matters, so it is what is asserted. A half-written claim file
+    # is obviously broken; a plausible one is not.
+    partial = (redirected_claim.read_text(encoding='utf-8')
+               if redirected_claim.exists() else '')
+    assert 'NOT_A_SCHEDULER' not in partial, partial
+
+
+def _scheduler_table_aliases(tree):
+    """Every name bound to the SCHEDULERS dict: the table itself plus its aliases.
+
+    Iterated to a fixed point so a chain (`t = SCHEDULERS; u = t`) is followed,
+    and applied to plain assignments, annotated assignments, walrus bindings and
+    parameter defaults (`def f(table=SCHEDULERS)`) -- the cheap ways to give the
+    table a second name and slip a defaulted lookup past a check that only knows
+    the literal spelling.
+    """
+    aliases = {'SCHEDULERS'}
+    while True:
+        found = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                a = node.args
+                positional = a.posonlyargs + a.args
+                bound = list(zip(positional[len(positional) - len(a.defaults):],
+                                 a.defaults))
+                bound += [(arg, d) for arg, d in zip(a.kwonlyargs, a.kw_defaults) if d]
+                found |= {arg.arg for arg, d in bound
+                          if isinstance(d, ast.Name) and d.id in aliases}
+                continue
+            if isinstance(node, ast.Assign):
+                value, targets = node.value, node.targets
+            elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and node.value is not None:
+                value, targets = node.value, [node.target]
+            else:
+                continue
+            if isinstance(value, ast.Name) and value.id in aliases:
+                found |= {t.id for t in targets if isinstance(t, ast.Name)}
+        if found <= aliases:
+            return aliases
+        aliases |= found
+
+
+def test_no_defaulted_scheduler_table_lookup_survives_anywhere_in_phase_24():
+    """SECONDARY guard. The functional tests above are the real one.
+
+    This reads the source, so it can only ever catch spellings it was taught:
+    a silent lookup written as `try/except KeyError`, as a membership test, or
+    against a copy of the table walks straight past it. That is not a defect to
+    be patched by adding one more pattern -- it is why the two tests above feed
+    the module an unrecognised key and assert on what it DOES, which no
+    rewriting of the lookup can evade. This one is kept only because it is the
+    only check that sees each call site individually, including the head-to-head
+    site in `write_novelty_claim` that an unknown key never reaches (the ranking
+    loop raises first), and because it names the offending line.
+
+    Broadened from the original, which matched only a Call whose func was
+    literally the attribute `SCHEDULERS.get`: the reviewer's evasion was to bind
+    the table to a local name first. Any `.get` on the table under ANY of its
+    names now fails, with or without a default -- inside `_scheduler_info` the
+    sanctioned read is the subscript `SCHEDULERS[key]`, so no `.get` on this
+    table has a legitimate caller.
     """
     tree = ast.parse(open(PHASE24_PATH, encoding='utf-8').read(), PHASE24_PATH)
 
-    # Parsed, not grepped: the string 'SCHEDULERS.get(' appears in the comment
+    # Parsed, not grepped: the string 'SCHEDULERS.get(' appears in the docstring
     # that explains why the pattern was removed, and a text search would match
     # its own tombstone.
-    defaulted = [
-        node.lineno for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == 'get'
-        and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == 'SCHEDULERS'
-    ]
+    aliases = _scheduler_table_aliases(tree)
+    defaulted = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == 'get'):
+            continue
+        receiver = node.func.value
+        if not isinstance(receiver, ast.Name):
+            continue
+        bound_form = receiver.id in aliases
+        # The unbound spelling of the same call: dict.get(SCHEDULERS, key, ...).
+        unbound_form = (receiver.id == 'dict' and node.args
+                        and isinstance(node.args[0], ast.Name)
+                        and node.args[0].id in aliases)
+        if bound_form or unbound_form:
+            defaulted.append(f'line {node.lineno}: {ast.unparse(node)[:70]}')
 
     assert not defaulted, (
-        f'SCHEDULERS.get(...) is back at line(s) {defaulted} of '
-        f'scheduler_comparison.py; route the lookup through _scheduler_info() '
-        f'so an unknown key fails loudly instead of defaulting')
+        f'a defaulted lookup on the SCHEDULERS table is back in '
+        f'scheduler_comparison.py -- {defaulted}; route it through '
+        f'_scheduler_info() so an unknown key fails loudly instead of '
+        f'producing a row labelled "unknown". Aliases checked: {sorted(aliases)}')
 
 
 # ─────────────────────────────────────────────────────────────────────────────

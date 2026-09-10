@@ -286,6 +286,25 @@ class Collector:
 
         # (4)/(5) identical resulting dispatch orders (with the same tie-breaks
         # the schedulers actually use: (score, arrival, id))
+        #
+        # ONE deliberate difference from the schedulers, stated because it has a
+        # real semantic consequence: they sort on the RAW float
+        # (multi_scheduler_benchmark.rank_queue uses
+        # `key=lambda i: (float(pred[i]), arrival, job_id)`), whereas
+        # `model_order` below sorts on the QUANTISED key. Within a single 1e-9
+        # bin the two can therefore disagree -- the scheduler may separate two
+        # jobs this diagnostic reports as tied, so model_order is not always
+        # byte-for-byte the dispatch order the benchmark produced.
+        #
+        # That is the right trade HERE, and only here. This module exists to
+        # measure how often the learned score CANNOT tell two queued jobs apart;
+        # an ordering conjured out of a sub-1e-9 float difference is precisely
+        # the artefact being measured, not a decision worth reproducing. Reading
+        # the counters and the induced order off one quantised value is also
+        # what makes pct_all_scores_tied <= pct_order_identical_to_arrival true
+        # by construction rather than by assumption (see TIE_DECIMALS). The
+        # schedulers' own behaviour is untouched; only this diagnostic's notion
+        # of "the same score" is.
         arrivals = np.array([j.arrival_time for j in queue], dtype=float)
         ids = np.array([j.job_id for j in queue], dtype=float)
         model_order = sorted(range(n), key=lambda i: (float(keys[i]), arrivals[i], ids[i]))

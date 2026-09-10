@@ -32,14 +32,20 @@ synthetic runs, 20 trace windows), so every way of producing a smaller number
 under the same column name has to be either impossible or loudly labelled:
 
   (f) the two tie columns must mean what they say, and the strict one must be
-      bounded by the weaker one BY CONSTRUCTION rather than by assumption;
+      bounded by the weaker one BY CONSTRUCTION rather than by assumption; the
+      1e-9 tie bin is itself pinned, at its definition AND at each counter that
+      applies it, and every published statistic that reads a prediction
+      (Kendall tau, the size -> priority table) must read it through that bin
+      rather than through the raw float;
   (g) a missing trace is a hard error; --allow-partial records what was covered;
   (h) --quick, --runs and --windows are equally capable of producing a
       non-published total, so `partial` is derived from all of them;
   (i) the figures a reader actually sees must carry the partial marker, and must
       not describe synthetic instants as "real";
   (j) --figures-only must refuse to re-render publication figures from artefacts
-      that are absent, partial, or mutually inconsistent.
+      that are absent, partial, mutually inconsistent, duplicated across rows,
+      or short a column that would let any of that be checked -- and "partial"
+      must be read off the cell's TEXT, since bool('False') is True.
 
 Every test here is fast (a handful of jobs, no simulation loop, no benchmark)
 and pure (no tracked artefact is written -- the totals-CSV tests write only into
@@ -492,6 +498,191 @@ def test_equal_size_violations_use_the_same_tie_tolerance(make_job):
         'two equally-sized jobs received clearly different scores and it was '
         'not counted: the degeneracy claim would report 0 violations while the '
         'score was not a function of size')
+
+
+def test_tie_tolerance_is_the_documented_one_and_is_never_looser():
+    """INVARIANT: the quantisation bin is 1e-9 wide -- the width the module
+    promises, and no other.
+
+    TIE_DECIMALS is the ONE definition of "these two scores are the same score",
+    and the comment beside it makes a specific, load-bearing promise: the
+    quantisation "is never LOOSER than the |spread| <= 1e-9 test it replaces".
+    Nothing enforced the number itself. Widening the bin to 1e-3 leaves every
+    other test in this suite green while silently calling genuinely different
+    scores tied: pct_all_scores_tied (a published headline) inflates, and the
+    equal-size/different-prediction counter goes blind to real separations, so
+    "the score is a function of requested size alone" would report 0 violations
+    for a score that is nothing of the kind.
+
+    Both directions are pinned, because a TIGHTER bin breaks the promise too:
+    the guarantee is that quantisation agrees with the spread test, not that it
+    is merely conservative.
+    """
+    import ranking_degeneracy as rd
+
+    assert rd.TIE_DECIMALS == 9
+    assert rd.TIE_ATOL == 1e-9
+    assert rd.TIE_ATOL == 10.0 ** -rd.TIE_DECIMALS, (
+        'the absolute tolerance and the rounding must describe ONE bin width; '
+        'two different widths is two definitions of "tied" again')
+
+    # The promised property, stated over the quantiser: values further apart
+    # than the tolerance can never share a bin ...
+    apart = rd.tie_keys([1.5, 1.5 + 1e-6])
+    assert len(np.unique(apart)) == 2, (
+        'scores 1e-6 apart -- a thousand tolerances -- landed in one bin: the '
+        'quantisation is LOOSER than the |spread| <= 1e-9 test it replaces, so '
+        'genuinely different scores are being counted as tied')
+    # ... and values the spread test called equal still share one.
+    together = rd.tie_keys([1.5, 1.5 + 3e-10])
+    assert len(np.unique(together)) == 1, (
+        'scores 3e-10 apart landed in different bins: the quantisation is '
+        'TIGHTER than the spread test, so a queue the documented tolerance '
+        'calls tied would be reported as carrying distinct scores')
+
+
+def test_tie_tolerance_is_pinned_where_the_collector_applies_it(make_job):
+    """INVARIANT: 1e-9 is the tolerance every Collector counter actually
+    applies -- not merely the number written beside TIE_DECIMALS.
+
+    The constant above can be pinned by a test that never runs the code that
+    uses it. This one drives the tolerance through the Collector, so a change to
+    the bin width has to survive the four places the width decides an answer:
+    the distinct-prediction count, the all-scores-tied counter, the monotone
+    size-table counter, and the equal-size violation check.
+
+    The witness is a separation of 1e-7: a hundred times the documented
+    tolerance, and still four orders of magnitude inside a 1e-3 bin. Under the
+    documented width the two jobs are plainly different; widen the bin -- or
+    widen TIE_ATOL alone, leaving the rounding where it is -- and every counter
+    below flips.
+    """
+    import ranking_degeneracy as rd
+
+    # (i) plainly separated scores must not be tied, must not be one distinct
+    #     score, and must not produce a "monotone" size -> priority table.
+    apart = rd.Collector('unit test', list(_UNIT_FEATURES))
+    _observe(apart, make_job, sizes=[1, 2], preds=[2.0, 2.0 - 1e-7])
+    assert apart.n_distinct_pred == [2], (
+        'two scores 1e-7 apart were counted as one distinct prediction')
+    assert apart.all_tied == 0, (
+        'an instant whose scores differ by 1e-7 was counted as all-tied, which '
+        'is the number the paper quotes as "the policy is silently FCFS"')
+    assert apart.monotone_instants == 0, (
+        'a size -> priority table that DECREASES by 1e-7 was called monotone: '
+        'the monotone check is applying a wider slack than the documented '
+        'TIE_ATOL, so pct_size_table_monotone is being inflated')
+
+    s = apart.summary()
+    assert s['mean_distinct_predictions'] == pytest.approx(2.0)
+    assert s['pct_all_scores_tied'] == pytest.approx(0.0)
+    assert s['pct_size_table_monotone'] == pytest.approx(0.0)
+
+    # (ii) and the other direction: inside one bin really is tied, so the bin
+    #      cannot be narrowed either.
+    close = rd.Collector('unit test', list(_UNIT_FEATURES))
+    _observe(close, make_job, sizes=[1, 2], preds=[2.0, 2.0 - 3e-10])
+    assert close.n_distinct_pred == [1]
+    assert close.all_tied == 1
+
+    # (iii) the violation counter -- the executable form of "the score is a
+    #       function of size alone" -- reads the same width. A looser bin hides
+    #       exactly the evidence that would falsify the claim.
+    viol = rd.Collector('unit test', list(_UNIT_FEATURES))
+    _observe(viol, make_job, sizes=[4, 4, 1], preds=[2.0, 2.0 - 1e-7, 9.0])
+    assert viol.violations == 1, (
+        'two equally-sized jobs scored 1e-7 apart and it was not counted as a '
+        'violation: the tie bin is wide enough to swallow a real breach of the '
+        'degeneracy claim, which would then be published as 0 violations')
+
+
+def test_kendall_tau_reads_the_quantised_score_not_the_raw_prediction(make_job):
+    """INVARIANT: the Kendall tau against smallest-size-first is computed on the
+    quantised keys, as the module says every prediction read is.
+
+    kendall_tau_vs_size_mean is a published column, and its SIGN is the whole
+    argument: positive means the learned score ranks the queue the way
+    smallest-first does. Feeding the raw predictions instead lets differences
+    below the tie tolerance -- float noise the module has already decided is not
+    a difference -- decide concordance, and that is enough to flip the sign.
+
+    The witness below is exactly that: four scores inside one 1e-9 bin, ordered
+    against size, plus one genuinely smaller score. Quantised, the bin is one
+    value and tau is strongly POSITIVE; raw, the noise inside the bin
+    contributes six discordant pairs and tau is NEGATIVE. The test computes both
+    so it cannot go vacuous.
+    """
+    from scipy import stats
+
+    import ranking_degeneracy as rd
+
+    sizes = [1, 2, 3, 4, 5]
+    # one genuinely low score, then four that differ only inside a single bin
+    # and do so in DECREASING order of size
+    preds = [1.0, 2.0 + 4e-10, 2.0 + 3e-10, 2.0 + 2e-10, 2.0 + 1e-10]
+    assert len(set(preds)) == 5, 'the raw scores must genuinely differ as floats'
+    assert len(np.unique(rd.tie_keys(preds))) == 2, (
+        'the four near scores must collapse to one bin, leaving two keys')
+
+    raw_tau = float(stats.kendalltau(preds, sizes).statistic)
+    quantised_tau = float(stats.kendalltau(rd.tie_keys(preds), sizes).statistic)
+    assert raw_tau < 0 < quantised_tau, (
+        'the witness no longer separates the two readings, so this test would '
+        'pass on either input')
+
+    col = rd.Collector('unit test', list(_UNIT_FEATURES))
+    _observe(col, make_job, sizes=sizes, preds=preds)
+
+    assert col.taus == [pytest.approx(quantised_tau)], (
+        'the recorded tau is the RAW-prediction tau: sub-tolerance float noise '
+        'inside one tie bin is deciding a published rank-agreement statistic')
+    assert col.summary()['kendall_tau_vs_size_mean'] == pytest.approx(quantised_tau)
+    assert col.summary()['kendall_tau_vs_size_mean'] > 0
+
+
+def test_size_priority_table_reads_the_quantised_score_not_the_raw_prediction(make_job):
+    """INVARIANT: the recovered size -> priority table is built from the
+    quantised keys, as the module says every prediction read is.
+
+    This table is published twice over: size_priority_table.csv and the figure
+    drawn from it, whose whole point is the SHAPE of the curve. The scores are
+    normalised WITHIN each instant, (table - lo) / (hi - lo), so the smaller the
+    spread the more any difference is magnified -- and reading the raw
+    predictions magnifies float noise all the way to full scale.
+
+    The first instant below is the witness: two sizes whose scores differ by
+    2e-10, i.e. by nothing. Quantised, hi == lo, the instant contributes no
+    point at all and the curve stays empty -- correctly, because there is no
+    size preference to recover. Raw, that 2e-10 is stretched across the whole
+    0..1 axis and manufactures a full-swing DECREASING preference out of
+    nothing. The second instant carries a real preference, so the assertions
+    below pin a curve with content rather than merely an empty frame.
+    """
+    import ranking_degeneracy as rd
+
+    col = rd.Collector('unit test', list(_UNIT_FEATURES))
+
+    # instant 1: no real size preference -- the scores are one bin apart
+    noise = [2.0 + 3e-10, 2.0 + 1e-10]
+    assert len(np.unique(rd.tie_keys(noise))) == 1, 'the witness must be one bin'
+    _observe(col, make_job, sizes=[1, 2], preds=noise)
+    assert col.size_score == [], (
+        'an instant whose scores differ by 2e-10 contributed a size -> priority '
+        'point: raw float noise is being normalised to full scale and published '
+        'as a learned size preference')
+
+    # instant 2: a genuine, increasing preference
+    _observe(col, make_job, sizes=[1, 2], preds=[1.0, 3.0])
+
+    curve = col.size_curve()
+    assert list(curve['size']) == [1.0, 2.0]
+    assert list(curve['n']) == [1, 1], (
+        'the noise instant contributed a second observation per size')
+    scores = dict(zip(curve['size'], curve['norm_score']))
+    assert scores[1.0] == pytest.approx(0.0)
+    assert scores[2.0] == pytest.approx(1.0), (
+        'the published size -> priority curve has been flattened by averaging a '
+        'real preference against one invented from sub-tolerance noise')
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1008,3 +1199,180 @@ def test_figures_only_refuses_when_only_the_violation_total_is_stale(
 
     assert 'disagrees with ranking_degeneracy.csv' in str(exc.value)
     assert not rendered
+
+
+# The columns scope_from_totals declares it needs before it will vouch for
+# anything. Spelled out here rather than read from the module so the test pins
+# the LIST as well as the check: dropping a column from TOTALS_COLUMNS would
+# otherwise silently drop it from the guard and from the test together.
+_REQUIRED_TOTALS_COLUMNS = ('settings_expected', 'settings_present',
+                            'missing_traces', 'runs', 'published_runs',
+                            'windows', 'published_windows', 'partial',
+                            'total_instants', 'total_violations')
+
+
+def _rewrite_partial_cell(totals_path, raw):
+    """Rewrite the single-row totals CSV so its `partial` field is `raw` text.
+
+    Done by hand rather than through pandas on purpose: DataFrame.to_csv renders
+    a Python bool back as the canonical `False`, which pd.read_csv coerces
+    straight to a numpy bool, so the string path _as_bool exists for is never
+    reached. Writing the field means the reader sees what a hand-edited or
+    foreign-tool-written totals file would actually contain.
+    """
+    lines = totals_path.read_text().splitlines()
+    header, fields = lines[0].split(','), lines[1].split(',')
+    fields[header.index('partial')] = raw
+    totals_path.write_text(lines[0] + '\n' + ','.join(fields) + '\n')
+
+
+def test_as_bool_refuses_the_string_that_bool_gets_wrong():
+    """INVARIANT: _as_bool reads a CSV cell's TEXT, not its truthiness.
+
+    The hazard is named in the function's own docstring and is the whole reason
+    it exists: `bool('False')` is True, so a guard written as
+    `if bool(row['partial'])` refuses a complete run, while `bool('no')` -- or
+    any other spelling a hand-edited totals file might carry -- is True as well
+    and a PARTIAL run sails past a guard that reads it the other way round.
+
+    This pins the helper at the exact string from the docstring, which is worth
+    doing separately: current pandas coerces a bare `False` cell to a numpy bool
+    before _as_bool ever sees it, so only the cells asserted in the two
+    end-to-end tests below reach it as text.
+    """
+    import ranking_degeneracy as rd
+
+    assert bool('False') is True, 'the hazard _as_bool exists for is gone'
+    for falsey in ('False', 'false', 'FALSE', ' False ', 'no', '0', 'NO'):
+        assert rd._as_bool(falsey) is False, f'{falsey!r} read as a true value'
+    for truthy in ('True', 'true', 'TRUE', ' True ', 'yes', '1'):
+        assert rd._as_bool(truthy) is True, f'{truthy!r} read as a false value'
+    # non-strings keep plain truthiness, which is what the real bool cell needs
+    assert rd._as_bool(True) is True
+    assert rd._as_bool(False) is False
+    assert rd._as_bool(np.False_) is False
+
+
+@pytest.mark.parametrize('cell', [' False', 'no'])
+def test_figures_only_accepts_a_string_false_partial_cell(cell, monkeypatch,
+                                                          tmp_path, make_job):
+    """INVARIANT: a totals row whose `partial` cell is a FALSE-spelling string
+    re-renders, because the guard reads the text rather than its truthiness.
+
+    This is the half a bare `bool()` gets backwards. Both cells below describe
+    complete runs; `bool(' False')` and `bool('no')` are True, so an unguarded
+    read refuses to re-render a perfectly good artefact set -- and, in the
+    mirror case _as_bool's docstring names, would wave a partial one through as
+    soon as its cell arrived as text.
+
+    The cells carry a space or an alternative spelling because pandas coerces a
+    bare `False` to a numpy bool before the guard sees it; the assertion below
+    fails rather than passing vacuously if that ever stops being true.
+    """
+    import ranking_degeneracy as rd
+
+    rendered = _complete_artefacts(rd, monkeypatch, tmp_path, make_job)
+    totals_path = tmp_path / 'ranking_degeneracy_totals.csv'
+    _rewrite_partial_cell(totals_path, cell)
+
+    parsed = pd.read_csv(totals_path).iloc[0]['partial']
+    assert isinstance(parsed, str), (
+        'pandas coerced the cell to a bool, so this test never exercises the '
+        'string path _as_bool exists for -- pick a cell it leaves as text')
+    assert bool(parsed) is True, 'the witness must be a string bool() gets wrong'
+
+    rd.main()
+
+    assert [name for name, _, _ in rendered] == ['figure', 'size_table'], (
+        'a complete run whose partial cell round-tripped as the STRING '
+        f'{cell!r} was refused: the guard is reading truthiness, not the text')
+    assert rendered[0][1][-1].partial is False
+
+
+@pytest.mark.parametrize('cell', [' True', 'yes'])
+def test_figures_only_refuses_a_string_true_partial_cell(cell, monkeypatch,
+                                                         tmp_path, make_job):
+    """INVARIANT: a totals row whose `partial` cell is a TRUE-spelling string is
+    still refused.
+
+    The companion to the test above, and the reason the guard cannot simply be
+    inverted: reading the text has to keep saying "no" to a partial run. A
+    string cell must not become a way of smuggling one past --figures-only and
+    re-publishing its reduced total in the published figure's own words.
+    """
+    import ranking_degeneracy as rd
+
+    rendered = _complete_artefacts(rd, monkeypatch, tmp_path, make_job)
+    totals_path = tmp_path / 'ranking_degeneracy_totals.csv'
+    _rewrite_partial_cell(totals_path, cell)
+    assert isinstance(pd.read_csv(totals_path).iloc[0]['partial'], str)
+
+    with pytest.raises(SystemExit) as exc:
+        rd.main()
+
+    assert 'partial=True' in str(exc.value)
+    assert not rendered, 'a partial run was re-rendered as a publication figure'
+
+
+def test_figures_only_refuses_a_totals_file_with_more_than_one_row(monkeypatch,
+                                                                   tmp_path,
+                                                                   make_job):
+    """INVARIANT: the totals file must hold EXACTLY one row.
+
+    scope_from_totals reads `totals.iloc[0]` and vouches for the whole artefact
+    set on the strength of it. A second row means the file is not what it claims
+    -- two runs appended, or a run that wrote twice -- and iloc[0] then describes
+    one of them while the figure captions the sum of the other table. Without
+    the check the extra rows are simply invisible: the first row here is the
+    good one, so a neutered guard sails straight through and renders.
+    """
+    import ranking_degeneracy as rd
+
+    rendered = _complete_artefacts(rd, monkeypatch, tmp_path, make_job)
+    totals_path = tmp_path / 'ranking_degeneracy_totals.csv'
+    totals = pd.read_csv(totals_path)
+    pd.concat([totals, totals], ignore_index=True).to_csv(totals_path, index=False)
+
+    with pytest.raises(SystemExit) as exc:
+        rd.main()
+
+    msg = str(exc.value)
+    assert 'holds 2 rows' in msg, f'the refusal does not name the problem: {msg}'
+    assert 'exactly 1' in msg
+    assert not rendered, 'a two-row totals file was vouched for anyway'
+
+
+@pytest.mark.parametrize('column', _REQUIRED_TOTALS_COLUMNS)
+def test_figures_only_refuses_a_totals_file_missing_a_required_column(
+        column, monkeypatch, tmp_path, make_job):
+    """INVARIANT: every column in TOTALS_COLUMNS must be present, or refuse.
+
+    A totals file that predates the columns recording what produced it cannot be
+    checked at all: `runs`/`windows` are how a reduced protocol is detected,
+    `partial` is the verdict itself, and the two totals are what the consistency
+    check compares. Four of the ten are not read after the guard, so dropping
+    one of those is completely silent without it -- the run proceeds and
+    re-publishes a figure from an artefact set nothing has vouched for.
+
+    Parametrised over the whole tuple so the guard cannot be narrowed to a
+    subset of the columns it declares.
+    """
+    import ranking_degeneracy as rd
+
+    assert rd.TOTALS_COLUMNS == _REQUIRED_TOTALS_COLUMNS, (
+        'the declared totals columns changed; this guard must be updated with '
+        'them, not around them')
+
+    rendered = _complete_artefacts(rd, monkeypatch, tmp_path, make_job)
+    totals_path = tmp_path / 'ranking_degeneracy_totals.csv'
+    totals = pd.read_csv(totals_path)
+    totals.drop(columns=[column]).to_csv(totals_path, index=False)
+
+    with pytest.raises(SystemExit) as exc:
+        rd.main()
+
+    msg = str(exc.value)
+    assert column in msg, f'the refusal does not name the missing column: {msg}'
+    assert 'missing' in msg
+    assert not rendered, (
+        f'a totals file with no {column!r} column was vouched for anyway')

@@ -29,21 +29,32 @@
 # (wait > 3x the run's mean wait); it now matches 04_scheduler/fairness_analysis.py
 # and phase 27's SLA-2, so the repository has a single definition of starvation.
 #
-# EXPECTED CONSEQUENCE -- THE STARVATION TREND INVERTS. The two definitions do not
-# merely rescale the count, they reverse its direction across the sweep:
+# EXPECTED CONSEQUENCE -- THE OVERALL DIRECTION FLIPS. Compared between the tightest
+# and the loosest budget, the old rule ends HIGHER than it starts and the new rule ends
+# LOWER. That is an endpoint-to-endpoint comparison only: NEITHER SERIES IS MONOTONE IN
+# B -- both rise and then fall in between -- so neither may be described as a trend.
 #
-#   definition                             B = 0     ...      B = None (unbounded)
-#   old: wait > 3x the run's MEAN wait      0.85    rising          16.4
-#   new: wait > 3x the job's OWN runtime   ~29      falling        ~21
+#   definition                            B = 0    in between (not monotone)   B = None
+#   old: wait > 3x the run's MEAN wait      0.85    peaks at 19.65 (B = 80)      16.40
+#   new: wait > 3x the job's OWN runtime   29.45    peaks at 33.30 (B = 40)      20.70
 #
-# The old rule is distribution-relative: a tight budget compresses the wait
-# distribution, which drags the mean down with it, so almost nothing clears 3x the
-# mean and the count looks BEST at B = 0 and worst unbounded. The new rule measures
-# each job against its own fixed yardstick, so a tight budget -- which really does
-# make short jobs sit behind escalated long ones -- scores WORST at B = 0 and
-# improves as the budget loosens. A regenerated sweep whose starvation column FALLS
-# with looser budgets is therefore correct, not a regression; it must not be read
-# against the published (old-definition) shape.
+# Full series over BUDGETS = [0, 10, 20, 30, 40, 60, 80, 120, None]:
+#   old (superseded rule, kept only for reference):
+#     0.85, 1.65, 1.60, 1.70, 5.60, 17.30, 19.65, 16.75, 16.40
+#   new (this file) -- 05_results/fairness/budget_sweep.csv, column
+#   'starved_jobs_wait_gt_3x_own_runtime':
+#     29.45, 29.35, 32.45, 32.45, 33.30, 29.60, 24.55, 21.45, 20.70
+#
+# The old rule is distribution-relative: a tight budget compresses the wait distribution,
+# which drags the mean down with it, so almost nothing clears 3x the mean and the count
+# sits at its LOWEST at B = 0 (0.85) and far higher unbounded (16.40) -- while still
+# turning over at B = 80 rather than climbing throughout. The new rule measures each job
+# against its own fixed yardstick, so a tight budget -- which really does make short jobs
+# sit behind escalated long ones -- starts HIGH at B = 0 (29.45) and lands lower unbounded
+# (20.70), after bulging to 33.30 at B = 40 on the way. A regenerated sweep whose
+# starvation column starts near 29.45, bulges at intermediate budgets, and ends near 20.70
+# is therefore correct, not a regression; it must not be read against the published
+# (old-definition) shape, and it must not be expected to fall step by step.
 #
 # Because both definitions would otherwise write a column called 'starvation', the
 # count is stored under a self-describing header instead --
@@ -87,9 +98,10 @@ BUDGETS = [0, 10, 20, 30, 40, 60, 80, 120, None]   # None = pure proactive
 # the repository has one definition of starvation.
 STARVATION_RUNTIME_MULTIPLE = 3.0
 # The CSV header carries the DEFINITION, not just the concept: the superseded
-# distribution-relative rule also produced a column named 'starvation' and the two
-# trend in opposite directions (see the header note), so a bare name leaves a stale
-# file and a correct one indistinguishable. Keep this in sync with the multiple above.
+# distribution-relative rule also produced a column named 'starvation', and the two differ
+# by more than an order of magnitude at B = 0 and move in opposite overall directions
+# across the sweep (see the header note), so a bare name leaves a stale file and a correct
+# one indistinguishable. Keep this in sync with the multiple above.
 STARVATION_COLUMN = 'starved_jobs_wait_gt_3x_own_runtime'
 
 # ── Load wait_model_v2 (clean 12-feature model) ──────────────────────────────

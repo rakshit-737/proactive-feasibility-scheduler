@@ -1,5 +1,218 @@
 # Changelog
 
+## v3.6 — September 2026 · Hostile-review hardening: integrity, reproducibility, and one retraction
+
+A full adversarial audit of every numeric claim in the repository. 910 claims were
+inventoried against the artefact that should hold them and the script that should
+produce it (`reports/claim_inventory.md`); 181 were stale, orphaned or unreproducible.
+The central result survived unchanged and is now, for the first time, defended by tests.
+
+### The headline is unchanged and reproduces on a fresh clone
+
+A `git clone` into a clean virtualenv on the pinned interpreter reproduces
+**45,432 dispatch instants with zero equal-size/different-score violations**,
+byte-identically. So do the TOST equivalence, the 7.9% improvement, the 12-policy
+trace table and the 7-of-12 constant features. Of 164 tracked artefacts, 153
+reproduced identically; every difference is explained below.
+
+### Retraction: the all-ties claim was overstated
+
+README, RESULTS.md, the manuscript and this changelog all stated that
+*"in 18–27% of instants **all scores tie**, so the policy silently is FCFS"*.
+
+That 18–27% is `pct_order_identical_to_arrival` — the fraction of instants where the
+induced **order** equals plain arrival order. All-tied implies that; the converse does
+not hold, so the column only **upper-bounds** the claim. The quantity is now measured
+directly, in a new `pct_all_scores_tied` column of
+`05_results/degeneracy/ranking_degeneracy.csv`:
+
+| setting | order = arrival order | all scores tied |
+|---|---|---|
+| synthetic | 19.72% | **17.11%** |
+| SDSC SP2 | 18.11% | **14.41%** |
+| LANL CM-5 | 27.47% | **20.73%** |
+
+**old:** "all scores tie in 18–27% of instants" · **new:** "the learned order coincides
+with plain arrival order in 18–27% of instants, and every queued job receives an
+identical score in 14–21%". Both facts support the degeneracy argument; only the
+conflation was wrong. Neither number changes the equivalence result.
+
+### Numbers that moved, and why
+
+| quantity | old | new | cause |
+|---|---|---|---|
+| ROI annual savings | $78,073.65 | **$79,930.32** | the committed table was computed from the superseded 7.7144% while the prose beside it quoted 7.9%; the producer reads the improvement at run time |
+| ROI first-year return | 85.89% | **90.31%** | same |
+| `estimate_sensitivity` PROACTIVE mean wait | 16.1036 | **15.9477** | never regenerated after the v3.5 train/serve fix. Every other scheduler's own mean wait is unchanged |
+| proactive max wait (fairness) | 125 / 124.8 | **122.65** | the phase-27 copy of the fairness table was stale, not different — see below |
+| anti-starvation max wait | 87 / 87.15 | **88.15** | same |
+| proactive per-job Gini | 0.80 | **0.79363** | same |
+| contended-cluster advantage | 14.4% | **14.5%** (14.5219) | rounding error carried across four documents |
+| utilisation at all scales | ">99.7%" | **above 99.69%** (minimum 99.694) | the stated bound was false as written |
+| batched inference latency | "10–48 ms" | the committed run records **10.24–15.49 ms** | wall-clock, machine-dependent, and not the range in the artefact |
+| proxy-trace transfer R² | 0.015 | **0.0321** (MAE 14.98 → 13.53) | the committed proxy was a v3.1 artefact the pipeline could not overwrite |
+| phase-24 header | "15-run benchmark" | **20-run** | the producer's own literal contradicted its numbers; every scheduler has exactly 20 runs |
+
+### Withdrawn claims
+
+- **The scaling law.** `scaling_law_fit.txt` reported `Complexity: O(1)` and
+  *"VERDICT: inference latency is CONSTANT regardless of cluster size"* from a fitted
+  exponent of **−0.234**, then projected it to 512, 1024 and 4096 GPUs. Three independent
+  defects: the classifier's test was `exponent < 0.1`, one-sided, so a strongly
+  *negative* exponent was labelled constant by fall-through; the four latencies are
+  **non-monotone** (48.05, 9.60, 28.40, 19.49 ms — a 5× spread); and
+  `inference_latency_ms` is a wall-clock column, observed drifting up to **84%** between
+  two runs on one machine while every non-timing column stayed bit-identical. Four noisy
+  points cannot identify a complexity class. The verdict, the complexity label and all
+  three projections are withdrawn; the file is renamed `scaling_measurements.txt` and
+  reports what was measured. What survives: scheduling overhead stayed under 5% of
+  throughput at every measured scale.
+- **"All headline claims carry bootstrap CIs."** The interval [4.9%, 10.9%] is a
+  **Student-t** interval (`stats.t.ppf` in `benchmark_statistical.py`), not a bootstrap.
+  It was called a bootstrap CI in six places. The repository's one genuine percentile
+  bootstrap is `phase_22_stats/stats_bootstrap.py`, which gives **[4.9%, 10.7%]** over the
+  same 40 runs, and was quoted in exactly one place. Both are now named.
+- **"Priority + aging."** `priority_scheduler.py`'s key expands to
+  `(priority_score + 0.03·arrival_time) − 0.03·current_time`. The `current_time` term is a
+  common additive shift at any instant, so it cancels from every pairwise comparison: the
+  order is **time-invariant** and a queued job can never overtake by waiting. The formula
+  is unchanged and the mean wait is still 16.5318 — only the false label goes. The
+  scheduler key is `STATIC_PRIORITY` everywhere. HRRN is the genuinely aging baseline.
+- **"(n.s.)" on the predicted-wait backfill hybrid.** RESULTS.md reported the hybrid as
+  tying plain EASY "(19.20 vs 19.25, n.s.)". No paired test between `PROACTIVE_BF` and
+  `BACKFILL` exists anywhere: `multi_scheduler_significance.csv` uses only PROACTIVE and
+  FIFO as references. The two means stand; the untested significance claim is withdrawn.
+- **"45,432 real dispatch instants."** 3,646 of them are synthetic. The split is now
+  stated wherever the total is (41,786 real + 3,646 synthetic), including `CITATION.cff`.
+- **A "30-phase research pipeline"** (`CITATION.cff`). The directories stop at phase 28.
+
+### Deleted, because nothing regenerated them and no current claim cites them
+
+`phase_27_fairness/fairness_formal_analysis.md` — hand-written, and **fabricated rather
+than merely stale**: all 26 values in its two example tables were tested against every
+numeric cell of every CSV in the repository and **exactly one (18.27) appears as the
+quantity claimed**. Its table headers name columns that do not exist. Its "~3.7% Gini
+improvement" matches nothing — the per-job Gini is 51% *worse* under Proactive, which the
+project's own `novelty_claim.txt` states in plain text. Its SLA-2 definition ("wait < 200
+timesteps for 99% of jobs") was never implemented.
+
+`phase_25_real_traces/cross_trace_mae.csv` and the code path behind it — `_map_lanl` and
+`_map_alibaba` **synthesised the wait-time target from a hard-coded linear formula while
+their trace candidates were tagged `source_type="real"`**, and `estimate_cross_trace_mae`
+then scored a heuristic whose coefficients nearly matched that generator's, so the
+reported error was circular. No file those mappers read has ever existed in this
+repository. The CSV's only row was the synthetic proxy with `mape_pct` pinned at the 200.0
+saturation value. No Alibaba trace has ever shipped here; only scaffolding did.
+
+`docs/project_report.html` and `docs/research_progress.html` — hand-maintained, frozen at
+v3.2, 41% and 30% stale respectively, and containing no mention of `45,432`, `7.9%`,
+`degenerac`, `TOST` or the equivalence result at all. Their two genuinely unique numbers
+(phase-03 classifier ROC-AUCs, and a phase-04 leaky-model MAE) have no producer and no
+artefact, and are preserved as `[UNVERIFIED]` in `reports/phase_A_report.md`.
+
+Also deleted: `sensitivity_analysis.py`, `tune_xgboost.py`, `generate_load_profiles.py`,
+`benchmark_and_plot.py` and their CSVs, and the pre-v2 legacy datasets, models and
+trainers. None was in any pipeline and no current prose cites them.
+
+### Reproducibility
+
+- **One entry point.** `run_all_experiments.sh` is a single 20-step run that now includes
+  the six phases 22–27 scripts and the five studies no pipeline regenerated (quantile
+  model, fairness budget sweep, real-trace dataset build and validation, uncertainty
+  benchmark, phase-01 simulation). `METHODOLOGY.md`'s claim that it "regenerates every
+  result" was false when written and is now true. `run_all_experiments_v2.sh` forwards here.
+- **`tools/verify_artifacts.py`** re-runs the pipeline in a scratch copy and diffs every
+  tracked artefact against its committed blob — CSVs cell by cell, text line by line, PNGs
+  and pickles by existence and loadability. Six wall-clock columns in three files are
+  reported as `TIMING` and never as failures, and the report prints that exemption rather
+  than hiding it. `make verify`, `--quick`, `--smoke`.
+- **The interpreter is no longer ambiguous.** `PY` is overridable, because a bare
+  `python3` on Windows resolves to the Microsoft Store shim rather than to an activated
+  virtualenv — so a caller who believed they were testing a pinned environment may not have
+  been. Python **3.14** is named in `requirements.txt`, `requirements-dev.txt`, the
+  `Dockerfile` and CI, and `tests/test_python_pin.py` fails if those four drift apart.
+- **A missing trace is a hard failure.** `ranking_degeneracy.py` used to catch
+  `FileNotFoundError` per trace, print `skipping`, write the summary anyway and exit 0 — so
+  the published 45,432 could silently collapse to 3,646. It now exits non-zero unless
+  `--allow-partial` is passed, and always writes `ranking_degeneracy_totals.csv` recording
+  settings expected and present, missing traces, the runs and windows actually used against
+  the published protocol, and whether the run was partial. The figure captions say so too,
+  because a finished PNG that looks exactly like the real one is the dangerous output.
+- **One gzip-aware SWF reader** (`02_data/swf_io.py`). `build_real_trace_datasets.py` opened
+  the plain `.swf` name with a bare `open()` while only `.swf.gz` is committed, so it could
+  not run on a fresh clone at all. The unvalidated cached-feature branch in
+  `trace_driven_benchmark.py` is deleted: a stale gitignored file could silently change
+  published numbers.
+- **Honest naming.** Pipeline step 7 was labelled "Real trace loading" and loaded no real
+  data on any machine — it looked for `02_data/lanl_trace_sample.swf`, a filename that has
+  never existed here, so the synthetic fallback fired on every run and then overwrote a
+  tracked file. `lanl_trace_sample.csv` → `synthetic_proxy_lanl_schema_trace.csv`;
+  `lanl_validation_results.csv` → `synthetic_proxy_validation_results.csv`.
+
+### Statistics and correctness
+
+- **Paired statistics now pair by label.** `simstats.equivalence_table` and
+  `pairwise_significance` sorted each scheduler's rows by the unit column and then paired
+  them **by position**, never checking that the two schedulers carried the same run or
+  window labels. Two schedulers with equal counts but disjoint labels received a confident
+  paired p-value for a comparison that was never paired; a length mismatch made one
+  function drop the pair silently and the other die inside numpy. They now align by label
+  and raise on differing sets, duplicated labels, a missing unit column or an absent
+  reference. **No published number moves**: for equal, duplicate-free label sets the sorted
+  label sequence is identical for both schedulers, so reindexing reproduces the old float
+  order exactly — verified by regenerating all four affected CSVs.
+- **One definition of starvation.** `fairness_budget_sweep.py` counted a job starved when
+  its wait exceeded 3× the run's **mean wait**, while `fairness_analysis.py` and phase 27's
+  SLA-2 use 3× the job's **own runtime**. Standardised on the per-job rule. Its column is
+  renamed `starved_jobs_wait_gt_3x_own_runtime` so the definition travels with the data.
+  **The trend inverts** under the corrected rule — a regenerated sweep whose starvation
+  count falls as budgets loosen is correct, not a regression. Every other metric in that
+  file is computed from the same values as before.
+- **The fairness fork was staleness, not disagreement.**
+  `phase_27_fairness/fairness_metrics.csv` disagreed with `05_results/fairness/` for
+  several releases (124.8 vs 122.65, 87.15 vs 88.15). Its producer has always iterated
+  every row of the benchmark; the committed copy predated that benchmark reaching 14
+  schedulers and was never regenerated because phase 27 ran only from a script nobody
+  invoked. Regenerated, it has 15 rows and **agrees exactly**. A golden test asserts it.
+- **An unrecognised scheduler key is a hard error** in phase 24, instead of a row labelled
+  `unknown` flowing into the published comparison table. A rename is precisely how that
+  happens, and the degraded row is the one artefact that would not reveal it.
+- **`02_data/dataset.csv` never matched its own generator.** The generator is
+  deterministic; the file simply predated a change and nothing regenerated it. It is now
+  step 2 of the pipeline.
+
+### Tests and CI
+
+- **`tests/test_golden_numbers.py`** — 26 tests pinning every headline number to its
+  committed artefact. Unlike the rest of the suite these **fail rather than skip** when an
+  input is missing, because every file they read is committed: absence means a broken
+  checkout, not an un-run pipeline.
+- The suite grows from **135 to over 230 tests**. Two tests that pinned known defects as
+  intended behaviour (positional pairing in `simstats`, the inert aging term) now pin the
+  corrected contract instead.
+- Every repair in this release was **adversarially reviewed and mutation-tested**: the
+  defect was reintroduced and the guarding test had to go red. That process found four
+  tests which passed equally well against the old broken code — they looked like evidence
+  and guarded nothing — and they were replaced.
+- **CI actually runs the tests.** It previously byte-compiled a subset that excluded
+  `tests/` and `conftest.py`, installed no dependencies in that job, and carried
+  `continue-on-error: true` on the only step that touched dependencies, so it could not
+  fail. It now installs the pinned set on 3.14, lints, runs `pytest`, and runs a smoke
+  reproduction of the pipeline; a weekly job runs the full artefact verification.
+
+### Known gaps, recorded rather than fixed
+
+- `scaling_analysis.py` derives its seed as `4000 + run_id + nodes`, a **sum**, so run 8
+  with 4 nodes collides with run 4 with 8 nodes. Reported and left alone: seed families are
+  out of scope for this pass by design.
+- Cross-platform bit-reproduction is **unproven**. Everything above was verified on Windows
+  with CPython 3.14.3. Scheduling is discrete, so a last-ulp difference in one prediction
+  can flip a queue order and move a published mean by percent, not by 1e-9. The weekly CI
+  job is what will establish this.
+- The ROI study monetises a wait-time percentage while the project's own benchmark shows
+  utilisation and completions are **identical in all 40 runs**. The figures are regenerated
+  and internally consistent, but the study's premise is a question for the next pass.
+
 ## v3.5 — July 2026 · Train/serve feature-skew fix and full synthetic-result regeneration
 
 ### The defect
