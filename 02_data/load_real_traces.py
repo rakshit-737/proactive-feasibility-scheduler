@@ -3,8 +3,21 @@ import argparse
 import pandas as pd
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_INPUT = os.path.join(PROJECT_ROOT, '02_data', 'lanl_trace_sample.swf')
-DEFAULT_OUTPUT = os.path.join(PROJECT_ROOT, '02_data', 'lanl_trace_sample.csv')
+
+# This script builds a SYNTHETIC LANL-SCHEMA PROXY, not a real trace.
+#
+# It used to look for '02_data/lanl_trace_sample.swf', a filename that has never
+# existed in this repository, so the fallback below fired on every run on every
+# machine while the pipeline step was labelled "Real trace loading". The two
+# real traces the project evaluates ship as .swf.gz and are handled by
+# 02_data/build_real_trace_datasets.py, not here.
+#
+# --input is kept so a caller who has an SWF log can convert it to this 4-column
+# schema, but there is no default input any more: the honest default is to
+# generate the proxy and say so.
+DEFAULT_INPUT = None
+DEFAULT_OUTPUT = os.path.join(PROJECT_ROOT, '02_data',
+                              'synthetic_proxy_lanl_schema_trace.csv')
 
 
 def parse_lanl_swf(path):
@@ -40,9 +53,13 @@ def parse_lanl_swf(path):
 
 
 def build_fallback_trace():
-    """Build a SYNTHETIC proxy trace (a synthetic LANL-schema proxy) derived
-    from improved_wait_dataset.csv. This is NOT real LANL data; downstream
-    evaluations must label it 'synthetic_proxy_trace', not 'real_trace'.
+    """Build a SYNTHETIC proxy trace with a LANL-like schema, derived from
+    improved_wait_dataset.csv.
+
+    This is NOT real LANL data and carries no real-world provenance. Downstream
+    evaluations must label it 'synthetic_proxy_trace'. It exists only to give
+    the out-of-distribution check in synthetic_vs_real_comparison.py a workload
+    whose distribution differs from the training set.
     """
     data = pd.read_csv(os.path.join(PROJECT_ROOT, '02_data', 'improved_wait_dataset.csv'))
     out = pd.DataFrame({
@@ -55,26 +72,22 @@ def build_fallback_trace():
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Parse LANL SWF trace into project CSV schema.')
-    parser.add_argument('--input', default=DEFAULT_INPUT, help='Path to LANL SWF file')
+    parser = argparse.ArgumentParser(
+        description='Generate the synthetic LANL-schema proxy trace, or convert an SWF log '
+                    'into the same 4-column schema.')
+    parser.add_argument('--input', default=DEFAULT_INPUT,
+                        help='optional SWF log to convert instead of generating the proxy')
     parser.add_argument('--output', default=DEFAULT_OUTPUT, help='Output CSV path')
     args = parser.parse_args()
 
-    if os.path.exists(args.input):
+    if args.input:
+        if not os.path.exists(args.input):
+            raise SystemExit(f'--input {args.input} does not exist')
         df = parse_lanl_swf(args.input)
-        source = 'LANL SWF'
+        source = f'SWF log {os.path.basename(args.input)}'
     else:
         df = build_fallback_trace()
-        source = 'synthetic_proxy_trace (fallback; no SWF found)'
-        # Guard: never let the synthetic fallback overwrite an existing real
-        # trace CSV. If the user already has a curated lanl_trace_sample.csv and
-        # no .swf is present, write the proxy to a clearly-named separate file.
-        if (os.path.abspath(args.output) == os.path.abspath(DEFAULT_OUTPUT)
-                and os.path.exists(DEFAULT_OUTPUT)):
-            args.output = os.path.join(
-                os.path.dirname(DEFAULT_OUTPUT), 'lanl_trace_fallback_proxy.csv')
-            print('No SWF found and a real trace CSV already exists; '
-                  f'writing fallback proxy to {args.output} instead of overwriting it.')
+        source = 'synthetic_proxy_trace (generated; NOT real trace data)'
 
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
     df.to_csv(args.output, index=False)

@@ -10,7 +10,8 @@ Validates that the method scales gracefully without breaking on larger systems.
 Generates:
   - scaling_benchmark.csv: metrics at 4/8/16/32 node scales
   - inference_overhead_plot.png (+ -dark.png): latency vs. cluster size
-  - scaling_law_fit.txt: O(n) analysis and projected cost
+  - scaling_measurements.txt: measured latency/overhead table (no complexity class
+    is inferred and no extrapolation is made -- see summarise_latency)
 """
 
 import heapq
@@ -46,7 +47,8 @@ OUTPUT_CSV = os.path.join(SCRIPT_DIR, "scaling_benchmark.csv")
 # '<stem>-dark.png' (dark). The light path is byte-identical to the old output.
 OUTPUT_PLOT_STEM = os.path.join(SCRIPT_DIR, "inference_overhead_plot")
 OUTPUT_PLOT = OUTPUT_PLOT_STEM + ".png"
-OUTPUT_FIT = os.path.join(SCRIPT_DIR, "scaling_law_fit.txt")
+# Renamed from scaling_law_fit.txt: the file no longer fits a law.
+OUTPUT_FIT = os.path.join(SCRIPT_DIR, "scaling_measurements.txt")
 
 # Scaling points: (nodes, gpus_per_node, total_gpus)
 SCALING_POINTS = [
@@ -182,28 +184,35 @@ def measure_inference_overhead(config: Dict, mean_queue_len: float, model, featu
     }
 
 
-def fit_scaling_law(scaling_results: pd.DataFrame) -> Dict:
+def summarise_latency(scaling_results: pd.DataFrame) -> Dict:
+    """Summarise the measured inference latencies WITHOUT inferring a scaling law.
+
+    This was fit_scaling_law(): a log-log np.polyfit of latency against GPU
+    count whose exponent was passed through
+        "O(1)" if exponent < 0.1 else "O(n^..)" if exponent > 0.5 else "O(log(n))"
+    and reported as "VERDICT: inference latency is CONSTANT regardless of
+    cluster size", then extrapolated to 512, 1024 and 4096 GPUs.
+
+    Three defects, any one of which is disqualifying. The classifier's test is
+    one-sided, so a strongly NEGATIVE exponent -- the measured value was -0.234,
+    i.e. latency apparently FALLING as the cluster grows -- was labelled O(1) by
+    fall-through. inference_latency_ms is a wall-clock measurement: on a repeat
+    run of this repository the timing columns moved by up to 84% while every
+    non-timing column was bit-identical. And the four points are non-monotone in
+    cluster size (48.05, 9.60, 28.40, 19.49 ms), so the slope is scheduling
+    noise rather than a trend; the fit's R-squared was never computed.
+
+    Four noisy wall-clock points do not identify a complexity class. This
+    reports what was measured and stops there.
     """
-    Fit power law to scaling data: latency = a * n^b
-    """
-    x = scaling_results["total_gpus"].values
-    y = scaling_results["inference_latency_ms"].values
-
-    # Log-log fit
-    log_x = np.log(x)
-    log_y = np.log(np.maximum(y, 0.01))
-
-    # Linear fit in log space
-    coeffs = np.polyfit(log_x, log_y, 1)
-    exponent = coeffs[0]
-    intercept = coeffs[1]
-    base = np.exp(intercept)
-
+    y = scaling_results["inference_latency_ms"].to_numpy(dtype=float)
+    diffs = np.diff(y)
     return {
-        "base": float(base),
-        "exponent": float(exponent),
-        "model": f"latency = {base:.3f} * (n_gpus)^{exponent:.2f}",
-        "complexity": "O(1)" if exponent < 0.1 else f"O(n^{exponent:.2f})" if exponent > 0.5 else "O(log(n))",
+        "n_points": int(len(y)),
+        "latency_min_ms": float(y.min()),
+        "latency_max_ms": float(y.max()),
+        "latency_spread_ratio": float(y.max() / max(y.min(), 1e-9)),
+        "monotone_in_cluster_size": bool(np.all(diffs >= 0) or np.all(diffs <= 0)),
     }
 
 
@@ -344,7 +353,7 @@ def plot_scaling_trends(scaling_df: pd.DataFrame) -> None:
 
 def write_scaling_analysis(scaling_df: pd.DataFrame) -> None:
     """Write detailed scaling analysis and projections."""
-    scaling_law = fit_scaling_law(scaling_df)
+    summary = summarise_latency(scaling_df)
 
     with open(OUTPUT_FIT, "w", encoding="utf-8") as f:
         f.write("=" * 70 + "\n")
@@ -382,45 +391,34 @@ def write_scaling_analysis(scaling_df: pd.DataFrame) -> None:
                 f"{row['throughput_overhead_pct']:>8.2f}%\n"
             )
 
-        f.write("\n\nSCALING LAW ANALYSIS\n")
+        f.write("\n\nINFERENCE LATENCY: WHAT WAS MEASURED\n")
         f.write("-" * 70 + "\n")
-        f.write(f"Model: {scaling_law['model']}\n")
-        f.write(f"Complexity: {scaling_law['complexity']}\n")
-        f.write(f"Exponent: {scaling_law['exponent']:.3f}\n\n")
+        f.write(f"Points: {summary['n_points']}\n")
+        f.write(f"Range: {summary['latency_min_ms']:.2f} - "
+                f"{summary['latency_max_ms']:.2f} ms "
+                f"({summary['latency_spread_ratio']:.1f}x spread)\n")
+        f.write(f"Monotone in cluster size: "
+                f"{'yes' if summary['monotone_in_cluster_size'] else 'NO'}\n\n")
+        f.write("No complexity class is inferred from these numbers, and no\n")
+        f.write("projection past the largest measured cluster is made.\n")
+        f.write("inference_latency_ms is a wall-clock measurement: on a repeat\n")
+        f.write("run of this repository the timing columns moved by up to 84%\n")
+        f.write("while every non-timing column was bit-identical. Four noisy,\n")
+        f.write("non-monotone points cannot identify a scaling law. Earlier\n")
+        f.write("versions of this file fitted one anyway and reported\n")
+        f.write("'O(1) / latency is CONSTANT' from a fitted exponent of -0.234,\n")
+        f.write("then extrapolated that to 4,096 GPUs. The verdict and the\n")
+        f.write("projections are withdrawn (v3.6).\n\n")
 
-        if scaling_law["exponent"] < 0.1:
-            f.write("VERDICT: Inference latency is CONSTANT regardless of cluster size.\n")
-            f.write("        → Excellent scalability for HPC deployment.\n\n")
-        elif scaling_law["exponent"] < 0.5:
-            f.write("VERDICT: Inference latency grows sub-linearly (likely logarithmic).\n")
-            f.write("        → Good scalability; suitable for production clusters.\n\n")
-        else:
-            f.write("VERDICT: Inference latency grows with cluster size (polynomial).\n")
-            f.write("        → May require optimization for very large clusters (> 1000 GPUs).\n\n")
-
-        f.write("PRODUCTION RECOMMENDATIONS\n")
+        f.write("SCHEDULING OVERHEAD\n")
         f.write("-" * 70 + "\n")
         max_latency = scaling_df["inference_latency_ms"].max()
         max_overhead = scaling_df["throughput_overhead_pct"].max()
-
-        if max_overhead < 2.0:
-            f.write("✓ Scheduling overhead is negligible (< 2%).\n")
-        elif max_overhead < 5.0:
-            f.write("✓ Scheduling overhead is acceptable (< 5%).\n")
-        else:
-            f.write("⚠ Scheduling overhead may be significant (> 5%).\n")
-
-        if max_latency < 10.0:
-            f.write(f"✓ Max inference latency is low ({max_latency:.2f} ms).\n")
-        else:
-            f.write(f"⚠ Inference latency is non-trivial ({max_latency:.2f} ms).\n")
-
-        # Projection for future scales
-        f.write("\n\nPROJECTED PERFORMANCE AT FUTURE SCALES\n")
-        f.write("-" * 70 + "\n")
-        for future_gpus in [512, 1024, 4096]:
-            projected_latency = scaling_law["base"] * (future_gpus ** scaling_law["exponent"])
-            f.write(f"  {future_gpus:5d} GPUs: ~{projected_latency:.2f} ms inference latency\n")
+        worst_gpus = int(
+            scaling_df.loc[scaling_df["inference_latency_ms"].idxmax(), "total_gpus"])
+        f.write(f"Peak scheduling overhead: {max_overhead:.2f}% of throughput\n")
+        f.write(f"Worst inference latency: {max_latency:.2f} ms (at {worst_gpus} GPUs)\n")
+        f.write("Both are wall-clock and machine-dependent.\n")
 
         f.write("\n" + "=" * 70 + "\n")
 

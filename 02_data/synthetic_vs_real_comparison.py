@@ -13,8 +13,13 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 from vizstyle import figure, finish, save_both, bar_ends, PALETTE  # noqa: E402
 SYN_PATH = os.path.join(PROJECT_ROOT, '02_data', 'improved_wait_dataset.csv')
-SWF_PATH = os.path.join(PROJECT_ROOT, '02_data', 'lanl_trace_sample.swf')
-REAL_PATH = os.path.join(PROJECT_ROOT, '02_data', 'lanl_trace_sample.csv')
+# The proxy is synthetic by construction -- there is no SWF branch here any
+# more. load_real_traces.py used to look for a 'lanl_trace_sample.swf' that has
+# never existed in this repository, so the label was always 'synthetic proxy'
+# while the code pretended a real-trace branch might fire. The project's real
+# traces are handled by build_real_trace_datasets.py.
+PROXY_PATH = os.path.join(PROJECT_ROOT, '02_data',
+                          'synthetic_proxy_lanl_schema_trace.csv')
 OUT_DIR = os.path.join(PROJECT_ROOT, '05_results', 'traces')
 os.makedirs(OUT_DIR, exist_ok=True)
 
@@ -24,14 +29,17 @@ FEATURES = [
 ]
 
 
-def ensure_real_trace():
-    """Ensure the trace CSV exists. Returns True only if a real SWF file is
-    present (i.e. the CSV was/can be parsed from real data); False means the
-    CSV is the synthetic fallback proxy from load_real_traces.py."""
-    swf_present = os.path.exists(SWF_PATH)
-    if not os.path.exists(REAL_PATH):
-        subprocess.check_call(['python', os.path.join(PROJECT_ROOT, '02_data', 'load_real_traces.py')])
-    return swf_present
+def ensure_proxy_trace():
+    """Ensure the synthetic proxy trace exists, generating it if necessary.
+
+    sys.executable, not a bare 'python': the pipeline resolves its own
+    interpreter and a hard-coded name can start a different one (on Windows a
+    bare 'python3' resolves to the Microsoft Store shim rather than to an
+    activated virtualenv).
+    """
+    if not os.path.exists(PROXY_PATH):
+        subprocess.check_call(
+            [sys.executable, os.path.join(PROJECT_ROOT, '02_data', 'load_real_traces.py')])
 
 
 def build_real_features(real_df):
@@ -145,14 +153,14 @@ def plot_comparison(df, trace_label, stem):
             subtitle='XGBoost wait-time model trained on the synthetic dataset, '
                      'then scored in-distribution and on the {}.'.format(
                          trace_label.replace('_', ' ')),
-            source='05_results/traces/lanl_validation_results.csv',
+            source='05_results/traces/synthetic_proxy_validation_results.csv',
         )
         save_both(fig, stem, mode)
 
 
 def main():
-    swf_present = ensure_real_trace()
-    trace_label = 'real_trace' if swf_present else 'synthetic_proxy_trace'
+    ensure_proxy_trace()
+    trace_label = 'synthetic_proxy_trace'
 
     syn = pd.read_csv(SYN_PATH)
     x_train = syn[FEATURES]
@@ -170,7 +178,7 @@ def main():
     model.fit(x_tr, y_tr)
     in_pred = model.predict(x_te)
 
-    real = pd.read_csv(REAL_PATH)
+    real = pd.read_csv(PROXY_PATH)
     real = real.dropna(subset=['wait_time', 'num_gpus']).copy()
     x_real = build_real_features(real)
     y_real = real['wait_time'].values
@@ -191,7 +199,7 @@ def main():
         },
     ]
     df = pd.DataFrame(rows)
-    out_csv = os.path.join(OUT_DIR, 'lanl_validation_results.csv')
+    out_csv = os.path.join(OUT_DIR, 'synthetic_proxy_validation_results.csv')
     df.to_csv(out_csv, index=False)
 
     plot_stem = os.path.join(OUT_DIR, 'synthetic_vs_real_comparison')
