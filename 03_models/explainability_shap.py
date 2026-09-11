@@ -17,8 +17,8 @@ WHY THE SPLIT IS RECONSTRUCTED HERE
 test_size=0.2, random_state=42)` over the twelve features in that order. This
 file reproduces that call exactly -- same frame, same feature order, same
 random_state -- and then ASSERTS the reconstruction by scoring the loaded model
-on the reconstructed test split: it must reproduce the published hold-out MAE
-(EXPECTED_TEST_MAE) or the script aborts. A silently wrong reconstruction would
+on the reconstructed test split: it must reproduce the hold-out MAE the bundle
+itself recorded at fit time, or the script aborts. A silently wrong reconstruction would
 be worse than explaining training rows, because the artefact would then claim a
 hold-out provenance it does not have.
 
@@ -106,16 +106,37 @@ SOURCE = ('02_data/improved_wait_dataset.csv — 03_models/wait_model_v2.pkl '
           '— held-out test split only')
 UNIT = 'simulation time steps'
 
-# --- the split the model was trained under -----------------------------------
-# These three constants MUST mirror 03_models/train_improved_model.py. They are
-# not tuning knobs: change one and the reconstruction assertion below fails,
-# which is the intended alarm rather than something to silence.
-TARGET = 'wait_time'
-TEST_SIZE = 0.2
-SPLIT_RANDOM_STATE = 42
+with open(MODEL_PATH, 'rb') as f:
+    bundle = pickle.load(f)
+model = bundle['model']
+FEATURES = bundle['features']
 
-# Published hold-out MAE of wait_model_v2 on that split (train_improved_model.py).
-EXPECTED_TEST_MAE = 4.6935
+# --- the split the model was trained under -----------------------------------
+# Read from the model bundle, not copied into this source. The bundle records the
+# split it was fitted under and the hold-out score it earned there, so the
+# reconstruction below is checked against THIS model rather than against a
+# constant that was true of some earlier model on some particular machine.
+#
+# Why that distinction is load-bearing: XGBoost's histogram build reduces in
+# parallel, so refitting on a machine with a different core count (or a different
+# library build) yields a slightly different model -- measured here at MAE 4.6927
+# / 4.6699 / 4.6373 / 4.6935 on 1 / 2 / 4 / 16 threads, same data, same seed --
+# and a 2-vCPU Linux runner produced 4.7314. Checked against a constant, every
+# one of those reads as "the split is wrong", which is a false alarm that hides
+# the true one. Checked against the bundle, a genuine split mismatch still fails
+# -- the model would be scoring rows it was fitted on, and the MAE would collapse
+# far outside this tolerance -- while an honestly refitted model passes.
+TARGET = 'wait_time'
+
+# A bundle without this metadata predates the change and cannot be checked; that
+# is a broken checkout, not a reason to skip the check.
+if 'split' not in bundle or 'holdout' not in bundle:
+    raise SystemExit(
+        'wait_model_v2.pkl carries no split/holdout metadata. Re-run '
+        '03_models/train_improved_model.py to regenerate it.')
+TEST_SIZE = float(bundle['split']['test_size'])
+SPLIT_RANDOM_STATE = int(bundle['split']['random_state'])
+EXPECTED_TEST_MAE = float(bundle['holdout']['mae'])
 MAE_TOLERANCE = 5e-4          # half a unit in the last published decimal
 
 # The test split holds 440 rows. We explain 400 of them -- the same count the
@@ -126,10 +147,6 @@ MAE_TOLERANCE = 5e-4          # half a unit in the last published decimal
 N_EXPLAIN = 400
 EXPLAIN_RANDOM_STATE = 42
 
-with open(MODEL_PATH, 'rb') as f:
-    bundle = pickle.load(f)
-model = bundle['model']
-FEATURES = bundle['features']
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -406,13 +423,15 @@ def reconstruct_split():
         raise SystemExit(
             'SPLIT RECONSTRUCTION FAILED.\n'
             f'  model MAE on the reconstructed test split : {test_mae:.6f}\n'
-            f'  published hold-out MAE of wait_model_v2   : {EXPECTED_TEST_MAE:.6f}\n'
+            f'  hold-out MAE recorded in the bundle       : {EXPECTED_TEST_MAE:.6f}\n'
             f'  tolerance                                 : {MAE_TOLERANCE:g}\n'
             'The rows this script would call "held out" are therefore not the rows '
             'the model was held out from, so every SHAP value below would carry a '
-            'false provenance. Refusing to write it. Check that FEATURES, TEST_SIZE '
-            'and SPLIT_RANDOM_STATE still match 03_models/train_improved_model.py '
-            'and that the model and the dataset were regenerated together.')
+            'false provenance. Refusing to write it. The split parameters and the '
+            'expected score both come from the bundle, so this is not a '
+            'thread-count or platform difference: either the dataset changed under '
+            'the model, or train_improved_model.py no longer fits the split it '
+            'records. Regenerate the model and the dataset together.')
 
     return x_train, x_test, y_test, test_mae, test_r2
 

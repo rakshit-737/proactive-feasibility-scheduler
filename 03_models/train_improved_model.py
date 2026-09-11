@@ -125,8 +125,28 @@ for mode in ('light', 'dark'):
 print("\nPlot saved: feature_importance_v2.png")
 
 # ── Save model ────────────────────────────────────────────────
+# The bundle carries the split that produced this model, and the hold-out score
+# it earned on that split, alongside the model itself. Downstream scripts that
+# need to reconstruct "the rows this model never saw" (explainability_shap.py)
+# then check themselves against THIS model's own recorded score rather than
+# against a constant copied into their source.
+#
+# The difference matters. A hard-coded expected MAE conflates two questions --
+# "did I rebuild the same split?" and "is this the same model the number was
+# published from?" -- and answers both with one comparison. XGBoost's histogram
+# build reduces in parallel, so a model refitted on a machine with a different
+# core count, or a different library build, is a slightly different model with a
+# slightly different hold-out score even though the split is identical. Against a
+# constant, that reads as a split failure; against the bundle's own score, a split
+# failure is still caught and a legitimately refitted model is not accused of one.
 with open(os.path.join(MODEL_DIR, "wait_model_v2.pkl"), "wb") as f:
-    pickle.dump({"model": model, "features": FEATURES}, f)
+    pickle.dump({
+        "model": model,
+        "features": FEATURES,
+        "split": {"test_size": 0.2, "random_state": 42},
+        "holdout": {"mae": float(mae), "r2": float(r2), "n_test": int(len(y_test))},
+        "dataset": "02_data/improved_wait_dataset.csv",
+    }, f)
 
 print("Model saved : wait_model_v2.pkl")
 print(f"\nFeature list for scheduler: {FEATURES}")
