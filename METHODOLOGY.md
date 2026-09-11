@@ -1,4 +1,4 @@
-# Methodology (Phases 01–21 + v3.3/v3.4 baselines; current as of v3.6)
+# Methodology (Phases 01–21 + v3.3/v3.4 baselines; current as of v3.6 + Phase C)
 
 ## Core system
 - Discrete-time cluster simulation with heterogeneous queue states (synthetic study).
@@ -33,11 +33,100 @@ arrival-order figure was reported as if it were the all-tied one. The matching
 control policy is `04_scheduler/size_scheduler.py` (`SMALLEST` / `SMALLEST_FIRST`):
 sort by requested size, no model.
 
+## Phase C: evaluation split protocol
+"How accurate is the model?" has no answer until the split is named, so the
+protocol is now stated explicitly and all four splits are reported side by side
+in `05_results/models/evaluation_splits.csv` (`03_models/evaluate_splits.py`).
+This matters here more than it usually would: the dataset is 2,200 rows that are
+20 simulation runs of 110 jobs, and rows from one run share a cluster
+trajectory, so a random *row* split puts near-duplicates on both sides.
+
+- **random** — `train_test_split(test_size=0.2, random_state=42)` over rows.
+  R² 0.836840, MAE 4.6935. This is the published protocol, and it is optimistic.
+- **run-wise — THE HEADLINE** — `GroupKFold(n_splits=5)` on `run_id`: 16 training
+  runs / 4 held-out runs per fold, no run on both sides. **R² 0.810910 ±
+  0.020672, MAE 4.8970 ± 0.4492.** This is the number to quote for "does the
+  model work", because it is the only split that asks whether the model
+  transfers to a cluster trajectory it has not seen. It is **lower** than the
+  0.837 this repository previously advertised as its headline, and the reason is
+  the split, not any change to the model.
+- **chronological** — within each run, train on arrivals before that run's own
+  0.8 arrival-time quantile, test on arrivals at or after it. R² 0.725147,
+  MAE 7.2403. This is what deployment means: predicting the future of a queue
+  from its past. Any *deployment* claim must quote MAE 7.24 — roughly 54% more
+  error than the 4.69 the repository used to advertise.
+- **leave-one-run-out** — 20 folds, kept as a sensitivity check on the fold
+  count: R² 0.793486 ± 0.054176, MAE 4.8207 ± 1.0156.
+
+**Fold-count rationale.** Five folds are used for the headline so the training
+set stays at 1,760 rows — exactly the size of the random split's training set —
+which forecloses the obvious objection that the gap between 0.8368 and 0.8109 is
+merely less training data. Leave-one-run-out trains on more (2,090 rows) and
+still scores lower, but its per-fold R² spans 0.6899 to 0.8744; that spread is
+also why a single grouped hold-out would have been unquotable, since the answer
+would have depended on which run happened to be held out.
+
+**Scale.** Constant-predictor baselines are recomputed inside every fold of every
+split in the same file, so the reader can see what "R² 0.81" is worth. On the
+run-wise folds a mean-constant predictor scores R² −0.019958 and a
+median-constant −0.088624, with MAE around 13 (13.4502 and 13.0214). The learned
+model's 4.90 is about a 64% reduction in error against the mean-constant
+predictor. It is a real but ordinary regressor rather than a dressed-up mean,
+and the reader is owed both halves of that sentence.
+
+**This correction does not touch the ranking-degeneracy result.** Degeneracy is a
+statement about the *functional form* of the score — at a fixed dispatch instant
+every queued job sees the same cluster state, so the score is a function of
+requested size alone — and it holds whatever the accuracy is. A more accurate
+model would produce the same size-ordered permutation. The accuracy figure and
+the degeneracy finding are independent claims; neither weakens the other.
+
 ## Enhancements
-1. **Ablation**: remove each of 12 features and measure R² drop.
+1. **Ablation (intervals as of Phase C)**: remove each of 12 features and measure
+   the R² drop. The drop is no longer one number from one fixed row split: each
+   ablation is re-fit over **20 leave-one-run-out folds on `run_id`**, the drop is
+   taken **paired within fold**, and a Student-t 95% interval is formed over the
+   20 paired differences (`05_results/models/ablation_study_results.csv`, which
+   is duplicated byte-identically at `05_results/ablation_study_results.csv` —
+   one artefact under two names, not two studies). The baseline falls with the
+   protocol: R² 0.836840 (single fixed row split) becomes 0.793486
+   [0.767472, 0.819500] leave-one-run-out.
+   **Only three of the twelve drops are distinguishable from zero**: `job_gpu`
+   0.2051 [0.1565, 0.2538], `queue_length` 0.0217 [0.0081, 0.0353], and
+   `queue_pressure` 0.0158 [0.0051, 0.0264]. The other nine intervals span zero.
+   Two readings must be kept apart there: an interval spanning zero means the
+   drop is **not distinguishable from zero at this sample size**, *not* that the
+   feature contributes nothing. Accepting a null because a test failed to reject
+   it is precisely the error this repository criticises elsewhere — it is why
+   equivalence claims here use TOST rather than a large p-value.
+   Two structural limits bound what a single-feature ablation can say at all,
+   both measured in `05_results/models/feature_collinearity.csv`: `total_free`
+   and `avg_free_per_node` correlate at 1.000000 with **infinite VIF** — in the
+   synthetic generator one is the other divided by a constant node count, so they
+   are the same variable twice — and `fragmentation` and `variance_free`
+   correlate at 0.950720 (VIF 66.8 and 34.1). Dropping one member of such a pair
+   leaves the information intact in the other, so a near-zero drop there is
+   arithmetic, not evidence about the feature.
+   Finally, `queue_pressure` being one of only three real contributors is
+   *consistent* with the degeneracy result rather than in tension with it: v3.5
+   established that `queue_pressure` is itself a deterministic function of
+   requested size given the cluster state.
 2. **Fairness**: evaluate max wait, Gini index, completion by size, starvation count.
 3. **Scheduler baselines (14 as of v3.4)**: FCFS/first-fit (historical 'FIFO' key), strict head-blocking FIFO, SJF with true runtimes (oracle), SJF with f-model user estimates (est = runtime·f, f~U(1,C), C=5; Mu'alem & Feitelson 2001) and modal estimates (menu rounding, Tsafrir & Feitelson 2005), STATIC_PRIORITY (relabelled in v3.6 — the old "Priority + aging" name was false: the key expands to `(priority_score + 0.03·arrival_time) − 0.03·current_time`, and the `current_time` term is a common additive shift at any one instant, so it cancels pairwise, the induced order is time-invariant, and a waiting job can never overtake; its value as a baseline is precisely that it does not age, and no anti-starvation property may be claimed for it), HRRN (this repository's genuinely aging baseline), **SMALLEST (sort by requested size — the ML-free control implied by the degeneracy analysis)**, canonical two-condition EASY backfill (oracle and estimated runtimes), conservative backfill (per-job reservations on a capacity profile), preemptive SRPT (1-tick checkpoint penalty per preemption), Proactive (XGBoost), NN (MLP), predicted-wait EASY hybrid. Unified wait definition: wait = turnaround − true runtime (identical to start − arrival for non-preemptive policies; charges preemptive requeue time and checkpoint overhead as waiting). A runtime-estimate-quality sweep (C ∈ {1,2,3,5,10} + modal) isolates how much of classical schedulers' advantage survives realistic estimate error.
-4. **SHAP**: summary, dependence, and force plots.
+4. **SHAP (held out as of Phase C)**: summary, dependence, and force plots,
+   computed on **held-out rows only** — 400 rows drawn from the 440-row test
+   split, with the background drawn from that same split. They previously
+   explained 400 rows sampled from the *full* dataset against a full-dataset
+   background, roughly 320 of which the model had been fitted on, which made the
+   attributions partly in-sample. `05_results/shap/shap_provenance.csv` records
+   `rows_from_training = 0` and `background_rows_from_training = 0`, and verifies
+   it with a sha256 of the actual explained row indices rather than by
+   self-report. The conclusion survives the fix: the attribution ordering is
+   essentially unchanged, `job_gpu` still dominates, and the only rank movement
+   is a 7/8 swap between `running_jobs` and `variance_free`, whose mean |SHAP|
+   values differ by 0.0003 — noise. That the fix changed essentially nothing is
+   the point of reporting it: the explanation-based half of the degeneracy
+   argument no longer rests on in-sample attributions.
 5. **Real traces (validated as of v3.2; used for scheduling as of v3.4)**: two cleaned Parallel Workloads Archive traces are committed — LANL CM-5 1994 (1024 procs, 122,055 kept jobs) and SDSC SP2 1998 (128 procs, 43,117 kept jobs). `02_data/build_real_trace_datasets.py` reconstructs each job's submit-instant cluster state by replaying the recorded schedule; `02_data/real_trace_validation.py` evaluates prediction quality. **v3.4** adds `04_scheduler/trace_driven_benchmark.py`, which replays the traces through all 12 policies. Key point: SWF field 9 records the user's *requested time*, so the study uses the **real runtime estimates the traces contain** rather than the simulated f-model — real error is both larger and differently shaped (SDSC median 6.9× over-estimate; LANL 36.3% under-estimates, which the over-estimate-only f-model cannot generate). Jobs with missing estimates fall back to the trace median, deliberately *not* the true runtime, so estimate-driven policies get no free oracle. Protocol: chronological 60% train split, 20 evenly spaced windows (3-day warm-up not measured + 7 measured days), windows spaced evenly rather than selected by load.
 6. **Scaling**: 4/8/16/32 nodes (8/32/128/256 GPUs), overhead and inference-latency
    measurement. Latency and overhead are wall-clock and machine-dependent, so no
@@ -47,7 +136,21 @@ sort by requested size, no model.
    one-sided test labelled a negative exponent constant by fall-through).
 7. **Online learning**: incremental updates on streaming data.
 8. **Concept drift**: rolling MAE trigger for adaptive retraining.
-9. **ROI**: GPU-hour savings, energy savings, and annual cost-benefit metrics.
+9. **ROI — withdrawn in full (Phase C)**: this item previously read "GPU-hour
+   savings, energy savings, and annual cost-benefit metrics". It is retracted
+   rather than caveated, because the defect is a category error and not an
+   uncertain assumption. The quantity being monetised was GPU-hours saved, and
+   this repository's own 40-run benchmark records `baseline_util ==
+   proactive_util` in 40 of 40 runs (mean 0.641177, identical to six decimal
+   places) with the same 110 jobs completing under both policies. The cluster
+   performs the same compute either way: reordering a queue changes *when* jobs
+   start, not how many GPU-hours they consume. The quantity was measured at zero,
+   and widening the error bars around a number whose true value is zero still
+   reports a saving — which is why no version of the study is retained.
+   `05_results/roi_analysis.py`, `05_results/roi/`, the pipeline step and the
+   dashboard panel are deleted. The measured wait-time reduction itself
+   (7.897862% against FIFO) is unaffected and remains a real result; what is
+   withdrawn is only the claim that it converts into money.
 10. **Reproducibility and dashboard**: one-command pipeline plus interactive explorers.
 
 ## Statistical treatment
@@ -60,8 +163,70 @@ sort by requested size, no model.
 - Mean and max wait reporting.
 - Fairness measured via per-job Gini coefficient, run-level Jain index, starvation counts, and SLA compliance (Phase 27). One definition of starvation holds repository-wide: a job is starved when its wait exceeds **3× its own runtime**. That is what `04_scheduler/fairness_analysis.py` has always computed and what phase 27's SLA-2 uses; `04_scheduler/fairness_budget_sweep.py` used a distribution-relative "wait > 3× the run's mean wait" rule until v3.6 and now uses the per-job one (column `starved_jobs_wait_gt_3x_own_runtime`).
 - Cross-dataset and OOD diagnostics via MAE and R² on freshly simulated shifted workloads (Phase 23). The cross-dataset check runs against a **synthetic proxy written in the LANL SWF schema** (`02_data/synthetic_proxy_lanl_schema_trace.csv`, results in `05_results/traces/synthetic_proxy_validation_results.csv`) — renamed in v3.6 because the old `lanl_trace_sample` / `lanl_validation_results` names invited it to be read as real LANL data. It is not; the real-trace study is item 5 above.
+- **Phase C — power for the equivalence tests.** An equivalence margin without a
+  power figure cannot separate "these two policies perform the same" from "this
+  test could never have said otherwise", so `04_scheduler/tost_power.py` now
+  computes achieved power and the n needed for 80% power for every equivalence
+  claim, at the same margin `simstats.tost_equivalence` uses (10% of the
+  reference mean), by Monte-Carlo over 20,000 replicates with seed 31337 —
+  outside every protected seed family — into
+  `05_results/trace_schedulers/tost_power.csv`. It produces one correction. On
+  **SDSC**, SMALLEST_FIRST vs PROACTIVE on mean wait has achieved power 1.000 and
+  would have needed only 3 of the 29 available windows; the equivalence claim
+  rests on SDSC, and there it rests solidly. On **LANL** the same pair shows an
+  observed paired difference of 320.02 s against a margin of 222.93 s and
+  achieved power of **0.47%** (0.00465; 5.8% on the bootstrap variant). A test
+  with a 0.47% chance of certifying equivalence returning "not equivalent" is not
+  evidence, so the LANL row is reported **INCONCLUSIVE** and must never be
+  reported as "different". Nor is "more windows would settle it" available: the
+  observed difference *exceeds* the margin, so no sample size can certify
+  equivalence there at 10%, and establishing a *difference* instead would need 29
+  windows — 50 after Holm over the family of 11 — where LANL supplies 28 disjoint
+  7-day windows. It is not settleable on that trace with disjoint windows at all.
+  Two limits travel with the figure and are part of the claim: power computed
+  from an observed effect is post-hoc and is an estimate rather than a design
+  guarantee, and the window supply is a property of the trace, not of the
+  experiment.
+- **Phase C — censoring and the started set.** A policy comparison that averages
+  wait over the jobs that started can be biased if the policies start different
+  jobs, so `04_scheduler/censoring_analysis.py` decomposes every pair into jobs
+  started under both, under A only, and under B only, and recomputes the
+  improvement on the common set
+  (`05_results/uncertainty/censoring_analysis.csv`). The selection effect is
+  real, but it is confined to one of five scenarios and it runs in the direction
+  that *penalised* the learned policies — so this is a check that passed, not a
+  concern that was refuted. Four of the five scenarios start every job under
+  every policy: 24 of the 30 pair-rows have a selection gap of exactly 0.0 and
+  there is nothing to correct, and all censoring sits in `arr2.0_nodes4`. There
+  all six non-zero gaps are **negative**, from −0.38 to −3.25 percentage points,
+  meaning the common-set improvement is *larger* than the published one and the
+  published statistic understated the learned policies by up to 3.3 pp. Nothing
+  disappears on the common set. What the common set cannot do is adjudicate the
+  exchange: for FIFO vs PROACTIVE in that scenario the means over 10 runs are
+  91.9 jobs common, 21.8 FIFO-only and 39.4 PROACTIVE-only — a two-way exchange,
+  not a one-way rescue — so the common-set figure decides only the ~92 shared
+  jobs, and the ~61 exchanged jobs are described but not adjudicated.
+- **Phase C — the OOD failure taxonomy was a constant and is now a ranking.** Any
+  earlier sentence describing "the OOD failure taxonomy" was describing a column
+  that said the same thing 72 times: all 72 scenarios in
+  `phases_22_30/phase_23_sensitivity/ood_failure_modes.csv` were labelled
+  `DISTRIBUTION_MISMATCH`, zero entropy. The cause was a classifier that tested
+  `mape >= 35.0` ahead of most branches while the minimum MAPE over the 72
+  scenarios is 54.01, so that gate fired 72 times out of 72 and seven of the
+  eight categories were unreachable dead code; `risk_level` was correspondingly
+  65 MEDIUM / 7 HIGH / 0 LOW. The replacement is a continuous severity score
+  standardised across the grid, four data-derived quantile bands of 18 scenarios
+  each, and a dominant-axis label: `failure_mode` now spans five values
+  (COMPLETION_DOMINATED 22, POLICY_DOMINATED 21, FIT_DOMINATED 14,
+  NO_DOMINANT_AXIS 8, CALIBRATION_DOMINATED 7) and `risk_level` three
+  (MEDIUM_RISK 37, HIGH_RISK 24, LOW_RISK 11). The simulation, the scenarios and
+  the seeds are unchanged; only the classification of the results is. One reading
+  rule travels with the new labels: severity is standardised **within this grid**,
+  so `LOW_RISK` means "least severe among 72 shifted regimes" and never "safe" —
+  none of these regimes is good, and the mean R² across them is negative
+  (−0.3104).
 
 ## Reproducibility
-- The entire pipeline is seeded: `bash run_all_experiments.sh` (20 steps) regenerates the dataset, model, and every result deterministically on a fresh checkout. This became true only in v3.6 — until then seven studies sat outside every pipeline script, so the claim was false as written; `phases_22_30/run_all_experiments_v2.sh` is now a forwarding shim rather than a second entry point. A regenerated tree can be checked with `python tools/verify_artifacts.py` (`--quick` / `--smoke`).
+- The entire pipeline is seeded: `bash run_all_experiments.sh` (**22 steps** as of Phase C, which added `03_models/evaluate_splits.py`, `04_scheduler/tost_power.py` and `04_scheduler/censoring_analysis.py` and removed the deleted ROI step) regenerates the dataset, model, and every result deterministically on a fresh checkout. This became true only in v3.6 — until then seven studies sat outside every pipeline script, so the claim was false as written; `phases_22_30/run_all_experiments_v2.sh` is now a forwarding shim rather than a second entry point. A regenerated tree can be checked with `python tools/verify_artifacts.py` (`--quick` / `--smoke`).
 - One honest exception to "deterministically": three artefacts carry wall-clock columns that cannot reproduce on any machine — `05_results/model_comparison_table1.csv` (`training_time_sec`), `05_results/scaling/scaling_analysis.csv` (its three `*_sec` columns), and `phases_22_30/phase_26_scaling/scaling_benchmark.csv` (`inference_latency_ms`, `throughput_overhead_pct`). Between two runs on the same machine here these drifted by up to 84%. Every other column reproduced identically, and no claim in this repository should rest on a timing column.
 - `PYTHONUTF8=1` is exported by the pipeline scripts so Unicode console output works on Windows (cp1252) as well as Linux/macOS.

@@ -369,7 +369,7 @@ nav.sidebar a.hidden, nav.sidebar .group.hidden { display: none; }
   <a href="#robustness">Robustness &amp; drift</a>
   <a href="#realtrace">Real-trace validation</a>
   <a href="#explainability">Explainability</a>
-  <a href="#roi">ROI estimate</a>
+  <a href="#roi">⚠ ROI — withdrawn</a>
   <div class="group">The repository</div>
   <a href="#repo">Every file, explained</a>
   <a href="#pipeline">Reproducibility pipeline</a>
@@ -395,7 +395,7 @@ nav.sidebar a.hidden, nav.sidebar .group.hidden { display: none; }
     <div class="kpi"><div class="label">Cluster features that affect ranking</div><div class="value">0 of 7</div><div class="delta down">they vary across the queue in 0.0% of instants</div></div>
     <div class="kpi"><div class="label">Synthetic gain vs FIFO</div><div class="value">7.9%</div><div class="delta">does <em>not</em> replicate on real traces</div></div>
     <div class="kpi"><div class="label">Proactive vs FCFS on LANL CM-5</div><div class="value">p = 0.48</div><div class="delta down">indistinguishable from doing nothing</div></div>
-    <div class="kpi"><div class="label">Wait-model quality (20% holdout)</div><div class="value">R² 0.84</div><div class="delta">a good regressor — and still a degenerate ranker</div></div>
+    <div class="kpi"><div class="label">Wait-model quality (run-wise CV)</div><div class="value">R² 0.81</div><div class="delta down">down from the 0.84 row split this page used to headline — a real but ordinary regressor, and still a degenerate ranker</div></div>
   </div>
 
   <div class="callout bad hero-note">
@@ -406,7 +406,7 @@ nav.sidebar a.hidden, nav.sidebar .group.hidden { display: none; }
 
   <div class="callout hero-note">
     <div class="t">Why this documentation is different</div>
-    This page explains the project <em>from scratch</em> — the problem, the simulator, the features, the model, the scheduler, every file in the repository, the honest results including the failures, and where the research should go next. It reflects the July 2026 audit that found and fixed 37 verified defects (including fabricated results in four analysis scripts) and made the entire pipeline seeded and reproducible (<a href="#audit">audit section</a>). The v3.2 extensions closed the four biggest gaps: <a href="#realtrace">validation on two real supercomputer traces</a>, a <a href="#results">real EASY-backfill baseline</a>, a <a href="#tradeoffs">tunable fairness budget</a>, and an <a href="#robustness">uncertainty-aware scheduling study</a>. v3.3 added the classical-baseline landscape, and <strong>v3.4 the result above</strong>. v3.5 fixed a train/serve feature skew and regenerated every synthetic number; <strong>v3.6</strong> is a hostile-review hardening pass, and the claims it forced this page to retract are corrected in place and marked as retractions rather than quietly deleted.
+    This page explains the project <em>from scratch</em> — the problem, the simulator, the features, the model, the scheduler, every file in the repository, the honest results including the failures, and where the research should go next. It reflects the July 2026 audit that found and fixed 37 verified defects (including fabricated results in four analysis scripts) and made the entire pipeline seeded and reproducible (<a href="#audit">audit section</a>). The v3.2 extensions closed the four biggest gaps: <a href="#realtrace">validation on two real supercomputer traces</a>, a <a href="#results">real EASY-backfill baseline</a>, a <a href="#tradeoffs">tunable fairness budget</a>, and an <a href="#robustness">uncertainty-aware scheduling study</a>. v3.3 added the classical-baseline landscape, and <strong>v3.4 the result above</strong>. v3.5 fixed a train/serve feature skew and regenerated every synthetic number; <strong>v3.6</strong> is a hostile-review hardening pass, and the claims it forced this page to retract are corrected in place and marked as retractions rather than quietly deleted. That pass added four studies whose results are reported below — an <a href="#model">honest split comparison</a> (which <em>lowered</em> the headline model accuracy), a <a href="#tracebench">power analysis of the trace equivalence tests</a>, a <a href="#robustness">censoring audit</a> of the uncertainty benchmark, and <a href="#features">confidence intervals on the ablation</a> — moved SHAP onto held-out rows, replaced a constant out-of-distribution failure label with a real ranking, and <strong>deleted the ROI study outright</strong>. Most of those findings weaken a number this page used to print. None of them touches the degeneracy result, which is an argument about the <em>shape</em> of the score and survives any accuracy figure.
   </div>
 </section>
 
@@ -459,7 +459,13 @@ queue_pressure    = ( Σ_queue − g ) / ( free(S) + 1 )</code></pre>
     </tbody>
   </table></div>
   <p>On the synthetic benchmark the difference is +0.127 ts with a 90% CI of [+0.025, +0.228] against a ±1.59 ts margin — the whole interval sits inside the margin, so this is a <em>positive</em> finding of equivalence, not an underpowered null. Sharper still: the <strong>MLP baseline and the size sort produce bit-identical results on every metric of all 20 runs</strong>. Two different model classes over the same features collapse to the same one-line sort.</p>
-  <p>On LANL the equivalence test does not fire, and the honest verdict there is <strong>inconclusive rather than "different"</strong>. The size sort is 14.4% worse on mean wait, but that difference does not survive Holm correction on the paired <em>t</em>-test (p = 0.25; the Wilcoxon test disagrees at p = 0.015), it shrinks to +7.3% at p = 0.60 on bounded slowdown, and TOST cannot certify equivalence either (p = 0.77). With 20 windows LANL is neither shown to be the same nor shown to differ. What is not in question on that machine is that the ML scheduler also fails to beat plain FCFS (p = 0.48).</p>
+  <p>On LANL the equivalence test does not fire, and the honest verdict there is <strong>inconclusive rather than "different"</strong>. The size sort is 14.4% worse on mean wait, but that difference does not survive Holm correction on the paired <em>t</em>-test (p = 0.25; the Wilcoxon test disagrees at p = 0.015), it shrinks to +7.3% at p = 0.60 on bounded slowdown, and TOST cannot certify equivalence either (p = 0.77). With 20 windows LANL is neither shown to be the same nor shown to differ — and as of v3.6 that is measured rather than asserted (callout below). What is not in question on that machine is that the ML scheduler also fails to beat plain FCFS (p = 0.48).</p>
+
+  <div class="callout warn">
+    <div class="t">How inconclusive the LANL row is — now measured, not asserted <span class="chip info">v3.6</span></div>
+    <p style="margin:6px 0 0"><code>04_scheduler/tost_power.py</code> runs 20,000 Monte-Carlo replicates (seed 31337) at the same margin the benchmark uses — 0.10 × the reference mean, exactly as <code>simstats.tost_equivalence</code> computes it — and lands the LANL <code>SMALLEST_FIRST</code>-vs-<code>PROACTIVE</code> mean-wait row at an achieved power of <strong>0.47%</strong> (0.00465; a bootstrap variant of the same calculation gives 5.8%). A test with a one-in-two-hundred chance of certifying equivalence, reporting "not equivalent", is not evidence. The row must be read <strong>inconclusive</strong>, never "different".</p>
+    <p style="margin:6px 0 0">The harder half: the observed paired difference is <strong>320.02 s</strong> against a margin of <strong>222.93 s</strong>. Because the effect lies <em>outside</em> the margin, <strong>no sample size can certify equivalence there at 10%</strong> — so "more windows would settle it" is wrong too. Establishing a <em>difference</em> instead would need <strong>29 windows</strong>, or <strong>50</strong> after Holm over the family of 11 trace comparisons, and LANL supplies <strong>28</strong> disjoint 7-day windows. That row is not settleable with disjoint windows on that trace at all. The same calculation on SDSC reports power <strong>1.000</strong>, needed only <strong>3</strong> windows and had 29 — <strong>the equivalence claim rests on SDSC, and there it rests solidly</strong>. Two limits stand as stated: power computed from an observed effect is post-hoc and is an estimate, not a design guarantee, and the window supply is a property of the trace rather than a budget we chose. Artefact: <code>05_results/trace_schedulers/tost_power.csv</code>.</p>
+  </div>
 
   <div class="callout warn">
     <div class="t">Correction, made during this release</div>
@@ -485,9 +491,9 @@ queue_pressure    = ( Σ_queue − g ) / ( free(S) + 1 )</code></pre>
   <div class="cards c2" style="margin-top:14px">
     <div class="card"><h4 style="margin-top:0">🖥️ 1 · A cluster simulator <span class="chip">01_simulation</span></h4><p>A small, transparent discrete-time simulator: 8 nodes × 4 GPUs, jobs arrive randomly needing 1–8 GPUs for 5–20 time-steps. It reproduces the essential physics of queueing — contention, fragmentation, waiting.</p></div>
     <div class="card"><h4 style="margin-top:0">📊 2 · Datasets <span class="chip">02_data</span></h4><p>The simulator snapshots <strong>12 cluster-state features</strong> at each job's arrival and records how long that job actually waited — producing 2,200 labelled training examples per generation run (seeded, deterministic).</p></div>
-    <div class="card"><h4 style="margin-top:0">🧠 3 · Wait-time models <span class="chip">03_models</span></h4><p>An XGBoost regressor learns <em>arrival features → wait time</em> (holdout R² 0.84). Seven model families are compared; ablation, SHAP explainability, tuning, online learning and drift detection round out the model science.</p></div>
+    <div class="card"><h4 style="margin-top:0">🧠 3 · Wait-time models <span class="chip">03_models</span></h4><p>An XGBoost regressor learns <em>arrival features → wait time</em> (run-wise cross-validated R² 0.81). Seven model families are compared; an interval-bearing ablation, held-out SHAP explainability, online learning and drift detection round out the model science.</p></div>
     <div class="card"><h4 style="margin-top:0">⚖️ 4 · Schedulers <span class="chip">04_scheduler</span></h4><p>Fourteen queue policies — FIFO and strict FIFO, SJF/SJF-estimate/SRPT, HRRN, static priority, smallest-first, EASY and conservative backfill, a neural-network reranker, and the <strong>Proactive</strong> (XGBoost) reranker — compete in paired, seeded benchmarks with full statistical treatment.</p></div>
-    <div class="card"><h4 style="margin-top:0">📈 5 · Results &amp; analyses <span class="chip">05_results · phases_22_30</span></h4><p>Forty-run paired benchmarks with Student-t and bootstrap confidence intervals, fairness and starvation analysis, scaling measurements, out-of-distribution stress tests, ROI estimates, and a LaTeX manuscript draft.</p></div>
+    <div class="card"><h4 style="margin-top:0">📈 5 · Results &amp; analyses <span class="chip">05_results · phases_22_30</span></h4><p>Forty-run paired benchmarks with Student-t and bootstrap confidence intervals, fairness and starvation analysis, scaling measurements, out-of-distribution stress tests, equivalence-power and censoring audits, and a LaTeX manuscript draft.</p></div>
     <div class="card"><h4 style="margin-top:0">🔁 Reproducibility <span class="chip">run_all_experiments.sh</span></h4><p>One command regenerates everything — dataset → model → every table and figure — deterministically (seeded), on Windows, Linux, or macOS, locally or in Docker.</p></div>
   </div>
   <h3>The honest one-paragraph summary</h3>
@@ -609,7 +615,7 @@ queue_pressure    = ( Σ_queue − g ) / ( free(S) + 1 )</code></pre>
     <rect class="dg-box" x="560" y="30" width="200" height="86" rx="8"/>
     <text class="dg-title" x="576" y="56">Wait-time model</text>
     <text class="dg-sub" x="576" y="74">XGBoost regressor · 300 trees</text>
-    <text class="dg-sub" x="576" y="90">holdout R² 0.84 · MAE 4.69 ts</text>
+    <text class="dg-sub" x="576" y="90">run-wise R² 0.81 · MAE 4.90 ts</text>
     <text class="dg-sub" x="576" y="106">03_models/wait_model_v2.pkl</text>
 
     <path class="dg-arrow" d="M220,73 L286,73"/>
@@ -634,7 +640,7 @@ queue_pressure    = ( Σ_queue − g ) / ( free(S) + 1 )</code></pre>
     <rect class="dg-box" x="290" y="330" width="470" height="90" rx="8"/>
     <text class="dg-title" x="306" y="356">Paired, seeded benchmarks + statistics</text>
     <text class="dg-sub" x="306" y="374">same job set through every scheduler · 40 paired runs · paired t-test,</text>
-    <text class="dg-sub" x="306" y="390">Wilcoxon, Student-t &amp; bootstrap CIs · fairness, scaling, OOD, drift, ROI</text>
+    <text class="dg-sub" x="306" y="390">Wilcoxon, Student-t &amp; bootstrap CIs · fairness, scaling, OOD, drift, power</text>
     <text class="dg-sub" x="306" y="406">04_scheduler/benchmark_statistical.py · phases_22_30/</text>
 
     <path class="dg-arrow" d="M390,272 L390,326"/>
@@ -718,21 +724,62 @@ for job in queue:              # 4. dispatch ALL
   <figure class="chart" data-chart="featImportance">
     <div class="head"><span class="title">What the model actually relies on</span><span class="subtitle">XGBoost gain-based feature importance, wait_model_v2 (regenerated)</span><button class="btn" data-toggle-table>Table view</button></div>
     <div class="svgmount"></div>
-    <figcaption>Job size and queue state dominate; the six fragmentation/supply features contribute a long tail. Ablation (leave-one-feature-out) agrees: dropping <code>job_gpu</code> costs 0.20 R²; dropping <code>queue_pressure</code> or <code>queue_length</code> costs ~0.02–0.03 each; every other single feature is nearly redundant given the rest.</figcaption>
+    <figcaption>Job size and queue state dominate; the six fragmentation/supply features contribute a long tail. The ablation now carries intervals, and it agrees on the top three only: dropping <code>job_gpu</code> costs <strong>0.2051 R²</strong> [0.1565, 0.2538], <code>queue_length</code> <strong>0.0217</strong> [0.0081, 0.0353], <code>queue_pressure</code> <strong>0.0158</strong> [0.0051, 0.0264]. The other nine intervals span zero — which means <em>not distinguishable from zero at this sample size</em>, not "adds nothing". See the two callouts below.</figcaption>
     <div class="tableview"></div>
   </figure>
+
+  <div class="callout warn">
+    <div class="t">Measured in v3.6 — two of these twelve features are the same variable twice</div>
+    <p style="margin:6px 0 0"><code>05_results/models/feature_collinearity.csv</code> puts numbers on what rows 2 and 12 of the table above already imply. <code>total_free</code> and <code>avg_free_per_node</code> correlate at <strong>1.000000</strong> with an <strong>infinite VIF</strong>: in the synthetic generator one is the other divided by a constant node count, so they are one variable entered twice. <code>fragmentation</code> and <code>variance_free</code> are the second pair, correlated at <strong>0.950720</strong> (VIF 66.8 and 34.1) — the standard deviation and the variance of the same vector.</p>
+    <p style="margin:6px 0 0">This bounds what the ablation can say. <strong>A single-feature ablation cannot say anything about either member of such a pair</strong>: drop one and the information survives intact in the other, so a near-zero drop there is arithmetic, not evidence of irrelevance. Any reading of the chart above has to hold those four features out of the "unimportant" verdict entirely.</p>
+  </div>
+
+  <div class="callout warn">
+    <div class="t">Correction — "nearly redundant given the rest" overstated what the ablation measured</div>
+    <p style="margin:6px 0 0">Through v3.5 the ablation was twelve single re-fits on one fixed row split, reported as point drops with no uncertainty, and this page read the small ones as evidence that those features were redundant. <strong>That reading is retracted.</strong> Each ablation is now re-fit over <strong>20 leave-one-run-out folds</strong> on <code>run_id</code>, with drops paired within fold and a Student-<em>t</em> 95% interval taken over the 20 paired differences. <strong>Only three of the twelve drops are distinguishable from zero</strong> — the three quoted in the caption above. The other nine intervals span zero.</p>
+    <p style="margin:6px 0 0">An interval crossing zero says the drop is <strong>not distinguishable from zero at this sample size</strong>. It does <em>not</em> establish that the feature adds nothing. Accepting a null from a failure to reject it is exactly the error this project criticises elsewhere — it is why the scheduler comparison uses TOST for equivalence rather than quoting a large <em>p</em>-value. The honest baseline falls with the method too: <strong>R² 0.836840</strong> on the single fixed row split becomes <strong>0.793486 [0.767472, 0.819500]</strong> leave-one-run-out.</p>
+    <p style="margin:6px 0 0">One result reads <em>with</em> the central finding rather than against it: <code>queue_pressure</code> being one of only three real contributors is <strong>consistent with</strong> the <a href="#degeneracy">degeneracy result</a>, because v3.5 established that <code>queue_pressure</code> is itself a deterministic function of requested size given the cluster state. Artefacts: <code>05_results/models/ablation_study_results.csv</code> (byte-identical duplicate at <code>05_results/ablation_study_results.csv</code> — one artefact under two names) and <code>feature_collinearity.csv</code>.</p>
+  </div>
 </section>
 
 <!-- ================================================================ -->
 <section id="model">
   <div class="kicker">The system · 3</div>
   <h2>The ML model: predicting wait time</h2>
-  <p>The production model (<code>03_models/wait_model_v2.pkl</code>) is an <strong>XGBoost regressor</strong> — 300 gradient-boosted trees, depth 6, learning rate 0.05, subsample 0.8 — trained on 1,760 examples and evaluated on a held-out 440. Gradient-boosted trees suit this problem: tabular features, non-linear interactions (job size × fragmentation), tiny training budget, millisecond inference.</p>
+  <p>The production model (<code>03_models/wait_model_v2.pkl</code>) is an <strong>XGBoost regressor</strong> — 300 gradient-boosted trees, depth 6, learning rate 0.05, subsample 0.8 — fit on 1,760 examples. How the other 440 are chosen turns out to matter more than anything about the model, so v3.6 measures three ways of choosing them. Gradient-boosted trees suit this problem: tabular features, non-linear interactions (job size × fragmentation), tiny training budget, millisecond inference.</p>
 
-  <h3>Evaluated honestly</h3>
+  <h3>Evaluated honestly — three splits, and the split is the finding</h3>
   <div class="cards c3">
-    <div class="card"><div class="kpi" style="border:0;padding:0;box-shadow:none"><div class="label">20% holdout</div><div class="value">R² 0.837</div><div class="delta">MAE 4.69 ts</div></div></div>
-    <div class="card"><div class="kpi" style="border:0;padding:0;box-shadow:none"><div class="label">5-fold cross-validation <span class="chip">console-only</span></div><div class="value">4.74 ts</div><div class="delta">printed by <code>train_improved_model.py</code>, never written to a CSV — so it cannot be checked against an artefact</div></div></div>
+    <div class="card"><div class="kpi" style="border:0;padding:0;box-shadow:none"><div class="label">Run-wise 5-fold <span class="chip info">headline</span></div><div class="value">R² 0.811</div><div class="delta">0.810910 ± 0.020672 · MAE 4.897 ± 0.449 ts · no run on both sides of the split</div></div></div>
+    <div class="card"><div class="kpi" style="border:0;padding:0;box-shadow:none"><div class="label">Random 20% row holdout <span class="chip warn">superseded</span></div><div class="value">R² 0.837</div><div class="delta">MAE 4.6935 ts — the number this page used to headline, and it is optimistic</div></div></div>
+    <div class="card"><div class="kpi" style="border:0;padding:0;box-shadow:none"><div class="label">Chronological <span class="chip">what deployment means</span></div><div class="value">MAE 7.24</div><div class="delta">R² 0.725 · train on each run's earlier arrivals, test on its later ones</div></div></div>
+  </div>
+
+  <div class="tablewrap" style="margin-top:14px"><table>
+    <caption>Every split, against the constant predictor it has to beat · <code>05_results/models/evaluation_splits.csv</code></caption>
+    <thead><tr><th>Split</th><th class="num">Folds</th><th class="num">R²</th><th class="num">MAE (ts)</th><th class="num">Mean-constant R² · MAE</th><th class="num">Median-constant R² · MAE</th></tr></thead>
+    <tbody>
+      <tr><td>Random rows (superseded)</td><td class="num">1</td><td class="num">0.836840</td><td class="num">4.6935</td><td class="num">−0.006005 · 13.287</td><td class="num">−0.134513 · 13.148</td></tr>
+      <tr><td><strong>Run-wise, GroupKFold on <code>run_id</code></strong></td><td class="num">5</td><td class="num"><strong>0.810910 ± 0.020672</strong></td><td class="num"><strong>4.8970 ± 0.4492</strong></td><td class="num">−0.019958 · 13.450</td><td class="num">−0.088624 · 13.021</td></tr>
+      <tr><td>Leave-one-run-out (fold-count check)</td><td class="num">20</td><td class="num">0.793486 ± 0.054176</td><td class="num">4.8207 ± 1.0156</td><td class="num">−0.133046 · 13.448</td><td class="num">−0.133501 · 12.980</td></tr>
+      <tr><td>Chronological (deployment order)</td><td class="num">1</td><td class="num">0.725147</td><td class="num">7.2403</td><td class="num">−0.702853 · 19.230</td><td class="num">−1.175099 · 21.655</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="callout bad" style="margin-top:14px">
+    <div class="t">Correction — the headline model accuracy was optimistic, and the honest number is lower</div>
+    <p style="margin:6px 0 0">The published <strong>R² 0.837 / MAE 4.69</strong> came from <code>train_test_split(test_size=0.2, random_state=42)</code> over 2,200 rows that are <strong>20 simulation runs of 110 jobs</strong>. Rows from one run share a cluster trajectory, so a random <em>row</em> split puts near-duplicates on both sides of it. That protocol answers "can the model interpolate inside a trajectory it has already seen", which is not the question anyone deploying it would ask.</p>
+    <p style="margin:6px 0 0">The headline is now the <strong>run-wise</strong> number — <strong>R² 0.810910 ± 0.020672, MAE 4.90</strong> — because it is the only split that answers whether the model works on a cluster trajectory it has <em>not</em> seen. It is lower than the 0.837 previously reported here, and it is the figure to quote. Five folds were used deliberately so the training set stays at <strong>1,760 rows, the same size as the random split</strong>: the gap cannot be blamed on training on less data. Leave-one-run-out is reported alongside only as a sensitivity check on the fold count; its per-fold R² spans <strong>0.6899 to 0.8744</strong>, which is why a single grouped hold-out would have been unquotable.</p>
+    <p style="margin:6px 0 0">Any <strong>deployment</strong> claim should quote the chronological <strong>MAE 7.24</strong>, not 4.69 — <strong>54% more error than this repository used to advertise</strong>. And for scale in the other direction: run-wise MAE 4.90 against the best constant predictor's 13.02–13.45 is about <strong>64% less error</strong>, so this is a real but ordinary regressor, not a dressed-up mean. Producer: <code>03_models/evaluate_splits.py</code>, pipeline step 21.</p>
+  </div>
+
+  <div class="callout">
+    <div class="t">What this correction does <em>not</em> touch</div>
+    The accuracy figure and the <a href="#degeneracy">degeneracy result</a> are independent claims. Degeneracy is a statement about the <strong>functional form</strong> of the score — at a fixed dispatch instant every queued job observes the same cluster state, so the score is a function of requested size alone — and it holds whatever the accuracy turns out to be. A more accurate model would simply be a more accurate lookup table over size. Read the fall from 0.837 to 0.811 as a correction to the <em>regression</em> claim, not as a weakening of the central negative result.
+  </div>
+
+  <div class="cards c2" style="margin-top:14px">
+    <div class="card"><div class="kpi" style="border:0;padding:0;box-shadow:none"><div class="label">5-fold cross-validation <span class="chip">console-only</span></div><div class="value">4.74 ts</div><div class="delta">printed by <code>train_improved_model.py</code>, never written to a CSV — so it cannot be checked against an artefact. It also folds on rows rather than runs, so it shares the optimism corrected above.</div></div></div>
     <div class="card"><div class="kpi" style="border:0;padding:0;box-shadow:none"><div class="label">Hyper-parameter tuning</div><div class="value">withdrawn</div><div class="delta">the 729-fit grid search and its results CSV were deleted in v3.6; the tuned "R² 0.850 / MAE 4.57" once quoted here has no producer and is retracted. The production model uses the untuned settings above.</div></div></div>
   </div>
   <div class="callout bad" style="margin-top:14px">
@@ -790,7 +837,7 @@ for job in queue:              # 4. dispatch ALL
   <p>This is not a video. Below, <strong>two copies of the project's simulator</strong> run the <em>identical</em> randomly-generated job stream — the left queue served in arrival order (FIFO), the right queue re-sorted every tick by a wait-time model. Each colored chip is a job (same job = same color on both sides); each small cell is one GPU across the 8×4 cluster.</p>
   <div class="callout">
     <div class="t">The predictions are real — but this model has no producer</div>
-    The right panel runs a <strong>distilled 40-tree version of the XGBoost model</strong>, embedded in this page's JavaScript and evaluated natively on the same 12 features. <strong>No script in the repository distils, exports or scores it</strong>, so its quoted holdout figures (MAE 4.64 ts, R² 0.842) are not regenerated by <code>run_all_experiments.sh</code> and are not checked by <code>tools/verify_artifacts.py</code>. Read them as a browser-side approximation that drives the animation, nothing more. The repository's <em>measured</em> model quality is <strong>MAE 4.6935, R² 0.8368</strong>, from <code>05_results/model_comparison_table1.csv</code>. Roughly 1 seed in 7 will show FIFO winning — the <strong>34-of-40</strong> split the paired benchmark measured. Press <em>Run</em> and watch the mean-wait counters diverge.
+    The right panel runs a <strong>distilled 40-tree version of the XGBoost model</strong>, embedded in this page's JavaScript and evaluated natively on the same 12 features. <strong>No script in the repository distils, exports or scores it</strong>, so its quoted holdout figures (MAE 4.64 ts, R² 0.842) are not regenerated by <code>run_all_experiments.sh</code> and are not checked by <code>tools/verify_artifacts.py</code>. Read them as a browser-side approximation that drives the animation, nothing more. The repository's <em>measured</em> model quality on the same random row split is <strong>MAE 4.6935, R² 0.8368</strong> (<code>05_results/model_comparison_table1.csv</code>) — but that split is optimistic, and the figure this project now headlines is the <a href="#model">run-wise <strong>R² 0.811, MAE 4.90</strong></a>. Both distilled-model numbers and the 0.8368 they imitate flatter the model for the same reason. Roughly 1 seed in 7 will show FIFO winning — the <strong>34-of-40</strong> split the paired benchmark measured. Press <em>Run</em> and watch the mean-wait counters diverge.
   </div>
 
   <div class="sim-controls">
@@ -1023,7 +1070,7 @@ for job in queue:              # 4. dispatch ALL
   <h2>Explainability (SHAP)</h2>
   <p>SHAP (SHapley Additive exPlanations) attributes each individual prediction to feature contributions — the difference between "the model said 12 ts" and "the model said 12 ts <em>because</em> the queue is long and only one node could host this job". The pipeline regenerates 16 SHAP figures into <code>05_results/shap/</code>:</p>
   <ul>
-    <li><strong>Global summary</strong> (<code>shap_summary.png</code>) — feature impact ranked across 400 sampled predictions; agrees with the importance chart above (job size and queue state dominate).</li>
+    <li><strong>Global summary</strong> (<code>shap_summary.png</code>) — feature impact ranked across 400 <em>held-out</em> predictions; agrees with the importance chart above (job size and queue state dominate).</li>
     <li><strong>12 dependence plots</strong> — how each feature's value moves predictions, exposing the learned non-linearities (e.g., <code>queue_pressure</code> matters only once <code>can_fit_now</code> is 0).</li>
     <li><strong>3 force plots</strong> — single-prediction anatomies, the artifact you'd show an operator asking "why was my job predicted to wait?"</li>
   </ul>
@@ -1032,21 +1079,30 @@ for job in queue:              # 4. dispatch ALL
     <a href="../05_results/shap/shap_dependence_queue_pressure.png" target="_blank"><img src="../05_results/shap/shap_dependence_queue_pressure.png" alt="SHAP dependence plot for queue_pressure" onerror="this.parentElement.style.display='none'"><div class="cap">Dependence — queue_pressure</div></a>
     <a href="../05_results/shap/shap_force_0.png" target="_blank"><img src="../05_results/shap/shap_force_0.png" alt="SHAP force plot for a single prediction" onerror="this.parentElement.style.display='none'"><div class="cap">Force plot — one prediction, explained</div></a>
   </div>
+  <div class="callout good">
+    <div class="t">v3.6 — the explanations are now computed on held-out rows, and the conclusion survives</div>
+    <p style="margin:6px 0 0">Through v3.5 this study explained 400 rows sampled from the <em>full</em> dataset with the <em>full</em> dataset as background — roughly <strong>320 of those 400 rows had been in the model fit</strong>. That is an explanation of memorised predictions, and a reviewer is right to discount it. It now explains <strong>400 rows drawn only from the 440-row held-out test split</strong>, with a background drawn from that same split: <code>rows_from_training = 0</code>, and that zero is verified by a sha256 over the actual explained row indices rather than taken on the script's own word (<code>05_results/shap/shap_provenance.csv</code>, with the indices themselves in <code>shap_explained_rows.csv</code>).</p>
+    <p style="margin:6px 0 0"><strong>The ordering is essentially unchanged.</strong> <code>job_gpu</code> still dominates, at mean |SHAP| <strong>7.3393</strong> — <strong>35.4%</strong> of all attribution mass, and <strong>76.2%</strong> of the mass carried by the four job-dependent features. The only rank movement anywhere in the twelve is a 7/8 swap between <code>running_jobs</code> and <code>variance_free</code>, two features that differed by 0.0003: noise. "Nothing changed" is the finding. The <a href="#degeneracy">degeneracy story</a> was previously resting on explanations computed partly over training rows; it now rests on explanations that survive that objection, and it says the same thing — the attribution mass that can separate two co-queued jobs is concentrated in the job's own requested size.</p>
+  </div>
   <p style="font-size:0.85rem;color:var(--ink-3)">(Images resolve when this page is opened from <code>docs/</code> inside the repository.)</p>
 </section>
 
 <!-- ================================================================ -->
 <section id="roi">
-  <div class="kicker">Evidence · 5</div>
-  <h2>ROI estimate — clearly labelled as an estimate</h2>
-  <p>Phase 19 converts the measured 7.9% mean-wait improvement into money under explicit assumptions (180,000 jobs/yr, 2.5 GPU-hr average job, $2.20/GPU-hr cloud rate, 0.35 kWh/GPU-hr at $0.14/kWh, $42k deployment cost):</p>
-  <div class="cards c3">
-    <div class="card"><div class="kpi" style="border:0;padding:0;box-shadow:none"><div class="label">GPU-hours saved / yr</div><div class="value">35.5k</div><div class="delta">of 450k baseline</div></div></div>
-    <div class="card"><div class="kpi" style="border:0;padding:0;box-shadow:none"><div class="label">Total annual savings</div><div class="value">$80k</div><div class="delta">cloud $78.2k + energy $1.7k</div></div></div>
-    <div class="card"><div class="kpi" style="border:0;padding:0;box-shadow:none"><div class="label">First-year ROI</div><div class="value">90%</div><div class="delta">vs $42k deployment cost</div></div></div>
+  <div class="kicker">Evidence · 5 · withdrawn in v3.6</div>
+  <h2>The ROI estimate is withdrawn — it priced a quantity this project measured at zero</h2>
+
+  <p class="lede">Through v3.5 this section converted the measured mean-wait improvement into GPU-hours saved and then into an annual dollar saving and a first-year percentage return, under a list of stated assumptions. <strong>Every one of those figures is retracted and the study that produced them has been deleted</strong> — not widened, not re-caveated, deleted. The numbers are not reproduced here, because reprinting them to disown them is still printing them.</p>
+
+  <div class="callout bad">
+    <div class="t">Why this is a category error, not an uncertain assumption</div>
+    <p style="margin:6px 0 0">The conversion assumed that shortening a queue wait saves GPU-hours. This project’s own 40-run benchmark says it does not. In <strong>40 of 40 runs</strong> <code>baseline_util</code> and <code>proactive_util</code> are equal — mean <strong>0.641177</strong>, identical to six decimal places — and the same <strong>110 jobs complete under both policies in all 40 runs</strong> (<code>05_results/benchmark_statistical_results.csv</code>). The cluster performs the same compute either way. Reordering a queue changes <em>when</em> jobs start, not how many GPU-hours they consume.</p>
+    <p style="margin:6px 0 0">So the quantity being monetised was measured at zero — in the very experiment that produced the improvement being monetised. That is why more caution would not have rescued it: <strong>widening the error bars on a number whose true value is zero still reports a saving.</strong> The defect is in the conversion, not in the uncertainty around it, and the only correct fix is removal.</p>
   </div>
-  <p style="margin-top:12px"><strong>Correction.</strong> Through v3.5 these cards read 34.7k GPU-hours, $78k and 86%. The committed <code>05_results/roi/cost_benefit_analysis.csv</code> had been computed from a superseded 7.7144% improvement while the script reads the current improvement at run time; regenerating it gives <strong>35,540.38 GPU-hours, $79,930.32 total annual savings and 90.31% first-year ROI</strong>. The correction moves the estimate up, and changes nothing about how weak the estimate is.</p>
-  <p style="margin-top:12px">The linear wait→GPU-hour conversion is generous (queued jobs don't burn GPUs; the true saving is in <em>time-to-result</em> and capacity deferral). Treat this as an order-of-magnitude illustration; <code>05_results/roi_analysis.py</code> recomputes it with your own rates.</p>
+
+  <p><strong>What survives.</strong> The wait-time reduction itself is a real measured result and keeps its place in <a href="#results">the headline results</a>: <strong>7.897862%</strong> versus FIFO over 40 paired runs, Student-<em>t</em> 95% CI <strong>[4.88%, 10.91%]</strong>. What is withdrawn is only the claim that it converts into money. If a shorter wait is worth something it is worth it as time-to-result and capacity deferral — neither of which this project measured, and neither of which it was entitled to price.</p>
+
+  <p style="font-size:0.85rem;color:var(--ink-3)"><strong>Deleted alongside the claim:</strong> <code>05_results/roi_analysis.py</code>, the <code>05_results/roi/</code> directory and its <code>cost_benefit_analysis.csv</code>, the pipeline’s ROI step, and the dashboard’s ROI panel. No dollar figure, GPU-hour saving or percentage return survives anywhere in this repository. Do not restore one from an older draft of this page.</p>
 </section>
 <!-- ================================================================ -->
 <section id="repo">
@@ -1183,8 +1239,7 @@ for job in queue:              # 4. dispatch ALL
     <div class="step"><b>15 · Uncertainty benchmark</b>quantile intervals, UCB, guarded fallback</div>
     <div class="step"><b>16 · Online + drift</b>incremental learning, drift triggers</div>
     <div class="step"><b>17 · 40-run statistics</b>paired tests, Student-t CIs</div>
-    <div class="step"><b>18 · ROI</b>cost-benefit from the measured improvement</div>
-    <div class="step"><b>19 · Table 1</b>7-model comparison</div>
+        <div class="step"><b>19 · Table 1</b>7-model comparison</div>
     <div class="step"><b>20 · Phases 22–27</b>bootstrap CIs, OOD, landscape, traces, scaling, SLA</div>
   </div>
   <p>As of v3.6 that is the whole of it: phases 22–27 are step 20, and <code>phases_22_30/run_all_experiments_v2.sh</code> is a forwarding shim kept for backwards compatibility. "<code>run_all_experiments.sh</code> regenerates every result" is now a true statement, which it was not while the degeneracy, trace-driven, budget-sweep, quantile and uncertainty studies sat outside it. The script is seeded, cwd-independent, and UTF-8-safe on Windows. Docker: <code>docker build -t proactive-scheduler . &amp;&amp; docker run --rm proactive-scheduler</code>.</p>
@@ -1205,7 +1260,7 @@ for job in queue:              # 4. dispatch ALL
       <tr><td>01–05</td><td>Foundations</td><td>Simulator; feasibility classification (v1 ML formulation); first datasets</td><td><span class="chip ok">done</span></td></tr>
       <tr><td>06–09</td><td>Pivot to regression</td><td>Wait-time prediction; leak removal; 12-feature schema; v2 model; proactive scheduler v1→v2</td><td><span class="chip ok">done</span></td></tr>
       <tr><td>10–15</td><td>Model science</td><td>Multi-model Table 1; ablation; fairness analysis; multi-scheduler benchmark; SHAP</td><td><span class="chip ok">done</span></td></tr>
-      <tr><td>16–21</td><td>Robustness &amp; ops</td><td>Trace scaffolding; scaling; online learning; drift detection; ROI; dashboard + reproducibility kit</td><td><span class="chip ok">done</span></td></tr>
+      <tr><td>16–21</td><td>Robustness &amp; ops</td><td>Trace scaffolding; scaling; online learning; drift detection; dashboard + reproducibility kit</td><td><span class="chip ok">done</span></td></tr>
       <tr><td>22</td><td>Statistical rigor</td><td>Bootstrap CIs, BH-corrected paired tests on the 40-run benchmark</td><td><span class="chip ok">done</span></td></tr>
       <tr><td>23</td><td>OOD robustness</td><td>72-scenario domain-shift stress test of the real model</td><td><span class="chip ok">done</span></td></tr>
       <tr><td>24</td><td>Scheduler landscape</td><td>Comparison vs real implementations (fabricated industry baselines removed)</td><td><span class="chip ok">done</span></td></tr>
@@ -1243,7 +1298,7 @@ for job in queue:              # 4. dispatch ALL
         <li><strong>Seeded end-to-end</strong> — dataset generation was unseeded, so every "reproduction" produced different data. Now deterministic (global 42, per-run 42+i).</li>
         <li><strong>Windows Unicode crashes fixed</strong> — cp1252 console encoding crashed three scripts; pipelines export <code>PYTHONUTF8=1</code> and all writes specify UTF-8.</li>
         <li><strong>Path bugs</strong> — eight scripts only worked from one working directory; all now resolve paths from their own location.</li>
-        <li><strong>Pipeline ordering</strong> — ROI ran <em>before</em> the benchmark that produces its input (and silently used a stale wide-format file its parser could never read). Reordered + parser fixed.</li>
+        <li><strong>Pipeline ordering</strong> — a downstream analysis ran <em>before</em> the benchmark that produces its input (and silently used a stale wide-format file its parser could never read). Reordered + parser fixed. That analysis was the ROI study, deleted outright in v3.6 — see the note below.</li>
         <li><strong>SWF parser off-by-one</strong> — requested-processors read from the wrong SWF field (would have corrupted any future real-trace run).</li>
         <li><strong>Docs de-linted</strong> — missing <code>docs/</code> and <code>DEPLOYMENT.md</code> created; stale numbers, dead paths, and unresolved LaTeX citations fixed.</li>
       </ul>
@@ -1263,7 +1318,7 @@ for job in queue:              # 4. dispatch ALL
     <li><strong>Fairness/tail costs are real.</strong> Unmitigated, max wait doubles; the anti-starvation patch recovers only part of it and adds its own churn.</li>
     <li><strong>OOD fragility.</strong> Mean R² &lt; 0 across shifted regimes means the model, as-is, must not be deployed beyond its training distribution without retraining and a fallback — and v3.2 showed the model's own interval width is <em>not</em> a reliable alarm (68% coverage, guard fired on 0.5% of ticks in the failing regime). Drift-triggered fallback remains the mechanism.</li>
     <li><strong>Baseline nuance (v3.2).</strong> EASY backfill is now implemented — but note this simulator's "FIFO" already backfills without reservations, so EASY's reservation guarantee <em>costs</em> mean wait here. A comparison on a workload where head-of-line blocking dominates (long-runtime heavy tails) would show EASY's classic upside; the current uniform 5–20 ts runtimes underplay it.</li>
-    <li><strong>ROI is illustrative.</strong> Linear wait→cost conversion; assumption-heavy.</li>
+    <li><strong>ROI is withdrawn (v3.6), not merely illustrative.</strong> It converted a wait-time percentage into GPU-hours saved. But this repository's own 40-run benchmark records <code>baseline_util == proactive_util</code> in 40 of 40 runs (identical to six decimal places) and the same 110 jobs completing under both policies: the cluster performs the same compute either way. Reordering a queue changes <em>when</em> jobs start, not how many GPU-hours they consume, so the quantity being monetised was measured at zero. That is a category error, not an assumption needing wider error bars, and the study was deleted.</li>
   </ol>
 </section>
 
