@@ -23,8 +23,9 @@ export PYTHONUTF8=1
 SMOKE_DEG="${SMOKE:+--quick}"
 SMOKE_TDB="${SMOKE:+--smoke}"
 SMOKE_POWER="${SMOKE:+--replicates 2000}"
+SMOKE_SWEEP="${SMOKE:+--windows 2}"
 
-TOTAL=22
+TOTAL=24
 
 # ---------------------------------------------------------------------------
 # Step 0 regenerates the dataset and the v2 model so the pipeline works on a
@@ -82,21 +83,45 @@ echo "[10/$TOTAL] Trace-driven scheduler benchmark (real SWF traces, real user e
 echo "[11/$TOTAL] Power of the trace-driven equivalence tests (how many windows would be needed?)"
 "$PY" 04_scheduler/tost_power.py $SMOKE_POWER
 
-echo "[12/$TOTAL] Real-trace datasets (SWF replay) and real-trace validation"
+# ---------------------------------------------------------------------------
+# Phase D. Step 9 shows the learned score CANNOT rank beyond requested size with
+# the standard feature set. These two ask the converse and the limits.
+#
+# The sweep adds per-job attributes that are genuinely NOT functions of size
+# given the cluster state (the user's runtime estimate, causal per-user history,
+# queue and user identity) and re-runs the same instrumentation: violations
+# appear, Kendall tau falls, ties fall. It then asks whether that BUYS anything,
+# against plain SJF on the users' own estimates. It does not.
+#
+# The attacks try to break the published claim four ways -- a learning-to-rank
+# objective, monotone transforms, a lagged history window, and scoring at enqueue
+# time with caching. Only the last succeeds, and it schedules worse.
+#
+# Both import the published Collector rather than re-implementing it, and both
+# reproduce the published baseline rows exactly, so each is read against a
+# like-for-like control. They need only the committed .swf.gz traces.
+# ---------------------------------------------------------------------------
+echo "[12/$TOTAL] Non-degeneracy sweep (does a genuine per-job feature break the degeneracy?)"
+"$PY" 04_scheduler/non_degeneracy_sweep.py $SMOKE_SWEEP
+
+echo "[13/$TOTAL] Robustness attacks on the degeneracy claim (four attempts to break it)"
+"$PY" 04_scheduler/robustness_attacks.py $SMOKE_SWEEP
+
+echo "[14/$TOTAL] Real-trace datasets (SWF replay) and real-trace validation"
 "$PY" 02_data/build_real_trace_datasets.py
 "$PY" 02_data/real_trace_validation.py
 
-echo "[13/$TOTAL] SHAP explainability"
+echo "[15/$TOTAL] SHAP explainability"
 "$PY" 03_models/explainability_shap.py
 
-echo "[14/$TOTAL] Synthetic-proxy trace: out-of-distribution check (NOT real trace data)"
+echo "[16/$TOTAL] Synthetic-proxy trace: out-of-distribution check (NOT real trace data)"
 "$PY" 02_data/load_real_traces.py
 "$PY" 02_data/synthetic_vs_real_comparison.py
 
-echo "[15/$TOTAL] Scaling analysis"
+echo "[17/$TOTAL] Scaling analysis"
 "$PY" 04_scheduler/scaling_analysis.py
 
-echo "[16/$TOTAL] Uncertainty-aware scheduling benchmark (quantile intervals, OOD)"
+echo "[18/$TOTAL] Uncertainty-aware scheduling benchmark (quantile intervals, OOD)"
 "$PY" 04_scheduler/uncertainty_scheduler_benchmark.py
 
 # Audits step 16's own headline. Under load a policy's published mean wait is
@@ -106,17 +131,17 @@ echo "[16/$TOTAL] Uncertainty-aware scheduling benchmark (quantile intervals, OO
 # reports the paired common-set comparison and each policy's started fraction
 # beside the published number. It reads the two trained models (steps 1 and 3)
 # and must follow step 16, whose committed CSV it reproduces cell for cell.
-echo "[17/$TOTAL] Censoring / selection-bias audit of the uncertainty benchmark"
+echo "[19/$TOTAL] Censoring / selection-bias audit of the uncertainty benchmark"
 "$PY" 04_scheduler/censoring_analysis.py
 
-echo "[18/$TOTAL] Online learning and concept drift"
+echo "[20/$TOTAL] Online learning and concept drift"
 "$PY" 03_models/online_learning.py
 "$PY" 03_models/concept_drift_detection.py
 
-echo "[19/$TOTAL] Baseline statistical benchmark refresh"
+echo "[21/$TOTAL] Baseline statistical benchmark refresh"
 "$PY" 04_scheduler/benchmark_statistical.py
 
-echo "[20/$TOTAL] Multi-model comparison (Table 1)"
+echo "[22/$TOTAL] Multi-model comparison (Table 1)"
 "$PY" 03_models/compare_multiple_models.py
 
 # ---------------------------------------------------------------------------
@@ -129,7 +154,7 @@ echo "[20/$TOTAL] Multi-model comparison (Table 1)"
 # 02_data/improved_wait_dataset.csv (step 1) and nothing reads its output, so
 # it sits with the other model-evaluation steps.
 # ---------------------------------------------------------------------------
-echo "[21/$TOTAL] Honest split comparison (random vs run-wise vs chronological)"
+echo "[23/$TOTAL] Honest split comparison (random vs run-wise vs chronological)"
 "$PY" 03_models/evaluate_splits.py
 
 # ---------------------------------------------------------------------------
@@ -140,7 +165,7 @@ echo "[21/$TOTAL] Honest split comparison (random vs run-wise vs chronological)"
 # and 19. Folding them in gives the repository ONE entry point, so that
 # "run_all_experiments.sh regenerates every result" is a true statement.
 # ---------------------------------------------------------------------------
-echo "[22/$TOTAL] Phases 22-27: bootstrap CIs, OOD sensitivity, scheduler landscape, traces, scaling, fairness/SLA"
+echo "[24/$TOTAL] Phases 22-27: bootstrap CIs, OOD sensitivity, scheduler landscape, traces, scaling, fairness/SLA"
 "$PY" phases_22_30/phase_22_stats/stats_bootstrap.py
 "$PY" phases_22_30/phase_23_sensitivity/sensitivity_ood_analysis.py
 "$PY" phases_22_30/phase_24_extended_schedulers/scheduler_comparison.py

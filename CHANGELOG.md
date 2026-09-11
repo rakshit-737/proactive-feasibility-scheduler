@@ -1,5 +1,169 @@
 # Changelog
 
+## v3.7 — September 2026 · Hostile-review hardening, part two: honest evaluation and the condition made measurable
+
+v3.6 made every number in this repository regenerable. v3.7 asks a harder question of the
+same numbers — whether the *method* behind them is sound — and then pushes the science
+past the negative result. Full accounts: `reports/phase_C_report.md`,
+`reports/phase_D_report.md`, `reports/honest_claims.md`,
+`reports/submission_readiness.md`.
+
+**The central result did not move.** 45,432 dispatch instants, zero equal-size /
+different-score violations, still byte-identical on a fresh clone. Everything below either
+weakens a supporting claim, deletes one, or adds new evidence on either side of the main
+one.
+
+### Retraction: the headline accuracy figure was optimistic
+
+- **R² 0.8368, MAE 4.69 → R² 0.8109 ± 0.0207, MAE 4.90 ± 0.45.** *Reason:* the 2200
+  training rows are 20 simulation runs, and every trainer used
+  `train_test_split(random_state=42)`. A random row split puts rows of the same run on
+  both sides of the split, so the model is scored partly on runs it has seen. The new
+  figure is `GroupKFold` over `run_id` (5 folds), which is the honest unit.
+- **Deployment reading: 4.69 MAE → 7.24 MAE (R² 0.7251).** *Reason:* deployment means
+  predicting the later part of a run from its earlier part. A within-run chronological
+  split measures that and nothing else did. This is the number a practitioner should plan
+  against.
+- The random-split figures are retained in `05_results/splits/split_comparison.csv` as a
+  labelled anchor, never as the headline.
+- **The degeneracy result does not depend on any of these.** It is a statement about the
+  functional form of the score, not its accuracy — which the Phase D learning-to-rank
+  attack then demonstrates empirically.
+
+### Retraction: the ablation reported twelve effects where the data supports three
+
+- **12 point estimates from one split → 3 of 12 distinguishable from zero**
+  (`job_gpu` 0.205, `queue_length` 0.022, `queue_pressure` 0.016; 20 leave-one-run-out
+  folds with confidence intervals). Baseline R² restated as **0.7935 [0.7675, 0.8195]**.
+  *Reason:* a single-split point estimate cannot separate a real effect from fold noise.
+  An interval spanning zero means *not distinguishable at this sample size* — it is not
+  evidence the feature adds nothing, and is not written as though it were.
+
+### Retraction: the SHAP analysis was explaining memorised rows
+
+- **400 rows sampled from the full dataset (≈320 of them in the fit) → 400 held-out rows,
+  0 from training.** *Reason:* explaining rows the model was fitted on measures
+  memorisation, not behaviour.
+
+### Retraction: the LANL equivalence row said "not equivalent"; it is inconclusive
+
+- **"not equivalent" → inconclusive, and unsettleable on that trace.** *Reason:* achieved
+  power was **0.47%**, and because the observed paired difference (320.02 s) exceeds the
+  equivalence margin (222.93 s), **no sample size certifies equivalence there** at a 10%
+  margin. Establishing a *difference* instead would need 29 windows (50 after Holm over
+  the family of 11); the trace supplies 28. The equivalence claim rests on SDSC (power
+  1.000) and the synthetic benchmark. Reported in
+  `05_results/traces/trace_equivalence_power.csv`.
+
+### Retraction: the OOD failure taxonomy was a constant
+
+- **All 72 scenarios labelled `DISTRIBUTION_MISMATCH` → 5 categories across 4 severity
+  bands.** *Reason:* the classifier's thresholds were unreachable (minimum observed MAPE
+  54.01 against a 35 cut-off), so every row fell through to one label. Any claim resting on
+  the old labels is void. Severity is standardised *within* the grid: "least severe" means
+  least severe among these 72 shifted regimes, never "safe" — mean R² across the grid is
+  negative.
+
+### Correction: two features are the same variable twice
+
+- `total_free` and `avg_free_per_node` correlate at **1.000000** with infinite VIF;
+  `fragmentation` and `variance_free` at 0.950720. *Consequence:* per-feature importance
+  over this set is not identifiable, and the ablation is read accordingly. The feature set
+  is unchanged, because changing it would change the artefacts the claim rests on — the
+  collinearity is reported, not silently fixed.
+
+### Deletion: the ROI study
+
+- `05_results/roi_analysis.py`, `05_results/roi/` and every dollar figure (~$80k/yr,
+  ~90% return) are **deleted**, not caveated. *Reason:* the study monetised GPU-hours saved
+  while the benchmark it reads records **identical utilisation and identical completions in
+  all 40 paired runs**. The quantity being monetised was measured at zero. That is a
+  category error, not an uncertain assumption.
+
+### Not a retraction: the censoring bias runs the other way
+
+Selection from unfinished jobs exists in **1 of 5 scenarios**, and there it **penalised**
+the learned policies by up to 3.3 points rather than flattering them. The common-set
+re-analysis adjudicates ~92 shared jobs; ~61 exchanged jobs are described, not adjudicated.
+
+### New: the non-degeneracy condition, measured (Phase D1)
+
+The condition was stated but never shown. Five per-job attributes that do not factor
+through requested size given the cluster state — requested time, causal per-user mean wait,
+causal per-user mean runtime, queue identity, user identity — each break the degeneracy on
+both traces:
+
+| quantity | SDSC baseline → augmented | LANL baseline → augmented |
+|---|---|---|
+| violations | 0 → 6,194–10,718 | 0 → 13,801–28,497 |
+| Kendall τ vs size | 0.752 → 0.593–0.750 | 0.621 → 0.420–0.597 |
+| all-tied fraction | 14.41% → 6.31–9.48% | 20.73% → 6.01–13.48% |
+
+**And 0 of 12 augmented variants beat shortest-job-first on the users' own estimates.** The
+best is +1.48% slower and is certified TOST-*equivalent* to it. Non-degeneracy is
+**necessary and not sufficient** — that is the finding, and
+`tests/test_golden_numbers.py` fails if a future change makes one of these variants win, so
+the claim is restated deliberately rather than drifting. User history is built causally
+(a job enters its user's running means only once `submit + wait + runtime ≤ t`); three
+leakage tests go red under a full-trace groupby.
+
+### New: the degeneracy stated as a proposition (Phase D2)
+
+`METHODOLOGY.md` and the manuscript now carry Proposition 1 with a three-line proof,
+Corollaries 1.1–1.3, and Proposition 2 for the converse with three limits.
+
+- **Correction found by writing it down:** the methodology said the ranking is "a
+  permutation of the size order". Too strong, and contradicted by this repository's own
+  measurement — the recovered size-to-priority table is monotone in only 57–63% of
+  instants. The score is a **function** of size, not an **increasing** function of it
+  (Corollary 1.3). This is precisely why equivalence to a size sort must be established
+  statistically by TOST rather than deduced.
+
+### New: the claim attacked four ways (Phase D4)
+
+| attack | violations | verdict |
+|---|---|---|
+| A1 learning-to-rank (`rank:pairwise`, `rank:ndcg`) | 0 | survives |
+| A2 monotone transforms (log1p, sigmoid) | 0 | survives |
+| A3 history window (5 lagged cluster states) | 0 | survives |
+| **A4 score at enqueue time, cached** | **20,482 / 37,741** | **breaks it** |
+
+**Scope limitation, now stated in every claim:** the degeneracy holds for a score computed
+**at the dispatch instant**. Caching a score computed at enqueue time scores different jobs
+against different cluster states, so the shared-state premise fails by construction. It
+does not rescue the approach — on LANL it is +11.7% mean wait and 27% worse bounded
+slowdown, and on both traces it is behind plain SJF on user estimates.
+
+### `[GAP]` — stated, not filled
+
+- **No modern GPU trace.** External validity still rests on two machines from the 1990s.
+  `reports/d3_modern_trace_gap.md` records what a candidate must supply, the obstacle per
+  candidate, the procedure for adding one, and the prediction. This is the largest
+  remaining weakness and `reports/submission_readiness.md` names it as the one real
+  blocker. It was documented rather than filled with a substitute.
+- **Cross-platform reproduction is unproven.** Every artefact was generated on Windows with
+  Python 3.14.3; the weekly Linux full-verify job has not yet reported.
+
+### Tests, pipeline, tooling
+
+- `run_all_experiments.sh` is now **24 steps** and remains the single entry point; the two
+  Phase D experiments are wired in as steps 12 and 13.
+- **399 tests** (135 at the start of v3.6), including `tests/test_golden_numbers.py`, which
+  pins every headline number to its committed artefact and **asserts rather than skips**
+  when a committed file is absent. Each round of repairs was mutation-tested: the defect
+  was reintroduced and the test had to go red before the fix was accepted. This was not
+  ceremony — the first audit round produced four "guard" tests that passed equally well
+  against the broken code.
+- `tools/verify_artifacts.py` declares six wall-clock columns across three files as
+  non-deterministic **by name**, so they are exempted explicitly rather than tolerated
+  silently. They must never be quoted as results.
+- `04_scheduler/simstats.py` now pairs observations by unit **label** rather than row
+  position, and raises on mismatched or duplicated labels. No published number moved: the
+  label sets were equal and duplicate-free, so the sorted sequences were already identical.
+- `make paper` and `make paper-check` build the manuscript reproducibly; `paper-check`
+  fails on any undefined reference or citation.
+
+
 ## v3.6 — September 2026 · Hostile-review hardening: integrity, reproducibility, and one retraction
 
 A full adversarial audit of every numeric claim in the repository. 910 claims were

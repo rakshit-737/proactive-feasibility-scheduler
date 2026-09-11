@@ -21,7 +21,7 @@
 ---
 
 > **Headline (v3.6).** Using a learned wait-time regressor to order a scheduling
-> queue is *structurally degenerate*. At any dispatch instant every queued job
+> queue **at the dispatch instant** is *structurally degenerate*. At any dispatch instant every queued job
 > sees the same cluster, so only the job's own features differ — and in the
 > standard cluster-state feature set every one of those is a deterministic
 > function of the job's requested size. The learned score is therefore a
@@ -34,6 +34,28 @@
 > **equivalent** to the full XGBoost pipeline (paired TOST p = 2.6e-16), an MLP
 > over the same features reproduces that sort *bit-identically*, and the
 > synthetic 7.9% gain over FCFS does not replicate on real traces.
+>
+> **The converse is now demonstrated, and it is not enough (Phase D).** Adding a
+> per-job attribute that is *not* a function of requested size given the state —
+> the user's runtime estimate, causal per-user history, queue id, user id — breaks
+> the degeneracy every time, on both traces: **0 violations → 6,194–10,718 (SDSC)
+> and 13,801–28,497 (LANL)** across 12 augmented variants. But **0 of those 12 beat
+> SJF on the user's own runtime estimate**; the best of them, LANL with all five
+> attributes, is **+1.48% slower** and TOST-*equivalent* to that one-line heuristic
+> (p = 0.0014). Non-degeneracy is **necessary, not sufficient**
+> (`05_results/degeneracy/non_degeneracy_sweep.csv`,
+> [`04_scheduler/non_degeneracy_sweep.py`](04_scheduler/non_degeneracy_sweep.py)).
+>
+> **Scope limit (Phase D).** Four adversarial attacks were run against the claim. A
+> different learning objective (XGBRanker pairwise/ndcg), monotone score transforms
+> and a 5-step lagged cluster-state history all leave **0 violations**. Scoring each
+> job **at enqueue time and caching** the score does not: 20,482 violations on SDSC
+> and 37,741 on LANL, because two co-queued jobs were then scored against *different*
+> cluster states. So the degeneracy claim is about a score computed **at the dispatch
+> instant**, and must not be stated for wait-time-model schedulers in general — but the
+> one non-degenerate variant found is also a worse policy (+11.7% mean wait on LANL),
+> still beaten by SJF on user estimates (`05_results/degeneracy/robustness_attacks.csv`,
+> [`04_scheduler/robustness_attacks.py`](04_scheduler/robustness_attacks.py)).
 >
 > See [`04_scheduler/ranking_degeneracy.py`](04_scheduler/ranking_degeneracy.py)
 > and [the manuscript](phases_22_30/phase_28_manuscript/manuscript.tex).
@@ -65,12 +87,20 @@ co-queued jobs only through its `−g` term, so it is also just a function of si
 The honest control is therefore not FIFO — it is *sorting by requested size*, which
 needs no dataset, no training, no inference, no SHAP explanation and no drift monitor.
 
+Two precisions, both from Phase D and both written up as **Proposition 1** (with its
+converse as Proposition 2) in [`METHODOLOGY.md`](METHODOLOGY.md). First, the ranking is a
+*function* of size, **not** necessarily the ascending-size order: the recovered
+size→priority table is monotone in only **57.1% (SDSC) / 56.9% (LANL) / 63.1%
+(synthetic)** of instants. Second, the premise is that the state is shared, which holds
+only when the score is computed **at the dispatch instant** — see the enqueue-caching
+attack above.
+
 ## Quick start
 ```bash
 pip install -r requirements.txt
 bash run_all_experiments.sh
 ```
-The pipeline bootstraps itself: step 0 of `run_all_experiments.sh` regenerates `02_data/improved_wait_dataset.csv` and trains `03_models/wait_model_v2.pkl` before any analysis runs, so a fresh checkout works end-to-end. The script is a single 20-step run that regenerates **every** committed result, and `python tools/verify_artifacts.py` (`--quick` / `--smoke`) re-checks the artefacts afterwards. `requirements.txt` includes every dependency the scripts import.
+The pipeline bootstraps itself: step 0 of `run_all_experiments.sh` regenerates `02_data/improved_wait_dataset.csv` and trains `03_models/wait_model_v2.pkl` before any analysis runs, so a fresh checkout works end-to-end. The script is a single 24-step run that regenerates **every** committed result — including the Phase D additions (step 12 `04_scheduler/non_degeneracy_sweep.py`, step 13 `04_scheduler/robustness_attacks.py`) and the three v3.6 additions: the split-protocol comparison (`03_models/evaluate_splits.py`), the equivalence-power analysis (`04_scheduler/tost_power.py`) and the censoring audit (`04_scheduler/censoring_analysis.py`) — and `python tools/verify_artifacts.py` (`--quick` / `--smoke`) re-checks the artefacts afterwards. `requirements.txt` includes every dependency the scripts import.
 
 Just the headline experiments:
 ```bash
@@ -78,14 +108,17 @@ cd 04_scheduler
 python ranking_degeneracy.py        # the degeneracy result (45,432 instants)
 python trace_driven_benchmark.py    # 12 policies x 2 real traces x 20 windows
 python multi_scheduler_benchmark.py # 14-scheduler synthetic study + TOST
+python non_degeneracy_sweep.py      # Phase D: 7 feature sets x 2 traces
+python robustness_attacks.py        # Phase D: four attacks on the claim
 ```
 
 ## Key features (v3.6)
 - **Ranking-degeneracy diagnostic** (since v3.4): instruments real dispatch decisions to test whether a learned wait-time score can distinguish co-queued jobs at all, and recovers the size→priority lookup table the model collapses to
 - **Trace-driven scheduler benchmark** (since v3.4): event-driven, second-exact replay of two real Parallel Workloads Archive traces through 12 policies, using the **real user runtime estimates the traces contain** instead of a simulated estimate model
+- **Non-degeneracy sweep and adversarial attacks (Phase D)**: 7 feature sets × 2 traces testing whether a genuine per-job attribute breaks the degeneracy (all five do) and whether that buys a better schedule (none does), plus four deliberate attacks on the claim, of which only enqueue-time score caching succeeds — and only by becoming a different, largely worse policy
 - **Equivalence testing** (since v3.4): paired TOST throughout, so "these two policies perform the same" is a positive finding rather than a failure to reject
 - **14-scheduler synthetic benchmark**: FCFS/first-fit, strict FIFO, SJF (oracle / f-model estimate), static priority, HRRN, **Smallest-first (the ML-free control)**, canonical EASY backfill (oracle + estimates), conservative backfill, preemptive SRPT, Proactive, NN, predicted-wait backfill hybrid — Holm-adjusted pairwise significance plus an estimate-quality sweep. The SJF-modal variant quoted below is not one of the 14 benchmark rows; it comes from that sweep (`05_results/schedulers/estimate_sensitivity_summary.csv`)
-- 30-phase research pipeline (simulation, ML, benchmarking, robustness, explainability, ROI, statistics, OOD, fairness/SLA, deployment)
+- 30-phase research pipeline (simulation, ML, benchmarking, robustness, explainability, statistics, OOD, fairness/SLA, deployment) — the ROI phase is **withdrawn** in v3.6, not caveated; see *Corrections in v3.6* below
 - Bounded-fairness wait-budget (Pareto-swept); uncertainty-aware scheduling study
 - Scaling analysis, online learning, concept drift adaptation
 - Reproducibility kit (shell script + Docker + requirements)
@@ -144,31 +177,96 @@ reveal it.
 
 <br>
 
-All figures come from a proper 20% holdout / 5-fold CV (model) and seeded paired benchmarks (scheduler). They are deliberately the honest numbers, not in-sample ones, and are fully reproducible via `bash run_all_experiments.sh`.
+Model figures come from a **run-wise** split — `GroupKFold(n_splits=5)` on `run_id`, so no simulation run appears on both sides of the split — and scheduler figures from seeded paired benchmarks. They are deliberately the honest numbers, not in-sample ones, and are fully reproducible via `bash run_all_experiments.sh`.
 
 | Metric | Value | Notes |
 |---|---|---|
-| Wait-time model quality | **R² ≈ 0.84, MAE ≈ 4.69** (20% holdout) | The 5-fold CV MAE is printed to the console by `03_models/train_improved_model.py` and written to no artefact, so it is not quoted here. Never quote in-sample numbers as model quality. |
+| Wait-time model quality | **R² 0.811 ± 0.021, MAE 4.90 ± 0.45** (run-wise, 5 folds) | **Corrected downward in v3.6.** The R² 0.837 / MAE 4.69 previously quoted here was a random *row* split over 2200 rows that are 20 simulation runs of 110 jobs; rows from one run share a cluster trajectory, so a random row split puts near-duplicates on both sides. The run-wise folds keep the training set at 1760 rows — the same size as that split — so the gap cannot be blamed on less data. Leave-one-run-out (20 folds) agrees at R² 0.793 ± 0.054, with per-fold R² spanning 0.690–0.874, which is why a single grouped hold-out would have been unquotable (`05_results/models/evaluation_splits.csv`). Never quote in-sample numbers as model quality. |
+| Wait-time model, **deployment order** | **R² 0.725, MAE 7.24** (chronological) | Train on each run's arrivals before its own 0.8 arrival-time quantile, test at or after it — the only split that matches how the model would actually be used. **Any deployment reading should quote this MAE, not 4.69: it is 54% more error than this repository used to advertise.** The model is still a real regressor and not a dressed-up mean — the best constant predictor scores R² −0.020 run-wise and −0.703 chronologically, and run-wise the model cuts constant-predictor MAE by ≈64% (4.90 vs 13.45) |
+| Feature ablation (v3.6) | **Only 3 of 12 single-feature drops are distinguishable from zero** | Each ablation re-fit over 20 leave-one-run-out folds, drops paired within fold, Student-t 95% interval: `job_gpu` 0.2051 [0.1565, 0.2538], `queue_length` 0.0217 [0.0081, 0.0353], `queue_pressure` 0.0158 [0.0051, 0.0264]. The other nine intervals span zero — which means *not distinguishable at this sample size*, **not** that the feature adds nothing; accepting a null from a failure to reject it is the error this project criticises elsewhere. The baseline falls with the protocol too: R² 0.837 (single fixed row split) → 0.793 [0.767, 0.820] leave-one-run-out. And a single-feature ablation cannot speak for a collinear pair: `total_free` and `avg_free_per_node` correlate at **1.000000 with infinite VIF** — in the synthetic generator one is the other divided by a constant node count, the same variable twice — and `fragmentation`/`variance_free` at 0.951 (VIF 66.8 / 34.1), so a near-zero drop there is arithmetic, not evidence (`05_results/models/feature_collinearity.csv`). `queue_pressure` surviving as one of only three real contributors is *consistent* with the degeneracy result, not in tension with it — v3.5 established that, given the cluster state, `queue_pressure` is itself a deterministic function of requested size |
 | Mean wait-time reduction | **7.9% ± 9.4%** vs FIFO | 40-run paired benchmark, paired t-test p = 2.0e-06, Student-t 95% CI [4.9%, 10.9%] (`04_scheduler/benchmark_statistical.py`); the percentile bootstrap over the same 40 runs, `phases_22_30/phase_22_stats/stats_bootstrap.py`, gives [4.9%, 10.7%] |
-| GPU utilisation | **Unchanged** (≈64%) | Improvement is from queue ordering only |
+| GPU utilisation | **Identical under both policies** — mean 0.641177 in **40 of 40 runs** | Improvement is from queue ordering only. Reordering a queue changes *when* jobs start, not how many GPU-hours the cluster consumes; the same 110 jobs complete either way (`05_results/benchmark_statistical_results.csv`) |
 | Tail latency (max wait) | **Worse: ~58 → 123 ts** | Trade-off: proactive reordering increases tail latency |
 | Fairness (Gini of waits) | **Worse: 0.53 → 0.79** | Mean-wait gain comes at a fairness cost; anti-starvation variant recovers to 0.69 |
 | Real-trace transfer, zero-shot | **R² ≈ 0** (both traces) | Synthetic-trained model does not transfer to LANL CM-5 or SDSC SP2 — quantified on real data (v3.2) |
 | Real-trace, **retrained** | **R²(log) 0.49** on SDSC SP2 | Chronological holdout, vs −0.69 median baseline; LANL CM-5 (interactive machine) only 0.10 — signal is machine-dependent |
 | Classical-baseline landscape (v3.3) | **Any runtime signal beats Proactive on mean wait** | SJF-oracle 12.34 / SJF-est 13.32 / SJF-modal 14.06 / SRPT 14.02 / HRRN 15.55 vs Proactive 15.95 ts — but at 2× worse tails (SJF max 146, Gini 0.79 vs HRRN 65 / 0.54) |
 | **Ranking degeneracy (v3.4)** | **0 counterexamples in 45,432 dispatch instants** (41,786 real + 3,646 synthetic) | Two equally-sized co-queued jobs never get different scores. 7/12 features vary across the queue in 0.0% of instants; a ~9-job queue gets only 2.3–3.1 distinct priority levels; the induced order equals plain arrival order in 18–27% of instants, and every queued job receives an *identical* score — the policy silently *is* FCFS — in 14–21% (`pct_all_scores_tied`) |
-| **ML-free control (v3.4)** | **`sort by requested size` ≡ XGBoost pipeline** | Synthetic: +0.80%, paired TOST p=2.6e-16, diff CI [+0.03,+0.23] ts vs ±1.59 margin. SDSC SP2: −0.05%, TOST p=1.8e-12. The MLP baseline reproduces the size sort **bit-identically** on all 20 runs |
+| **ML-free control (v3.4)** | **`sort by requested size` ≡ XGBoost pipeline** | Synthetic: +0.80%, paired TOST p=2.6e-16, diff CI [+0.03,+0.23] ts vs ±1.59 margin. SDSC SP2: −0.05%, TOST p=1.8e-12. The MLP baseline reproduces the size sort **bit-identically** on all 20 runs. On **LANL CM-5 the same comparison is INCONCLUSIVE**, not negative: the observed paired difference is 320.02 s against a 222.93 s margin, and the equivalence test has an achieved power of **0.47%** — a test with a 0.47% chance of certifying equivalence saying "not equivalent" is not evidence. Because the observed difference *exceeds* the margin, no number of windows can certify equivalence there at 10%; establishing a *difference* would need 29 windows (50 after Holm over the family of 11) and the trace supplies only 28 disjoint 7-day windows, so it is not settleable on LANL at all. The equivalence claim rests on SDSC, where achieved power is 1.000 and 3 of the 29 available windows would have sufficed (`05_results/trace_schedulers/tost_power.csv`) |
 | **Trace-driven benchmark (v3.4)** | **The synthetic gain does not replicate** | 20 paired 7-day windows/trace at load ≈0.70. Proactive vs FCFS: −20.4% on SDSC (p=0.042) but **−4.5%, p=0.48 on LANL**. SJF on *real* user estimates beats Proactive by 20.2% (SDSC, Holm p=0.009) and 15.3% (LANL) |
 | **Real estimate error (v3.4)** | **The f-model understates it badly** | Real: SDSC median 6.9× over-estimate, 0.1% under; LANL median 1.5× but **36.3% under-estimates** — which the over-estimate-only f-model cannot produce. Cost to EASY vs perfect estimates: +6.2% (SDSC) but **+74% (LANL, p=0.025)**, against "near-insensitive" under the f-model |
+| **Non-degeneracy sweep (Phase D)** | **All 5 per-job attributes break the degeneracy; none of the 12 variants beats SJF on user estimates** | One at a time and all together: requested time, causal per-user mean wait, causal per-user mean runtime, queue id, user id. Violations 0 → 6,194–10,718 (SDSC) and 13,801–28,497 (LANL); Kendall τ vs size 0.752 → 0.593–0.750 and 0.621 → 0.420–0.597; all-tied 14.41% → 6.31–9.48% and 20.73% → 6.01–13.48%; order = smallest-first 71.5% → 33.1–50.6% and 77.6% → 32.0–56.0%. The SDSC TOST equivalence to `SMALLEST_FIRST` (p = 1.8e-12) **breaks** in every augmented arm; on LANL the baseline was never certified equivalent (sweep p = 0.687), so there what breaks is the degeneracy, not an equivalence. Utility, paired over the same 20 windows: **0 of 12 beat `SJF_USEREST`**, best case LANL +all at **+1.48%** and TOST-equivalent to it (p = 0.0014). Non-degeneracy is necessary, not sufficient (`05_results/degeneracy/non_degeneracy_sweep.csv`, `non_degeneracy_utility.csv`) |
+| **Robustness attacks (Phase D)** | **3 of 4 attacks fail; enqueue-time caching succeeds and narrows the scope** | A1 different objective (XGBRanker `rank:pairwise` / `rank:ndcg`, same 8 features): **0 violations** both traces, τ 0.470–0.815. A2 monotone transforms (log1p, sigmoid): 0 violations, rows numerically identical to baseline in every order-derived column. A3 5-step lagged cluster state: 0 violations — a lagged state is still *shared*. A4 score computed at enqueue and cached: **20,482 (SDSC) / 37,741 (LANL) violations**, all-tied 0.058% / 0.209%, distinct levels 8.81 / 8.02 — **BROKEN**, because the jobs were scored against different states. It does not rescue the approach: LANL mean wait 2229.3 → 2491.1 s (**+11.7%**), bounded slowdown 6.13 → 7.78; SDSC 8701.7 → 8559.0 s (−1.6% on the mean only) while median wait rises 76.0 → 105.4 s and bounded slowdown 18.49 → 21.56. `SJF_USEREST` is 1889.2 s (LANL) and 6946.3 s (SDSC), ahead of both (`05_results/degeneracy/robustness_attacks.csv`, `robustness_attack_utility.csv`) |
 | Backfill baseline (canonical EASY, v3.3) | **+11.8% mean wait vs FCFS/first-fit, −26% vs strict FIFO** | Reservation price re-measured after implementing the full two-condition EASY rule (v3.2's stricter variant overstated it at ~45%); Gini 0.45, max 52 ts |
 | Fairness budget B | **B=60: +7.4% wait gain, max 81 ts** | Tunable Pareto dial between pure proactive (+13.1%, max 138) and FIFO (v3.2) |
-| OOD robustness | **Mean R² < 0** across 72 shifted scenarios | Retrain per regime; interval-width guards tested and **not** reliable (68% coverage) — use the drift trigger |
+| OOD robustness | **Mean R² < 0** (−0.31) across 72 shifted scenarios | Retrain per regime; interval-width guards tested and **not** reliable (68% coverage) — use the drift trigger. The failure **taxonomy** was rebuilt in v3.6 because the old one labelled all 72 scenarios `DISTRIBUTION_MISMATCH` (see *Corrections in v3.6*); severity is now standardised *within* this grid, so `LOW_RISK` means "least severe of 72 shifted regimes" and never "safe" — none of these regimes is good |
 
 </details>
 
+### Corrections in v3.6
+
+v3.6 re-ran the methodology around the central result. Most of what it found **weakens a number**,
+which is why it is on the front page rather than buried in a changelog. None of it touches the
+degeneracy result: that is a statement about the *functional form* of the score — at a fixed
+dispatch instant every queued job sees the same cluster state, so the score is a function of
+requested size alone — and it holds whatever the model's accuracy turns out to be.
+
+- **The model evaluation was optimistic.** The published R² 0.837 / MAE 4.69 came from a random
+  *row* split over what are really 20 simulation runs of 110 jobs. The headline is now the
+  **run-wise R² 0.811 ± 0.021 / MAE 4.90 ± 0.45**, the only split that answers whether the model
+  works on a cluster trajectory it has not seen, and deployment claims quote the **chronological
+  MAE 7.24**.
+- **The ROI study is withdrawn — deleted, not caveated.** It converted a wait-time percentage into
+  GPU-hours saved and priced them. But this project's own 40-run benchmark records
+  `baseline_util == proactive_util` in **40 of 40 runs** (mean 0.641177, identical to six decimal
+  places), with the same 110 jobs completing under both policies: the quantity being monetised was
+  measured at zero. That is a category error rather than an uncertain assumption — widening the
+  error bars on a number whose true value is zero still reports a saving. `05_results/roi_analysis.py`,
+  `05_results/roi/`, the pipeline step and the dashboard panel are gone. **The measured 7.9%
+  wait-time reduction itself stands**; what is withdrawn is the claim that it converts into money.
+- **SHAP is now computed on held-out data, and the conclusion survives.** The explanations used to
+  cover 400 rows drawn from the *full* dataset with the full dataset as background — roughly 320 of
+  them were in the model fit. They now come only from the 440-row held-out split, with a background
+  from that split: `rows_from_training = 0`, verified by a sha256 over the actual explained row
+  indices rather than by self-report. The ordering is essentially unchanged: `job_gpu` still
+  dominates at mean |SHAP| **7.3393** — 35.4% of all attribution mass and 76.2% of the mass carried
+  by the four job-dependent features — and the only rank movement is a 7/8 swap between
+  `running_jobs` and `variance_free`, which differed by 0.0003. That almost nothing changed is the
+  point (`05_results/shap/shap_provenance.csv`).
+- **The LANL equivalence row is inconclusive, and cannot be settled on that trace** — not
+  "underpowered pending more data". Detail in the ML-free control row above.
+- **The censoring bias runs the *other* way, and is confined to one scenario.** Four of the five
+  scenarios start every job under every policy: 24 of 30 pair-rows have a selection gap of exactly
+  0.0 and there is nothing to correct. All censoring sits in `arr2.0_nodes4`, and there all six
+  non-zero gaps are **negative** (−0.38 to −3.25 pp) — the common-set improvement is *larger* than
+  the published one, so the published statistic understated the learned policies by up to 3.3 pp.
+  Nothing disappears on the common set. The selection effect is real, but it penalised the learned
+  policies rather than flattering them. It is also only a partial adjudication: for FIFO vs
+  PROACTIVE the common set covers 91.9 jobs (means over 10 runs) while 21.8 start only under FIFO
+  and 39.4 only under PROACTIVE — a two-way exchange, described but not adjudicated
+  (`05_results/uncertainty/censoring_analysis.csv`).
+- **The OOD failure taxonomy was a constant, and is now a ranking.** Every one of the 72 scenarios
+  used to be labelled `DISTRIBUTION_MISMATCH` — zero entropy. The classifier tested `mape >= 35.0`
+  ahead of most branches and the minimum MAPE over the grid is 54.01, so that gate fired 72 times
+  out of 72 and seven of the eight categories were unreachable dead code. It is now a continuous
+  severity score standardised across the grid, four data-derived quantile bands (18 scenarios each)
+  and a dominant-axis label: `failure_mode` spans five values (COMPLETION_DOMINATED 22,
+  POLICY_DOMINATED 21, FIT_DOMINATED 14, NO_DOMINANT_AXIS 8, CALIBRATION_DOMINATED 7) and
+  `risk_level` three (MEDIUM 37, HIGH 24, LOW 11). The simulation, the scenarios and the seeds are
+  unchanged — only the classification of the results. Any earlier sentence about "the OOD failure
+  taxonomy" was describing a column that said the same thing 72 times.
+- **The ablation now has intervals, and two of the features are the same variable twice.** Detail in
+  the feature-ablation row above.
+
+Two limits worth stating with the power analysis: a power computed from an observed effect is
+post-hoc and is an estimate, and the supply of disjoint windows is a property of the trace rather
+than a budget that can be raised.
+
 **Honest summary (v3.6).** The v3.3 study established that any runtime signal beats the proactive scheduler on mean wait, leaving it a claimed niche in the *zero-runtime-information* regime. v3.4 removes that niche. The learned score cannot distinguish two co-queued jobs by anything except requested size — this is a property of the feature set, provable by construction and confirmed with zero counterexamples over 45,432 dispatch decisions (41,786 replayed from real traces, 3,646 synthetic) — so the policy is a per-instant lookup table from size to priority. An ML-free size sort is statistically equivalent to it, an MLP over the same features *is* that sort, and on real traces its advantage over plain FCFS is machine-dependent and insignificant on LANL CM-5. The measured improvement was evidence about size-based ordering, not about learning.
 
-The constructive takeaways: (1) the **non-degeneracy condition** — a wait-time feature set can only produce a meaningful ranking if it contains a per-job attribute that is *not* a function of size given the state (a runtime estimate, user history, partition identity, dependency structure); (2) report the **ML-free control the feature set implies**, not FIFO; (3) use **equivalence tests** — with difference tests alone, the Holm-adjusted p=0.17 size-sort comparison reads as "no significant difference" and gets dropped instead of being recognised as the finding. See `RESULTS.md`, the [manuscript](phases_22_30/phase_28_manuscript/manuscript.tex), and `docs/explanation.html`.
+Phase D sharpens this in both directions. It **demonstrates** the converse the paper previously only asserted — every one of five per-job attributes that is not a function of size given the state breaks the degeneracy, on both traces — and then shows the demonstration is not a rescue: **none of the 12 augmented variants beats SJF on the user's own runtime estimate**, and the best is merely equivalent to it. It also **narrows the claim**: scoring at enqueue time and caching the score is measurably non-degenerate, so the result is about scores computed at the dispatch instant, not about wait-time-model schedulers in general — though that variant is itself a worse policy. External validity remains limited to the two 1990s traces; no modern GPU-cluster trace was added, and `reports/d3_modern_trace_gap.md` records why and what a candidate must supply.
+
+The constructive takeaways: (1) the **non-degeneracy condition** — a wait-time feature set can only produce a meaningful ranking if it contains a per-job attribute that is *not* a function of size given the state (a runtime estimate, user history, partition identity, dependency structure) — and Phase D shows that condition is **necessary but not sufficient**: satisfying it breaks the degeneracy without buying a better schedule; (2) report the **ML-free control the feature set implies**, not FIFO; (3) use **equivalence tests** — with difference tests alone, the Holm-adjusted p=0.17 size-sort comparison reads as "no significant difference" and gets dropped instead of being recognised as the finding. See `RESULTS.md`, the [manuscript](phases_22_30/phase_28_manuscript/manuscript.tex), and `docs/explanation.html`.
 
 ## Repository map
 
@@ -182,7 +280,7 @@ The constructive takeaways: (1) the **non-degeneracy condition** — a wait-time
 07_archive/      superseded v1 scripts, kept for provenance
 phases_22_30/    the later research phases + the LaTeX manuscript
 docs/            self-contained HTML documentation (GitHub Pages)
-vizstyle.py      shared figure palette + helpers, so all 43 figures read as one system
+vizstyle.py      shared figure palette + helpers, so every figure reads as one system
 ```
 
 **Where to look first**
@@ -190,6 +288,8 @@ vizstyle.py      shared figure palette + helpers, so all 43 figures read as one 
 | Question | File |
 |---|---|
 | The central result | [`04_scheduler/ranking_degeneracy.py`](04_scheduler/ranking_degeneracy.py) |
+| Does a genuine per-job feature break it? | [`04_scheduler/non_degeneracy_sweep.py`](04_scheduler/non_degeneracy_sweep.py) |
+| Four attempts to break the claim | [`04_scheduler/robustness_attacks.py`](04_scheduler/robustness_attacks.py) |
 | The ML-free control it is tested against | [`04_scheduler/size_scheduler.py`](04_scheduler/size_scheduler.py) |
 | Real-trace evaluation | [`04_scheduler/trace_driven_benchmark.py`](04_scheduler/trace_driven_benchmark.py) |
 | Synthetic 14-policy benchmark | [`04_scheduler/multi_scheduler_benchmark.py`](04_scheduler/multi_scheduler_benchmark.py) |
@@ -197,8 +297,9 @@ vizstyle.py      shared figure palette + helpers, so all 43 figures read as one 
 | The write-up | [`phases_22_30/phase_28_manuscript/manuscript.tex`](phases_22_30/phase_28_manuscript/manuscript.tex) |
 
 ### Result folders
-`05_results/degeneracy` (v3.4 diagnostic) · `trace_schedulers` (v3.4 real traces) ·
-`schedulers` · `models` · `scaling` · `fairness` · `shap` · `traces` · `uncertainty` · `roi`
+`05_results/degeneracy` (v3.4 diagnostic + the Phase D non-degeneracy sweep and robustness attacks) · `trace_schedulers` (v3.4 real traces) ·
+`schedulers` · `models` · `scaling` · `fairness` · `shap` · `traces` · `uncertainty`
+(`roi` is gone — the ROI study is withdrawn, see *Corrections in v3.6*)
 
 ### Documentation
 - **Start here: [`docs/explanation.html`](docs/explanation.html)** — the whole project explained from scratch

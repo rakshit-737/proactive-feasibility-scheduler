@@ -8,10 +8,13 @@
 #   make smoke         python tools/verify_artifacts.py --smoke
 #   make test          python -m pytest
 #   make lint          python -m ruff check .
+#   make paper         pdflatex x2 in phases_22_30/phase_28_manuscript
+#   make paper-check   paper, then fail on any undefined reference
 
 PY ?= python
+PAPER_DIR ?= phases_22_30/phase_28_manuscript
 
-.PHONY: verify verify-quick smoke test lint
+.PHONY: verify verify-quick smoke test lint paper paper-check
 
 # Full reproduction: copies the tree to scratch, runs run_all_experiments.sh
 # there, diffs every artefact against the committed blob. ~9 minutes.
@@ -33,3 +36,32 @@ test:
 
 lint:
 	$(PY) -m ruff check .
+
+# Build the manuscript. Two passes, because the paper uses \ref/\label
+# cross-references and the first pass has not yet written the .aux they read;
+# a one-pass build silently emits "??" where every reference should be.
+#
+# -halt-on-error rather than the default interactive prompt: a build that stops
+# at the first error and returns non-zero is checkable, one that waits for input
+# hangs a CI runner.
+#
+# LaTeX build artefacts (.aux, .log, .out, .toc) are gitignored; the PDF is
+# tracked, because a reader who clones this repository should not need a TeX
+# installation to read the paper.
+paper:
+	cd $(PAPER_DIR) && pdflatex -interaction=nonstopmode -halt-on-error manuscript.tex
+	cd $(PAPER_DIR) && pdflatex -interaction=nonstopmode -halt-on-error manuscript.tex
+	@echo "built $(PAPER_DIR)/manuscript.pdf"
+
+# Fails if the paper still has unresolved cross-references or citations. Two
+# passes should leave none; if this fires, a \label was renamed or a \cite has
+# no matching \bibitem, and the PDF will contain a literal "??" or "[?]".
+paper-check: paper
+	@cd $(PAPER_DIR) && \
+	  if grep -qE "LaTeX Warning: (Reference|Citation) .* undefined" manuscript.log; then \
+	    echo "FAIL: undefined reference or citation:"; \
+	    grep -E "LaTeX Warning: (Reference|Citation) .* undefined" manuscript.log; \
+	    exit 1; \
+	  else \
+	    echo "OK: no undefined references or citations"; \
+	  fi

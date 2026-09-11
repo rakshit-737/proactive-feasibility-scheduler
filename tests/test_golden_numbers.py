@@ -530,3 +530,150 @@ def test_the_simulator_fidelity_gap_is_recorded():
     assert means.loc['sdsc', 'recorded_mean_wait_min'] == pytest.approx(630.92, rel=1e-4)
     assert means.loc['lanl', 'sim_fcfs_mean_wait_min'] == pytest.approx(38.82, rel=1e-3)
     assert means.loc['lanl', 'recorded_mean_wait_min'] == pytest.approx(33.25, rel=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# 8. Phase D: the non-degeneracy condition, demonstrated
+#
+# Phase D turned a STATED condition into a measured one. These pins guard the
+# shape of that result, not merely its values: the baseline arm must keep
+# reproducing the published diagnostic (otherwise the parallel experiment is not
+# measuring the same thing), every augmented arm must keep breaking the
+# degeneracy, and no augmented arm may quietly start beating the heuristic it
+# loses to -- because "necessary but not sufficient" is the finding.
+# ---------------------------------------------------------------------------
+
+DEGEN_BASELINE = {
+    'sdsc': dict(instants=11843, tau=0.7518832993306538, tied=14.413577640800472),
+    'lanl': dict(instants=29943, tau=0.6206617494336178, tied=20.72938583308286),
+}
+
+
+def test_the_sweep_baseline_reproduces_the_published_diagnostic():
+    """The sweep is only readable if its control agrees with the published run.
+
+    If these drift apart, the sweep is instrumenting something other than the
+    published policy and every augmented row becomes uninterpretable.
+    """
+    sweep = read('05_results/degeneracy/non_degeneracy_sweep.csv')
+    published = read('05_results/degeneracy/ranking_degeneracy.csv')
+    pub = {'sdsc': 'SDSC SP2 (1998) (8 features)', 'lanl': 'LANL CM-5 (1994) (8 features)'}
+    for trace, expected in DEGEN_BASELINE.items():
+        row = sweep[(sweep['trace'] == trace) & (sweep['feature_set'] == 'baseline')]
+        assert len(row) == 1, trace
+        row = row.iloc[0]
+        assert int(row['equal_size_diff_pred_violations']) == 0, trace
+        assert int(row['ranking_instants']) == expected['instants'], trace
+        assert row['kendall_tau_vs_size_mean'] == pytest.approx(expected['tau'], rel=REL)
+        assert row['pct_all_scores_tied'] == pytest.approx(expected['tied'], rel=REL)
+        # ... and identical to the published diagnostic, not merely close to a literal
+        pub_row = published[published['setting'] == pub[trace]].iloc[0]
+        assert int(row['ranking_instants']) == int(pub_row['ranking_instants']), trace
+        assert row['kendall_tau_vs_size_mean'] == pytest.approx(
+            pub_row['kendall_tau_vs_size_mean'], rel=REL), trace
+        assert row['pct_all_scores_tied'] == pytest.approx(
+            pub_row['pct_all_scores_tied'], rel=REL), trace
+
+
+def test_every_genuine_per_job_feature_breaks_the_degeneracy():
+    """Proposition 2, measured. Five attributes that do not factor through size
+    given the state; all twelve augmented arms must produce counterexamples."""
+    sweep = read('05_results/degeneracy/non_degeneracy_sweep.csv')
+    assert len(sweep) == 14, '7 feature sets x 2 traces'
+    assert set(sweep['n_windows']) == {20}, 'the published protocol, not a smoke run'
+    aug = sweep[sweep['feature_set'] != 'baseline']
+    assert len(aug) == 12
+    assert (aug['equal_size_diff_pred_violations'] > 0).all(), (
+        'an augmented feature set stopped producing counterexamples: either the extra '
+        'column is no longer reaching the model, or it is no longer a genuine per-job '
+        'attribute')
+    for trace in ('sdsc', 'lanl'):
+        base = sweep[(sweep['trace'] == trace) & (sweep['feature_set'] == 'baseline')].iloc[0]
+        arms = aug[aug['trace'] == trace]
+        # every predicted direction, as a direction rather than a literal
+        assert (arms['kendall_tau_vs_size_mean'] < base['kendall_tau_vs_size_mean']).all()
+        assert (arms['pct_all_scores_tied'] < base['pct_all_scores_tied']).all()
+        assert (arms['mean_distinct_predictions'] > base['mean_distinct_predictions']).all()
+        assert (arms['pct_order_identical_to_size'] < base['pct_order_identical_to_size']).all()
+
+
+def test_breaking_the_degeneracy_does_not_beat_the_heuristic():
+    """THE finding: necessary, not sufficient.
+
+    If a future change makes one of these variants genuinely win, this test must
+    fail so the claim is restated deliberately rather than drifting.
+    """
+    util = read('05_results/degeneracy/non_degeneracy_utility.csv')
+    assert len(util) == 14
+    assert not util['beats_sjf_userest'].any(), (
+        'an augmented variant now beats SJF on user estimates -- the "necessary but '
+        'not sufficient" claim needs restating')
+    assert (util['pct_vs_sjf_userest'] > 0).all(), 'every variant is slower in the paired mean'
+    best = util.loc[util['pct_vs_sjf_userest'].idxmin()]
+    assert best['trace'] == 'lanl' and best['feature_set'] == '+all'
+    assert best['pct_vs_sjf_userest'] == pytest.approx(1.4779942341373555, rel=REL)
+    assert bool(best['tost_equivalent_to_sjf']) is True, (
+        'the best case is a statistical TIE with the heuristic, which is the point')
+
+
+# ---------------------------------------------------------------------------
+# 9. Phase D: robustness of the claim under attack
+# ---------------------------------------------------------------------------
+
+def test_three_attacks_fail_and_only_enqueue_caching_succeeds():
+    """The scope of the claim, pinned.
+
+    A1 (learning-to-rank), A2 (monotone transform) and A3 (history window) must
+    keep failing: the degeneracy is a property of the INPUTS, not the loss, and a
+    lagged cluster state is still shared by every co-queued job. A4 must keep
+    succeeding: it is the documented scope limitation, and a paper that stopped
+    reporting it would be overclaiming.
+    """
+    att = read('05_results/degeneracy/robustness_attacks.csv')
+    assert len(att) == 14
+    assert not att['partial'].any(), 'full protocol, not a smoke run'
+    assert set(att['windows']) == {20}
+    for trace in ('sdsc', 'lanl'):
+        rows = att[att['trace'] == trace]
+        survive = rows[rows['attack_id'].isin(['A0', 'A1', 'A2', 'A3'])]
+        assert (survive['violations'] == 0).all(), trace
+        assert (survive['verdict'] == 'NOT BROKEN').all(), trace
+        broke = rows[rows['attack_id'] == 'A4']
+        assert len(broke) == 1 and int(broke.iloc[0]['violations']) > 0, trace
+        assert broke.iloc[0]['verdict'] == 'BROKEN', trace
+    a4 = att[att['attack_id'] == 'A4'].set_index('trace')
+    assert int(a4.loc['sdsc', 'violations']) == 20482
+    assert int(a4.loc['lanl', 'violations']) == 37741
+
+
+def test_the_monotone_attack_is_numerically_identical_to_the_baseline():
+    """A2 must fail BY CONSTRUCTION -- a strictly monotone map cannot reorder.
+    If these rows ever diverge, the instrument is broken, not the theory."""
+    att = read('05_results/degeneracy/robustness_attacks.csv')
+    for trace in ('sdsc', 'lanl'):
+        base = att[(att['trace'] == trace) & (att['attack_id'] == 'A0')].iloc[0]
+        for _, row in att[(att['trace'] == trace) & (att['attack_id'] == 'A2')].iterrows():
+            for col in ('ranking_instants', 'violations'):
+                assert int(row[col]) == int(base[col]), (trace, col)
+            for col in ('mean_kendall_tau_vs_size', 'pct_all_scores_tied',
+                        'mean_distinct_levels', 'pct_order_identical_to_size'):
+                assert row[col] == pytest.approx(base[col], rel=REL), (trace, col)
+
+
+def test_the_one_successful_attack_does_not_schedule_better():
+    """Breaking the degeneracy is not the same as scheduling well. On LANL the
+    enqueue-cached policy is worse on mean wait AND bounded slowdown; on SDSC its
+    small mean-wait edge is contradicted by median wait and bounded slowdown. Both
+    traces put it behind an ML-free heuristic."""
+    util = read('05_results/degeneracy/robustness_attack_utility.csv')
+    by = util.set_index(['trace', 'scheduler'])
+    for trace in ('sdsc', 'lanl'):
+        cached = by.loc[(trace, 'PROACTIVE_ENQUEUE_CACHED')]
+        proactive = by.loc[(trace, 'PROACTIVE')]
+        sjf = by.loc[(trace, 'SJF_USEREST')]
+        assert sjf['mean_wait'] < cached['mean_wait'], (
+            'the heuristic no longer beats the non-degenerate variant on ' + trace)
+        assert cached['mean_bounded_slowdown'] > proactive['mean_bounded_slowdown'], (
+            'enqueue-caching is no longer worse on bounded slowdown on ' + trace)
+    assert by.loc[('lanl', 'PROACTIVE_ENQUEUE_CACHED'), 'mean_wait'] > \
+        by.loc[('lanl', 'PROACTIVE'), 'mean_wait'], 'LANL: worse on mean wait too'
