@@ -15,7 +15,9 @@ The central v3.4 experiment tests whether the wait-time model can influence queu
 state, so only per-job features can differ — and in this feature set each of those
 (`can_fit_now`, `gpu_fit_ratio`, `node_availability`, `queue_pressure`) is a
 deterministic function of the requested size given the state. The predicted score is
-therefore `g_S(size)`, and the ranking is a permutation of the size order.
+therefore `g_S(size)`, so the ranking is a function of size alone: it can order
+size classes but cannot distinguish two jobs inside one. It is NOT necessarily the
+ascending-size order — see Proposition 1 and the note below it.
 
 `04_scheduler/ranking_degeneracy.py` instruments real dispatch decisions through a
 `RANK_OBSERVER` hook in both benchmarks (no reimplementation of the simulators) and
@@ -32,6 +34,90 @@ converse, so `pct_order_identical_to_arrival` only
 arrival-order figure was reported as if it were the all-tied one. The matching
 control policy is `04_scheduler/size_scheduler.py` (`SMALLEST` / `SMALLEST_FIRST`):
 sort by requested size, no model.
+
+## The degeneracy, stated formally
+
+The argument above is correct but informal, and one of its informal phrasings is
+slightly wrong. This section states it precisely, because the imprecision matters for
+what the paper may claim.
+
+**Setup.** Fix a dispatch instant *t*. Let *S* denote the cluster state at *t* —
+free GPUs per node, the running set, the queue contents, and any quantity derived
+from them. Let the queue be *Q* = {*j*₁ … *j*ₙ}, and write *g*(*j*) for the
+requested size of job *j*. A feature map assigns to each queued job a vector
+
+&nbsp;&nbsp;&nbsp;&nbsp;φ(*j*, *S*) = ( ψ(*j*, *S*), χ(*S*) ),
+
+where χ(*S*) collects the features that depend on the cluster alone and ψ the ones
+that depend on the job. A score function *f* induces the score *s*(*j*) =
+*f*(φ(*j*, *S*)), and the dispatcher ranks *Q* by *s* with a fixed tie-break.
+
+**Proposition 1 (ranking degeneracy).** Suppose every per-job feature factors
+through the requested size given the state — that is, there is a map ψ̃ with
+ψ(*j*, *S*) = ψ̃(*g*(*j*), *S*) for every *j* ∈ *Q*. Then there exists
+*h*_*S* : sizes → ℝ with *s*(*j*) = *h*_*S*(*g*(*j*)) for every *j* ∈ *Q*.
+
+*Proof.* χ(*S*) does not depend on *j*, so at the fixed instant *t* it is a
+constant. Define *h*_*S*(*u*) := *f*(ψ̃(*u*, *S*), χ(*S*)). Then for any *j* ∈ *Q*,
+*s*(*j*) = *f*(ψ̃(*g*(*j*), *S*), χ(*S*)) = *h*_*S*(*g*(*j*)). ∎
+
+**Corollary 1.1 (no cluster-only feature can reorder anything).** Every feature in
+χ enters *h*_*S* as a constant argument at a fixed instant. It therefore cannot
+separate two queued jobs, whatever *f* is. This needs no additivity or monotonicity
+assumption on *f* — the feature is simply held fixed across the comparison. In the
+12-feature synthetic set, seven features are of this kind, and they are measured to
+vary across a queue in 0.0% of instants.
+
+**Corollary 1.2 (equal size implies equal score).** If *g*(*i*) = *g*(*j*) then
+*s*(*i*) = *s*(*j*). This is the falsifiable form of the proposition, and it is what
+`04_scheduler/ranking_degeneracy.py` counts: **zero counterexamples over 45,432
+dispatch instants**.
+
+**Corollary 1.3 (the ranking's resolution is bounded by the size alphabet).** The
+number of distinct scores at an instant is at most |{ *g*(*j*) : *j* ∈ *Q* }|. The
+induced order is therefore *measurable with respect to the partition of the queue
+into size classes*: the policy can order size classes, and can do nothing whatsoever
+within one. Measured: a queue of ~8.5–10.2 jobs receives 2.28–3.09 distinct priority
+levels, and **every** queued job receives an identical score in 14.4–20.7% of
+instants, in which the policy is exactly FCFS.
+
+### What the proposition does *not* say
+
+The paper has said in places that the ranking is "a permutation of the size order".
+That is too strong, and the repository's own measurements contradict it: the
+recovered size→priority table is monotone in only 57–63% of instants. Proposition 1
+says the score is a *function of size*, not that it is an *increasing* function of
+size. *h*_*S* may order the size classes in any way at all; it simply may not
+distinguish jobs within one. The honest statement is the one in Corollary 1.3.
+
+This distinction is why the equivalence to a size sort is established
+*statistically*, by TOST against `SMALLEST_FIRST`, rather than deduced. Degeneracy
+is a structural fact; that the resulting policy performs like ascending-size order
+is a separate empirical claim.
+
+### The converse, and its limits
+
+**Proposition 2 (non-degeneracy condition).** If some per-job feature does *not*
+factor through (*g*, *S*) — if ψ(*i*, *S*) ≠ ψ(*j*, *S*) is possible for two jobs
+with *g*(*i*) = *g*(*j*) — then no such *h*_*S* need exist, and Corollary 1.2 can
+fail. A feature set can produce a ranking finer than the size partition only if it
+contains such an attribute.
+
+Three limits on that converse, each of which the project either measures or must
+state as a caveat:
+
+1. **Necessary, not sufficient.** Breaking the degeneracy lets the model express a
+   finer ranking; it does not make that ranking *good*. `PROACTIVE_EST` carries the
+   user's runtime estimate, is non-degenerate by Proposition 2, and still loses to
+   plain SJF on both traces.
+2. **The attribute must be informative, not merely distinct.** Any per-job nonce
+   would break Corollary 1.2 while carrying no information about wait.
+3. **The shared-state premise is a modelling choice, not a law.** Proposition 1
+   assumes every queued job is scored against the *same* *S*. A policy that scores a
+   job when it *enters* the queue and caches the result violates that premise by
+   construction, and its ranking need not be a function of size. Whether such a
+   policy schedules *better* is an empirical question, and staleness is a cost as
+   well as a source of variation.
 
 ## Phase C: evaluation split protocol
 "How accurate is the model?" has no answer until the split is named, so the
