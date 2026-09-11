@@ -106,6 +106,14 @@ decimal places. This is why the ROI study was deleted rather than caveated.
 > Severity is standardised *within* a grid of 72 shifted regimes, so the least-severe band
 > means "least severe among these", never "safe". Mean R² across the grid is negative.
 
+**The dispatch-instant count.**
+> 45,432 dispatch instants on the reference platform; 45,268 on a Linux runner;
+> **zero violations on both**. The count is platform-dependent and the result is not.
+> XGBoost's histogram build reduces in parallel, so the fitted model depends on thread
+> count and library build, and the model drives dispatch decisions — so a different
+> machine visits slightly different instants. Never write the count in a form that
+> implies it is machine-independent. See `reports/cross_platform_reproduction.md`.
+
 **External validity.**
 > Established on two real machines, both from the 1990s, plus a synthetic generator. The
 > argument is structural and predicts the same outcome on modern GPU clusters, but that
@@ -187,5 +195,10 @@ deleted as frozen v3.2 snapshots that never mentioned the degeneracy result.
    scenario of five, and there it *penalised* the learned policies by up to 3.3 points. The
    common set adjudicates ~92 shared jobs; ~61 exchanged jobs are described, not
    adjudicated.
-3. **Six columns in three CSVs are wall-clock and cannot reproduce anywhere.** They are
+3. **The digits are platform-scoped; the claims are not.** Every committed number was
+   generated on one machine, and a second platform reproduces the claims but not the
+   low decimals. `tools/verify_artifacts.py` checks the digits on the reference
+   platform; `tools/verify_claims.py` checks the claims anywhere. Quoting a number
+   without that scope is the subtlest available overstatement.
+4. **Six columns in three CSVs are wall-clock and cannot reproduce anywhere.** They are
    reported as `TIMING` exemptions by the verifier and must never be quoted as results.

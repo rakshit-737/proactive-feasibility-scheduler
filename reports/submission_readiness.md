@@ -1,8 +1,9 @@
 # Submission readiness
 
 A blunt go/no-go. Companion: `reports/honest_claims.md` (what may be said and how),
-`reports/phase_D_report.md` (what the science now covers), `CHANGELOG.md` (every
-retraction, old value to new value, with the reason).
+`reports/phase_D_report.md` (what the science now covers),
+`reports/cross_platform_reproduction.md` (what a second platform reproduced, and what
+it did not), `CHANGELOG.md` (every retraction, old value to new value, with the reason).
 
 ---
 
@@ -145,7 +146,8 @@ trace in parallel and hold (3) for the version that has one.
 
 ## Pre-submission checklist
 
-- [ ] `python tools/verify_artifacts.py` clean on a fresh clone
+- [ ] `python tools/verify_artifacts.py` clean on a fresh clone (reference platform)
+- [ ] `python tools/verify_claims.py` clean — this is the one that must pass anywhere
 - [ ] `python -m pytest` green; `ruff check .` clean
 - [ ] `make paper-check` — zero undefined references or citations
 - [ ] **Every citation verified against a real record.** No exceptions.
@@ -158,10 +160,14 @@ trace in parallel and hold (3) for the version that has one.
 ## `[GAP]`
 
 - **Venue deadlines are unverified.** Stated as cycle patterns only.
-- **Cross-platform reproduction is unproven.** Every artifact was generated on Windows
-  with Python 3.14.3. The scheduled full-verify CI job is the first Linux run and has not
-  yet reported. Float formatting or library-version differences could surface mismatches
-  that no local run would ever show.
+- **Cross-platform reproduction is disproven, and now handled.** The first Linux run
+  reproduced 45,268 dispatch instants against the reference platform's 45,432, with **zero
+  violations on both**. XGBoost's parallel histogram build makes the fitted model a
+  function of thread count and library build, and the model drives dispatch decisions, so
+  one perturbation reaches every downstream count. The claims are platform-independent; the
+  digits are not. `tools/verify_claims.py` adjudicates the claims on any platform and CI
+  runs it on every PR; `reports/cross_platform_reproduction.md` holds the evidence. Every
+  quoted count must carry the reference-platform scope.
 - **Page limit not checked** against any specific venue's format.
 - **No external reviewer has read the paper.** Everything in this file is self-assessment,
   which is exactly the kind of evidence the rest of this repository refuses to accept.
