@@ -109,7 +109,10 @@ state as a caveat:
 1. **Necessary, not sufficient.** Breaking the degeneracy lets the model express a
    finer ranking; it does not make that ranking *good*. `PROACTIVE_EST` carries the
    user's runtime estimate, is non-degenerate by Proposition 2, and still loses to
-   plain SJF on both traces.
+   plain SJF on both traces. This limit is no longer an argument from one policy:
+   the Phase D non-degeneracy sweep (below) breaks the degeneracy twelve separate
+   ways, and **0 of the 12 augmented variants beat `SJF_USEREST`** on mean wait
+   (`05_results/degeneracy/non_degeneracy_utility.csv`).
 2. **The attribute must be informative, not merely distinct.** Any per-job nonce
    would break Corollary 1.2 while carrying no information about wait.
 3. **The shared-state premise is a modelling choice, not a law.** Proposition 1
@@ -117,7 +120,130 @@ state as a caveat:
    job when it *enters* the queue and caches the result violates that premise by
    construction, and its ranking need not be a function of size. Whether such a
    policy schedules *better* is an empirical question, and staleness is a cost as
-   well as a source of variation.
+   well as a source of variation. This limit is now measured rather than asserted:
+   Phase D attack **A4** builds exactly that policy and records 20,482 (SDSC) /
+   37,741 (LANL) counterexamples -- the only one of the four attacks that breaks the
+   degeneracy -- while scheduling no better
+   (`05_results/degeneracy/robustness_attacks.csv`, `robustness_attack_utility.csv`).
+
+## Phase D: testing the converse, and attacking the claim
+
+Phase D adds two trace-only experiments that sit either side of Proposition 2: one
+asks what it takes to *break* the degeneracy on purpose, the other asks whether a
+reviewer can break it by accident. Both follow the published trace protocol
+(`trace_driven_benchmark`'s window count, warm-up, measured span and chronological
+train split, imported rather than restated) on the SDSC and LANL traces. **Neither
+experiment touches the synthetic study**, which is not attacked and is unchanged.
+
+### D1: the non-degeneracy sweep (`04_scheduler/non_degeneracy_sweep.py`, pipeline step 12)
+
+Artefacts: `05_results/degeneracy/non_degeneracy_sweep.csv` and
+`non_degeneracy_utility.csv`.
+
+**What is added.** Five per-job attributes are appended to the 8-feature trace
+vector, one at a time and then all together, giving a baseline arm plus six variants
+per trace:
+
+- `est_runtime` -- the user's requested time, SWF field 9.
+- `user_hist_wait` -- causal per-user mean wait.
+- `user_hist_runtime` -- causal per-user mean runtime.
+- `queue_id` -- queue identity, SWF field 15 (6 distinct queues on SDSC, 17 on LANL).
+- `user_id` -- user identity, SWF field 12 (437 distinct users on SDSC, 213 on LANL).
+
+SWF field 16 (partition) is **deliberately excluded, and the exclusion is stated
+rather than left silent**: it is constant at -1 on both committed traces, so it
+varies across no pair of co-queued jobs and could not break anything.
+
+**The causality guarantee, on which the experiment lives or dies.** A per-user
+history computed over the full trace would leak the future into every row and
+*manufacture* a fake non-degeneracy -- the feature would carry information no
+scheduler could ever have had. The implementation therefore sweeps submit order with
+a min-heap of pending completions and absorbs a job into its user's running means
+only once `submit + wait + runtime <= t`: **completed** earlier, not merely
+*submitted* earlier, because a wait is unobservable before the job starts and a
+runtime before it ends. Completion is taken from the recorded schedule, which is
+exactly what the real machine knew at *t*, and `tests/test_non_degeneracy.py` pins
+this down with a leakage test that goes red under a full-trace groupby. Cold start --
+a job whose user has no completed prior job -- is left as **NaN**, which XGBoost
+handles with a learned default branch direction, so that "unseen user" stays
+distinguishable from "user who happens to average the global mean"; the cold-start
+rate is 1.2% on SDSC and 0.2% on LANL.
+
+**A conservative encoding.** `user_id` and `queue_id` enter as raw SWF integer
+codes, not one-hot. This is the conservative choice and is reported as such: an
+integer code is an arbitrary but *consistent* partition of the categories, and a
+one-hot expansion could only separate co-queued jobs *further*. It would strengthen
+the non-degeneracy half of the result, never weaken it, so the violation counts
+below are a floor rather than a ceiling.
+
+**Instrumentation is imported, not re-implemented.** The published `Collector` is
+imported from `ranking_degeneracy.py`, so the sweep and the published measurement
+agree by construction on what a violation is, what counts as a tie, and how the
+induced order is formed. `build_feature_matrix` is **monkey-patched inside a context
+manager** that calls the original for columns 0-7 and appends only the extra
+columns, so the size column and the eight base features stay bit-identical and the
+published module is neither edited nor left altered. The baseline arm therefore
+reproduces the published diagnostic field for field, and that agreement is what
+validates every other row of the artefact. The utility comparison pairs by window
+**label** through `04_scheduler/simstats.py`.
+
+**Summary of what it measures** (full tables in
+`phases_22_30/COMPLETION_SUMMARY.md`): every one of the five attributes breaks
+Corollary 1.2, taking violations from 0 to 6,194-10,718 on SDSC and from 0 to
+13,801-28,497 on LANL, while **0 of the 12 augmented variants beat `SJF_USEREST`**.
+Two caveats travel with that. SDSC's TOST equivalence to `SMALLEST_FIRST` breaks in
+every augmented arm, as the converse predicts. On LANL the baseline was **never**
+equivalent to `SMALLEST_FIRST` (p_tost 0.687), so there the degeneracy breaks but no
+equivalence is lost -- the LANL arms must not be read as "the sweep destroyed an
+equivalence".
+
+### D4: four adversarial attacks (`04_scheduler/robustness_attacks.py`, pipeline step 13)
+
+Artefacts: `05_results/degeneracy/robustness_attacks.csv` and
+`robustness_attack_utility.csv`. Same imported `Collector`, same published window
+protocol, both traces. Models trained in this file use a new seed
+**`ROBUST_SEED = 90210`**, chosen to fall outside every protected seed family in the
+repository (`42+i`, `1000+run`, `20000+run`, `800+run`, `4000+id+nodes`, `5000+i`,
+`7000+run`, `SEED=42` for the traces, and `POWER_SEED=31337`, which the TOST power
+study had already taken), so no existing experiment can collide with it. A reference
+row `A0` reproduces the published measurement under this run's window count, so
+every attack is read against a like-for-like control. The verdict criterion is the
+counterexample counter `equal_size_diff_pred_violations`, not the supporting
+statistics: an attack can weaken the claim without falsifying it, so Kendall tau
+against size, the all-tied fraction and the mean number of distinct score levels are
+reported alongside.
+
+- **A1 -- a different learning objective.** `XGBRanker` with `rank:pairwise` and with
+  `rank:ndcg` over the identical 8 features. The argument is that degeneracy is a
+  property of the *inputs*, not of the loss. Two modelling choices have to be made,
+  because the wait data carries no native query groups and no native relevance
+  grades, and the artefact records both: query groups are **1-hour (3600 s)
+  submit-time buckets**, and relevance is **5 global quantile grades of log1p(wait)**
+  with the shortest wait most relevant. Scores are negated so that ascending order
+  remains dispatch order -- a monotone map, so it moves no counter but the sign of
+  tau. A different grouping would change tau; it cannot produce a violation.
+- **A2 -- monotone transforms** (`log1p`, `sigmoid`) applied to the *published*
+  model's own predictions, with nothing retrained. This fails by construction, since
+  a strictly monotone map is order-preserving and can neither reorder a queue nor
+  split a tie; it is run anyway because a non-zero count here would mean the
+  instrumentation is broken, not that the claim is.
+- **A3 -- a history window** of 5 lagged cluster states alongside the current one.
+  Lagged cluster state is still *shared* by every co-queued job at the dispatch
+  instant, so the argument predicts it lands in the same "identical for every queued
+  job" bucket as the contemporaneous block. Two approximations are documented rather
+  than hidden: a "tick" is one **training row** back when fitting and one **dispatch
+  instant** back when simulating, and the lag block repeats the oldest available
+  state until 5 instants have been seen.
+- **A4 -- score computed at enqueue time and cached.** If a job is scored when it
+  *enters* the queue and the score is then cached, two co-queued jobs were scored
+  against *different* cluster states, and the shared-state premise of Proposition 1
+  fails by construction. This is a **different policy**, not a different
+  implementation of the published one, so the utility question is asked separately
+  and written to its own CSV: staleness is a cost as well as a source of variation.
+
+A1, A2 and A3 record **zero** counterexamples on both traces; A4 breaks the
+degeneracy and schedules no better. The tables are in
+`phases_22_30/COMPLETION_SUMMARY.md`.
 
 ## Phase C: evaluation split protocol
 "How accurate is the model?" has no answer until the split is named, so the

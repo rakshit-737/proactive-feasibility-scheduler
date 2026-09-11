@@ -488,6 +488,157 @@ repository-wide.
 [4.88, 10.91] over 40 paired runs — remains a real, measured result. What is withdrawn is solely
 the claim that it converts into money.
 
+## Phase D: Testing the Converse, and Attacking the Claim (September 2026)
+
+Two experiments either side of Proposition 2 in `METHODOLOGY.md`, which carries their
+method in full. D1 asks what it takes to break the ranking degeneracy **on purpose**;
+D4 asks whether a reviewer can break it **by accident**. Every figure below was read
+out of the named artifact on disk, and the governing rule is unchanged: **weaken a
+claim freely, strengthen one never**.
+
+**Scope limitation, stated up front.** Both experiments are **trace-only** — SDSC SP2
+and LANL CM-5, under the published window protocol. The **synthetic setting was not
+attacked and is untouched**; nothing here is evidence about it either way.
+
+### D1. Breaking the degeneracy is easy — and buys nothing
+
+`04_scheduler/non_degeneracy_sweep.py` (pipeline step 12) →
+`05_results/degeneracy/non_degeneracy_sweep.csv`, `non_degeneracy_utility.csv`.
+
+Five per-job attributes are added to the 8-feature trace vector, one at a time and then
+all together: `est_runtime` (SWF field 9), causal per-user mean wait and mean runtime,
+`queue_id` (field 15), `user_id` (field 12). SWF field 16 (partition) is excluded and
+said to be excluded: it is constant at −1 on both traces. Per-user history is built
+causally — a job enters its user's running means only once it has **completed**, not
+merely been submitted — and cold start is NaN, not an imputed mean. `user_id` and
+`queue_id` enter as raw integer codes rather than one-hot, which is the conservative
+direction: one-hot could only separate co-queued jobs further.
+
+Degeneracy diagnostics (baseline arm reproduces the published measurement field for
+field, which is what validates the rest):
+
+| trace | arm | violations | τ vs size | distinct levels | all-tied % |
+|---|---|---:|---:|---:|---:|
+| SDSC | baseline | **0** | 0.752 | 3.09 | 14.41 |
+| SDSC | +est_runtime | 9,169 | 0.604 | 4.21 | 8.15 |
+| SDSC | +user_hist_wait | 8,895 | 0.664 | 4.04 | 7.91 |
+| SDSC | +user_hist_runtime | 9,857 | 0.705 | 4.34 | 7.04 |
+| SDSC | +queue_id | 6,194 | 0.750 | 3.58 | 9.48 |
+| SDSC | +user_id | 9,275 | 0.649 | 4.09 | 6.31 |
+| SDSC | +all | 10,718 | 0.593 | 4.55 | 6.86 |
+| LANL | baseline | **0** | 0.621 | 2.28 | 20.73 |
+| LANL | +est_runtime | 23,635 | 0.478 | 3.66 | 7.98 |
+| LANL | +user_hist_wait | 28,157 | 0.460 | 4.32 | 6.17 |
+| LANL | +user_hist_runtime | 26,707 | 0.499 | 3.87 | 6.28 |
+| LANL | +queue_id | 13,801 | 0.597 | 2.86 | 13.48 |
+| LANL | +user_id | 27,308 | 0.420 | 3.80 | 6.75 |
+| LANL | +all | 28,497 | 0.471 | 4.54 | 6.01 |
+
+Every attribute breaks Corollary 1.2. Violations go 0 → 6,194–10,718 (SDSC) and
+0 → 13,801–28,497 (LANL); τ against size falls from 0.752 to 0.593–0.750 (SDSC) and
+from 0.621 to 0.420–0.597 (LANL); distinct priority levels rise from 3.09 to 3.58–4.55
+(SDSC) and from 2.28 to 2.86–4.54 (LANL); the all-tied fraction falls from 14.41% to
+6.31–9.48% (SDSC) and from 20.73% to 6.01–13.48% (LANL).
+
+Utility against `SJF_USEREST`, paired by window label (positive % = slower):
+
+| trace | arm | vs SJF_USEREST | p_tost | equivalent to SJF | beats SJF |
+|---|---|---:|---:|---|---|
+| SDSC | baseline | +25.27% | 0.983 | no | **no** |
+| SDSC | +est_runtime | +7.94% | 0.269 | no | **no** |
+| SDSC | +user_hist_wait | +9.75% | 0.474 | no | **no** |
+| SDSC | +user_hist_runtime | +5.43% | 0.051 | no | **no** |
+| SDSC | +queue_id | +13.81% | 0.758 | no | **no** |
+| SDSC | +user_id | +13.78% | 0.835 | no | **no** |
+| SDSC | +all | +5.93% | 0.154 | no | **no** |
+| LANL | baseline | +18.00% | 0.728 | no | **no** |
+| LANL | +est_runtime | +17.48% | 0.699 | no | **no** |
+| LANL | +user_hist_wait | +15.68% | 0.664 | no | **no** |
+| LANL | +user_hist_runtime | +16.12% | 0.703 | no | **no** |
+| LANL | +queue_id | +6.96% | 0.226 | no | **no** |
+| LANL | +user_id | +16.23% | 0.729 | no | **no** |
+| LANL | +all | **+1.48%** | **0.0014** | **yes** | **no** |
+
+**0 of the 12 augmented variants beat `SJF_USEREST`.** The best of them, LANL +all, is
++1.48% *slower* and TOST-**equivalent** to SJF (p_tost 0.0014) — that is, the most
+elaborate feature set on either trace succeeds only in becoming indistinguishable from
+sorting by the user's own runtime estimate. Non-degeneracy is **necessary** for the
+model to rank anything at all; it is **not sufficient** for the model to be useful.
+
+**Two caveats that must travel with this table.** (i) On SDSC the baseline's TOST
+equivalence to `SMALLEST_FIRST` (p 1.78e-12) **breaks** in every augmented arm, exactly
+as the converse predicts. (ii) On LANL the baseline was **never** equivalent to
+`SMALLEST_FIRST` (p_tost 0.687), so on that trace the degeneracy breaks but **no
+equivalence is lost** — the LANL rows cannot be read as "the sweep destroyed an
+equivalence".
+
+### D4. Four adversarial attacks — three fail, one breaks it and schedules worse
+
+`04_scheduler/robustness_attacks.py` (pipeline step 13) →
+`05_results/degeneracy/robustness_attacks.csv`, `robustness_attack_utility.csv`.
+Full 20-window protocol, both traces, new seed **`ROBUST_SEED = 90210`** (outside every
+protected seed family; `31337` was already taken by the TOST power study). Row `A0` is a
+like-for-like reference, not an attack. The verdict criterion is the counterexample
+counter, not the supporting statistics.
+
+| id | attack | trace | violations | τ vs size | all-tied % | distinct levels | verdict |
+|---|---|---|---:|---:|---:|---:|---|
+| A0 | published pointwise regressor | SDSC | 0 | 0.752 | 14.41 | 3.09 | NOT BROKEN |
+| A1 | XGBRanker `rank:pairwise` | SDSC | 0 | 0.815 | 14.47 | 3.09 | NOT BROKEN |
+| A1 | XGBRanker `rank:ndcg` | SDSC | 0 | 0.695 | 14.29 | 3.10 | NOT BROKEN |
+| A2 | monotone transform `log1p` | SDSC | 0 | 0.752 | 14.41 | 3.09 | NOT BROKEN |
+| A2 | monotone transform `sigmoid` | SDSC | 0 | 0.752 | 14.41 | 3.09 | NOT BROKEN |
+| A3 | 5 lagged cluster states | SDSC | 0 | 0.818 | 13.67 | 3.09 | NOT BROKEN |
+| A4 | score cached at enqueue time | SDSC | **20,482** | 0.341 | 0.06 | 8.81 | **BROKEN** |
+| A0 | published pointwise regressor | LANL | 0 | 0.621 | 20.73 | 2.28 | NOT BROKEN |
+| A1 | XGBRanker `rank:pairwise` | LANL | 0 | 0.598 | 20.68 | 2.29 | NOT BROKEN |
+| A1 | XGBRanker `rank:ndcg` | LANL | 0 | 0.470 | 20.44 | 2.31 | NOT BROKEN |
+| A2 | monotone transform `log1p` | LANL | 0 | 0.621 | 20.73 | 2.28 | NOT BROKEN |
+| A2 | monotone transform `sigmoid` | LANL | 0 | 0.621 | 20.73 | 2.28 | NOT BROKEN |
+| A3 | 5 lagged cluster states | LANL | 0 | 0.614 | 20.58 | 2.27 | NOT BROKEN |
+| A4 | score cached at enqueue time | LANL | **37,741** | 0.497 | 0.21 | 8.02 | **BROKEN** |
+
+- **A1** changes the training objective, not the inputs, and produces **0 violations** on
+  both traces. Two modelling choices are recorded in the artifact because the wait data
+  has no native query groups or relevance grades: query groups are 1-hour submit-time
+  buckets and relevance is 5 global quantile grades of `log1p(wait)`. A different
+  grouping changes τ; it cannot produce a violation.
+- **A2** fails by construction — the A2 rows are numerically identical to the baseline,
+  which is the expected outcome for an order-preserving map and a check on the
+  instrumentation rather than on the claim.
+- **A3** adds 5 lagged cluster states: **0 violations**, because lagged cluster state is
+  still shared by every co-queued job. Documented approximation: a "tick" is one training
+  row back when fitting and one dispatch instant back when simulating, and the first 5
+  instants repeat the oldest available state.
+- **A4** scores each job at enqueue time and caches it, so two co-queued jobs are scored
+  against different cluster states. It **breaks** the degeneracy — and schedules no
+  better.
+
+A4 utility (`robustness_attack_utility.csv`, 20 windows per trace):
+
+| trace | scheduler | mean wait (s) | median wait (s) | bounded slowdown | vs PROACTIVE |
+|---|---|---:|---:|---:|---:|
+| LANL | PROACTIVE | 2229.32 | 0.00 | 6.13 | — |
+| LANL | PROACTIVE_ENQUEUE_CACHED | 2491.11 | 0.00 | 7.78 | **+11.74% worse** |
+| LANL | SJF_USEREST | 1889.18 | 0.00 | 4.51 | −15.26% |
+| SDSC | PROACTIVE | 8701.70 | 75.98 | 18.49 | — |
+| SDSC | PROACTIVE_ENQUEUE_CACHED | 8559.03 | 105.35 | 21.56 | −1.64% |
+| SDSC | SJF_USEREST | 6946.29 | 98.13 | 14.70 | −20.17% |
+
+On LANL the cached policy is **11.74% worse** on mean wait than `PROACTIVE` and ~27%
+worse on bounded slowdown (6.13 → 7.78). On SDSC its 1.64% mean-wait gain is not a clean
+win: median wait rises 76.0 → 105.4 s and bounded slowdown rises 18.49 → 21.56, both
+worse. `SJF_USEREST` beats both policies on both traces. Breaking the shared-state
+premise therefore buys non-degeneracy at the price of staleness, which is precisely the
+trade Proposition 2's third limit anticipated.
+
+**Net effect on the contribution: none, and that is the point.** The published claim
+survives every attack that keeps the premise (A1–A3, 0 counterexamples) and fails only
+under a policy that abandons it (A4) and then schedules worse. No claim in this
+repository is strengthened by Phase D.
+
+---
+
 ---
 
 ## Quality Gates
@@ -519,6 +670,14 @@ the claim that it converts into money.
 - [x] **Phase C6**: every ablation drop carries a 95% interval; the two exactly-collinear features
       are named; nine drops are reported as *not distinguishable from zero*, never as *zero*
 - [x] **Phase C7**: no ROI claim, dollar figure or percentage return remains in the study
+- [x] **Phase D1**: the converse of Proposition 2 is measured, not asserted — five per-job
+      attributes each break the degeneracy (violations 0 → 6,194–10,718 SDSC, 0 → 13,801–28,497
+      LANL) and **0 of 12 augmented variants beat `SJF_USEREST`**; the LANL baseline's lack of
+      `SMALLEST_FIRST` equivalence (p_tost 0.687) is carried as a caveat, not hidden
+- [x] **Phase D4**: the degeneracy claim survives three adversarial attacks with **zero**
+      counterexamples (objective, monotone transform, 5-state history) and breaks only under a
+      cached enqueue-time score, which schedules worse (LANL +11.74% mean wait vs PROACTIVE);
+      both experiments are trace-only and the synthetic setting is untouched
 
 ---
 
