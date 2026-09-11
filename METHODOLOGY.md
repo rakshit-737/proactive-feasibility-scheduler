@@ -71,7 +71,11 @@ vary across a queue in 0.0% of instants.
 **Corollary 1.2 (equal size implies equal score).** If *g*(*i*) = *g*(*j*) then
 *s*(*i*) = *s*(*j*). This is the falsifiable form of the proposition, and it is what
 `04_scheduler/ranking_degeneracy.py` counts: **zero counterexamples over 45,432
-dispatch instants**.
+dispatch instants** on the reference platform. The instant count is
+platform-dependent and the corollary is not: a Linux runner visits 45,268
+instants and finds the same zero counterexamples, because the proposition
+constrains the feature map rather than the arithmetic
+(`reports/cross_platform_reproduction.md`).
 
 **Corollary 1.3 (the ranking's resolution is bounded by the size alphabet).** The
 number of distinct scores at an instant is at most |{ *g*(*j*) : *j* ∈ *Q* }|. The

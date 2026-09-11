@@ -8,13 +8,14 @@
 #   make smoke         python tools/verify_artifacts.py --smoke
 #   make test          python -m pytest
 #   make lint          python -m ruff check .
+#   make claims        python tools/verify_claims.py
 #   make paper         pdflatex x2 in phases_22_30/phase_28_manuscript
 #   make paper-check   paper, then fail on any undefined reference
 
 PY ?= python
 PAPER_DIR ?= phases_22_30/phase_28_manuscript
 
-.PHONY: verify verify-quick smoke test lint paper paper-check
+.PHONY: verify verify-quick smoke test lint claims paper paper-check
 
 # Full reproduction: copies the tree to scratch, runs run_all_experiments.sh
 # there, diffs every artefact against the committed blob. ~9 minutes.
@@ -36,6 +37,15 @@ test:
 
 lint:
 	$(PY) -m ruff check .
+
+# Does the COMMITTED tree support the statements the repository makes? Seconds,
+# no pipeline run, and -- unlike `verify` -- the answer is the same on every
+# platform. `verify` checks that this tree regenerates itself digit for digit,
+# which is a property of the reference platform; this checks the claims, which
+# are a property of the result. Both are needed; neither replaces the other.
+# See reports/cross_platform_reproduction.md.
+claims:
+	$(PY) tools/verify_claims.py
 
 # Build the manuscript. Two passes, because the paper uses \ref/\label
 # cross-references and the first pass has not yet written the .aux they read;

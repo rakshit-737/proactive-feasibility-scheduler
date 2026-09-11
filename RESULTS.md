@@ -53,7 +53,10 @@ instrumenting dispatch decisions in three settings:
 | Size→priority table monotone | 63.1% | 57.1% | 56.9% |
 
 Zero counterexamples in 45,432 instants (41,786 from the two real traces plus
-3,646 synthetic). The 7 synthetic cluster-state features
+3,646 synthetic) on the reference platform; a Linux runner visits 45,268
+instants and finds zero counterexamples there too. The count is
+platform-dependent -- the fitted model is, so the dispatch trajectory is -- and
+the result is not (`reports/cross_platform_reproduction.md`). The 7 synthetic cluster-state features
 (and 4 of 8 on the traces) vary across the queue in **0.0%** of instants; every
 feature that does vary (`job_gpu`/`job_procs`, `can_fit_now`, `gpu_fit_ratio`,
 `node_availability`, `queue_pressure`) is a deterministic function of the

@@ -141,8 +141,73 @@ slowdown, and on both traces it is behind plain SJF on user estimates.
   candidate, the procedure for adding one, and the prediction. This is the largest
   remaining weakness and `reports/submission_readiness.md` names it as the one real
   blocker. It was documented rather than filled with a substitute.
-- **Cross-platform reproduction is unproven.** Every artefact was generated on Windows with
-  Python 3.14.3; the weekly Linux full-verify job has not yet reported.
+- **Only two platforms have ever run the pipeline.** Windows/16-thread and Linux/2-vCPU.
+  The mechanism below predicts that every distinct (platform, thread count, library build)
+  triple produces its own digits; that is untested beyond these two.
+
+### Cross-platform reproduction: disproven, and handled
+
+The one `[GAP]` these phases could not close from inside the repository was that every
+artefact had been generated on a single Windows machine. The first Linux run settled it,
+and not the way the risk was written: cross-platform bit-for-bit reproduction is not
+merely unproven, it is **false**.
+
+| | reference platform | Linux runner (2 vCPU) |
+|---|---|---|
+| dispatch instants | 45,432 | 45,268 (−0.36%) |
+| equal-size / different-score violations | **0** | **0** |
+
+**The claim reproduced; the count did not.** Twenty-six artefacts differed in their low
+decimals. The cause is XGBoost's histogram build, which reduces floating point in
+parallel: the fitted model depends on thread count and library build, and the model
+drives dispatch decisions, so one perturbation at the root reaches every downstream
+count. Measured on the reference machine, same data and same seed — hold-out MAE
+4.692659 / 4.669915 / 4.637280 / 4.693508 on 1 / 2 / 4 / 16 threads; the Linux runner
+produced 4.731409.
+
+This is the outcome Proposition 1 predicts. The degeneracy is a property of the feature
+map, not of the arithmetic, so a perturbation nobody designed has now confirmed it is
+invariant to one.
+
+**Consequence for the prose:** `45,432` is a reference-platform figure and must be
+written as one. `reports/honest_claims.md` carries the exact wording;
+`reports/cross_platform_reproduction.md` carries the evidence and the `[GAP]` list.
+
+**Nothing was loosened in response.** Specifically, no tolerance was widened and no split
+was reordered to make a number come out.
+
+- **`03_models/explainability_shap.py` was checking the wrong thing.** Its
+  split-reconstruction guard compared against a literal `4.6935` copied into its source,
+  which conflates *did I rebuild the same split* with *is this the same model the number
+  was published from*. Every honestly refitted model read as a split failure, which is
+  how CI failed. The bundle written by `train_improved_model.py` now records the split it
+  was fitted under and the hold-out score it earned there, and the guard checks against
+  that. A genuine split mismatch still fails — the model would be scoring rows it was
+  fitted on and the MAE would collapse far outside the tolerance. The 5e-4 tolerance is
+  unchanged, and no published number moved: retrained on the reference platform the model
+  reproduces MAE 4.693508148193359 and R² 0.836840033531189 exactly. The single artefact
+  change is `shap_provenance.csv`'s `expected_test_mae`, now carrying the recorded value
+  at full precision instead of a rounded literal.
+- **`tools/verify_claims.py` is new.** It checks the fourteen statements
+  `reports/honest_claims.md` permits — zero violations, the size-sort identity, both
+  equivalence verdicts, every Phase D direction, 0 of 12 beating SJF, three attacks
+  failing and the fourth succeeding and costing more, utilisation unchanged, the split
+  ordering, the f-model comparison — rather than the digits that express them.
+  Directional claims assert direction and report magnitude; identities assert exactness,
+  because there the identity is the claim. Sixteen mutation tests prove each check goes
+  red against a tree carrying the defect it exists to catch, and prove that 45,268 does
+  **not** fail.
+- **`tools/verify_artifacts.py` gained `--expect claims`**, which reports digit
+  differences as `DRIFT` and defers the verdict to those checks. `--expect exact` remains
+  the default.
+- **CI now asks each platform the question it can answer.** Every PR runs the claim checks
+  against the committed tree; the scheduled full run uses `--expect claims`.
+  Digit-exactness stays verified on the reference platform by `make verify` and pinned by
+  `tests/test_golden_numbers.py`.
+
+The two instruments are complementary: `verify_artifacts.py` answers *does this tree
+regenerate itself* (reference platform), `verify_claims.py` answers *do these artefacts
+support what the paper says* (anywhere).
 
 ### Tests, pipeline, tooling
 

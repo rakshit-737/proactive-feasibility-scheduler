@@ -134,9 +134,10 @@ SCHEMA = 'SCHEMA'
 TIMING = 'TIMING'
 STALE = 'STALE'
 NOREF = 'NOREF'          # tracked but not in HEAD, so there is nothing to diff
+DRIFT = 'DRIFT'          # digits moved, but --expect claims says digits may move
 
 FAILING = frozenset({MISMATCH, MISSING, SCHEMA})
-STATUS_ORDER = (MISMATCH, SCHEMA, MISSING, STALE, TIMING, NOREF, OK)
+STATUS_ORDER = (MISMATCH, SCHEMA, MISSING, DRIFT, STALE, TIMING, NOREF, OK)
 
 
 def is_artefact(rel):
@@ -464,6 +465,26 @@ def _mtime(path):
         return None
 
 
+def run_claims(tree):
+    """Adjudicate a regenerated tree with tools/verify_claims.py.
+
+    Returns (rc, report_text). Run in-process rather than as a subprocess so a
+    missing interpreter or a swallowed traceback cannot read as success.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        '_verify_claims',
+        str(pathlib.Path(__file__).resolve().parent / 'verify_claims.py'))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    checker = mod.Checker(str(tree))
+    for claim, fn in mod.CHECKS:
+        checker.check(claim, lambda fn=fn: fn(checker))
+    text = mod.render(checker.rows, str(tree))
+    rc = 1 if any(status == mod.FAIL for status, _, _ in checker.rows) else 0
+    return rc, text
+
+
 def render_report(results, elapsed, mode, tree, pipeline_rc=None, strict_stale=False):
     """Markdown report: one row per artefact, then the exemptions and a count."""
     counts = Counter(status for status, _, _ in results)
@@ -517,6 +538,16 @@ def _parse_args(argv):
                         help='SMOKE=1 run; existence and CSV headers only')
     parser.add_argument('--strict-stale', action='store_true',
                         help='treat STALE (artefact not rewritten) as a failure')
+    parser.add_argument('--expect', choices=('exact', 'claims'), default='exact',
+                        help="'exact' (default) fails on any digit difference -- the "
+                             "right check on the reference platform. 'claims' reports "
+                             "digit differences as DRIFT without failing, and instead "
+                             "requires tools/verify_claims.py to pass on the regenerated "
+                             "tree. Use it where the platform cannot reproduce the digits: "
+                             "XGBoost's parallel histogram build makes the fitted model a "
+                             "function of thread count and library build, and the model "
+                             "drives dispatch decisions, so one perturbation reaches every "
+                             "downstream count. See the docstring of verify_claims.py.")
     parser.add_argument('--tree', default=None,
                         help='tree that --quick diffs (default: this repository)')
     parser.add_argument('--workdir', default=None,
@@ -553,6 +584,8 @@ def main(argv=None):
     workdir.mkdir(parents=True, exist_ok=True)
 
     pipeline_rc = None
+    claims_rc = 0
+    claims_report = ''
     baseline = None
     results = []
     try:
@@ -584,8 +617,18 @@ def main(argv=None):
                     status, detail = STALE, 'not rewritten by the pipeline'
             results.append((status, rel, detail))
 
+        if args.expect == 'claims':
+            # A digit difference is expected off the reference platform and is not
+            # a failure here; what must still hold is the CLAIM. Reclassify, then
+            # adjudicate the regenerated tree with the claims verifier.
+            results = [(DRIFT if status == MISMATCH else status, rel, detail)
+                       for status, rel, detail in results]
+            claims_rc, claims_report = run_claims(tree)
+
         report = render_report(results, time.time() - started, mode, tree,
                                pipeline_rc=pipeline_rc, strict_stale=args.strict_stale)
+        if args.expect == 'claims':
+            report += os.linesep.join(['', claims_report])
         print(report)
         if args.report:
             pathlib.Path(args.report).write_text(report, encoding='utf-8')
@@ -598,6 +641,8 @@ def main(argv=None):
 
     counts = Counter(status for status, _, _ in results)
     failed = sum(counts[status] for status in FAILING)
+    if args.expect == 'claims':
+        failed += claims_rc
     if args.strict_stale:
         failed += counts[STALE]
     if pipeline_rc:
