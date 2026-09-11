@@ -9,11 +9,22 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    # Weekly, Monday 03:17 UTC. The full verification runs here and not on every
-    # PR: it takes about nine minutes locally, and cross-platform bit-for-bit
-    # reproduction of artefacts generated on Windows is UNPROVEN until this job
-    # has succeeded at least once. Gating PRs on an unproven check would train
-    # everyone to ignore a red build.
+    # Weekly, Monday 03:17 UTC. The full pipeline re-run lives here rather than on
+    # every PR because it takes about twenty minutes.
+    #
+    # Cross-platform bit-for-bit reproduction is not merely unproven, it is now
+    # DISPROVEN, and the numbers are on record: a 2-vCPU Linux runner reproduced
+    # 45,268 dispatch instants where the reference platform records 45,432, and 26
+    # artefacts differed in their low decimals. The cause is XGBoost's parallel
+    # histogram build, whose float reduction order depends on thread count and
+    # library build; the fitted model drives dispatch decisions, so one
+    # perturbation reaches every downstream count. The same run reproduced ZERO
+    # violations, which is the claim.
+    #
+    # So this job runs --expect claims: digit differences are reported as DRIFT and
+    # the verdict comes from tools/verify_claims.py. Digit-exactness is verified on
+    # the reference platform, by `make verify`, and pinned by
+    # tests/test_golden_numbers.py.
     - cron: '17 3 * * 1'
   workflow_dispatch:
 
@@ -57,12 +68,20 @@ jobs:
       - name: Smoke verification of artefacts
         run: python tools/verify_artifacts.py --smoke --report smoke_report.md
 
-      - name: Upload smoke report
+      # Fast, and independent of the pipeline: does the COMMITTED tree support the
+      # statements the repository makes? Runs on every PR because it takes seconds
+      # and because a claim that stopped holding is the most serious defect here.
+      - name: Verify the claims against the committed artefacts
+        run: python tools/verify_claims.py --report claims_report.md
+
+      - name: Upload smoke and claim reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: smoke-report
-          path: smoke_report.md
+          path: |
+            smoke_report.md
+            claims_report.md
 
   verify-full:
     name: Full artefact reproduction (scheduled)
@@ -85,8 +104,13 @@ jobs:
           python -m pip install -r requirements.txt -r requirements-dev.txt
 
       # --source HEAD: reproduce what is committed, not a dirty checkout.
-      - name: Re-run the pipeline and diff every artefact
-        run: python tools/verify_artifacts.py --source HEAD --report verify_report.md
+      # --expect claims: see the cron comment. This asks the question this runner
+      # can actually answer -- do the regenerated artefacts still support the
+      # repository's claims -- instead of one it cannot.
+      - name: Re-run the pipeline and check every claim against it
+        run: >
+          python tools/verify_artifacts.py --source HEAD --expect claims
+          --report verify_report.md
 
       - name: Upload verification report
         if: always()
