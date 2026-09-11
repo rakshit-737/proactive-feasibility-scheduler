@@ -62,10 +62,13 @@ comparison on two real traces, replacing the simulated user-estimate model with
 the estimates the traces actually contain. The synthetic $7.9\%$ mean-wait gain
 over FCFS does not replicate: the ML scheduler is indistinguishable from FCFS on
 LANL CM-5 ($p = 0.48$) and any classical policy with a runtime estimate beats it
-on both machines. We also find that real estimate error is far more damaging to
-backfill than the over-estimate-only $f$-model predicts ($+74\%$ mean wait on
-LANL, where $36\%$ of user estimates are \emph{under}-estimates that the
-$f$-model cannot generate). We argue the failure is one of feature design rather
+on both machines. \emph{As a second and independent contribution} --- independent
+because it concerns the estimate-error model rather than the ranking score --- we
+measure real user-estimate error against the $f$-model that the backfill
+literature assumes, and find real error far more damaging to backfill than the
+over-estimate-only $f$-model predicts ($+74\%$ mean wait on
+LANL, where $36.3\%$ of user estimates are \emph{under}-estimates that the
+$f$-model cannot generate at all). We argue the failure is one of feature design rather
 than model class, state the condition a wait-time feature set must satisfy to be
 non-degenerate, and release the harness, traces, and seeds.
 \end{abstract}
@@ -122,6 +125,19 @@ dataset, no training, no inference, no SHAP explanation, and no drift monitor.
 To our knowledge that control is absent from the ML-scheduling evaluations we
 are aware of, including our own earlier versions of this work.
 
+\paragraph{A second contribution.}
+The trace-driven re-evaluation required us to replace the simulated
+user-estimate model with the estimates the traces actually contain, and that
+substitution turned out to carry a finding of its own, independent of the
+degeneracy. The standard $f$-model, $\hat r = r\cdot f$ with $f \sim U(1,C)$,
+can only over-estimate. Real estimates on LANL CM-5 are under-estimates
+$36.3\%$ of the time, and under-estimates break the very mechanism EASY
+backfilling relies on: EASY with real estimates costs $+74\%$ mean wait against
+perfect estimates on LANL, where the $f$-model predicts near-insensitivity.
+This is a statement about how backfill should be evaluated, not about ML, and we
+report it as a second contribution (\S\ref{sec:estimates}) rather than as a
+by-product of the first.
+
 \paragraph{Contributions.}
 \begin{enumerate}
   \item \textbf{The degeneracy, stated and measured} (\S\ref{sec:degeneracy}).
@@ -143,8 +159,8 @@ are aware of, including our own earlier versions of this work.
         runtime estimates the traces contain, the synthetic $7.9\%$ gain over
         FCFS does not replicate, and every policy with access to a runtime
         estimate beats the ML scheduler on both machines.
-  \item \textbf{Real estimate error breaks backfill far more than the
-        $f$-model suggests} (\S\ref{sec:estimates}). Real estimates are
+  \item \textbf{Second contribution: real estimate error breaks backfill far
+        more than the $f$-model suggests} (\S\ref{sec:estimates}). Real estimates are
         $6.9\times$ the runtime at the median on SDSC but only $1.5\times$ on
         LANL, where $36\%$ are \emph{under}-estimates --- a case the standard
         over-estimate-only $f$-model cannot produce. Backfill costs $+74\%$ mean
@@ -173,6 +189,43 @@ applies to this whole line: the relevant question for each is whether the
 feature set contains a per-job attribute that is not a function of requested
 size given the cluster state (\S\ref{sec:fix}).
 
+\paragraph{Why reported gains over FIFO and this result are compatible.}
+Many ML-for-systems papers report real gains against a first-in-first-out
+baseline, and nothing here contradicts them. Our claim is narrow in three ways,
+and a reported gain can sit outside all three. First, it concerns
+\emph{ranking}: a learned component that drives \emph{admission}, \emph{placement},
+or \emph{backfill} selection is choosing among actions the queue order does not
+determine, and the degeneracy argument --- which is about separating two
+co-queued jobs --- says nothing about it. The deep-RL policies of Mao et al.\
+\cite{ML-Scheduling1, ML-Scheduling2} are of this kind, as is the learned-index
+line in databases \cite{Kraska2018}, where the learned object replaces a
+structure rather than a comparator. Second, it concerns a \emph{feature family}:
+a feature set containing a genuine per-job attribute --- a runtime estimate, an
+application signature, a model-level descriptor as in Wang et al.\
+\cite{Wang2023} --- is non-degenerate by Proposition~2, and a gain measured with
+such a feature set is a gain from that attribute. Third, it concerns the
+\emph{control}: our result says the correct comparison for a degenerate feature
+set is sorting by size, not FIFO, and a gain over FIFO is simply silent about
+whether the size sort would have delivered it. So the claim compatible with both
+literatures is not ``ML does not help scheduling'' but ``a gain over FIFO does
+not localise the mechanism''. Marcus et al.\ \cite{Marcus2020} make the
+corresponding point for learned indexes by benchmarking them against carefully
+tuned classical structures rather than against naive ones.
+
+\paragraph{Learning to rank.}
+Because the output we criticise is an ordering, the learning-to-rank literature
+\cite{Burges2005, Liu2009} is the natural place to look for an escape: replace
+the pointwise regression objective with a pairwise or listwise one that
+optimises the ordering directly. It does not escape. Proposition~1 constrains
+the feature map, not the loss, and we verified this empirically: an XGBoost
+ranker trained with \texttt{rank:pairwise} and one trained with
+\texttt{rank:ndcg} over the same features both produce \emph{zero}
+counterexamples on both traces, as do monotone reshapings of the pointwise score
+(\S\ref{sec:scope}). A pairwise objective learns which of two jobs should go
+first; when the two jobs present identical feature vectors, there is nothing for
+it to learn from. This is worth stating because ``we used a ranking loss'' is the
+most plausible objection to the result, and it is measurably not a fix.
+
 \paragraph{Backfilling and user runtime estimates.}
 Backfilling \cite{SLURM2003} is the dominant production technique. EASY
 \cite{Mualem2001} reserves capacity for the queue head and backfills jobs that
@@ -182,14 +235,32 @@ refine which job to pick and how much slack to allow: lookahead
 \cite{Shmueli2003}, slack-based priority \cite{Talby1999}, adaptive reservation
 \cite{Shmueli2005}, probabilistic backfilling on predicted-runtime
 distributions \cite{Nissimov2007}, and deviation backfilling \cite{Hai2023}.
-All depend on user runtime estimates, whose inaccuracy is well documented; the
-standard model is the $f$-model, $\hat{r} = r \cdot f$ with $f \sim U(1, C)$
-\cite{Mualem2001}, together with the observation that over-estimation can
-paradoxically \emph{help} backfill \cite{Tsafrir2005}. Feitelson
-\cite{Feitelson2005} shows how sensitive backfilling results are to exactly
-such evaluation choices. \S\ref{sec:estimates} shows the $f$-model misses a
-failure mode that real traces exhibit, because it cannot generate an
-under-estimate at all.
+All depend on user runtime estimates, and our \S\ref{sec:estimates} is in direct
+dialogue with two papers in particular. Mu'alem and Feitelson \cite{Mualem2001}
+define the two-condition EASY rule we implement and introduce the $f$-model,
+$\hat r = r\cdot f$ with $f\sim U(1,C)$, as the standard way to inject estimate
+error into a backfill evaluation. Our point is that this model is not merely
+imprecise but \emph{structurally} unable to express the failure mode we measure:
+$f \ge 1$ means $\hat r \ge r$ always, so an $f$-model evaluation contains no
+under-estimates by construction, while $36.3\%$ of LANL's real estimates are
+under-estimates. An under-estimate is precisely what invalidates EASY's
+reservation --- a job admitted on the promise that it will finish before the
+reservation, and does not, delays the queue head --- so the one error direction
+the model omits is the one that breaks the mechanism. Tsafrir et al.\
+\cite{Tsafrir2005} model user estimates in detail and, with Mu'alem and
+Feitelson, report the counter-intuitive finding that over-estimation can
+\emph{help} backfill by making the scheduler conservative; we do not dispute
+that, and it is consistent with SDSC, where estimates are $6.9\times$ runtime at
+the median and EASY loses only $6.2\%$ against perfect estimates. Our claim is
+that this benign regime is not universal: LANL, roughly calibrated at the median
+($1.5\times$) but with a third of estimates too low, costs EASY $+74\%$. The
+literature's own methodological warning applies to itself here --- Feitelson
+\cite{Feitelson2005} shows how strongly backfilling conclusions depend on
+exactly such evaluation choices --- and we read our result as an instance of
+that warning rather than as a contradiction of \cite{Mualem2001, Tsafrir2005}.
+Tsafrir et al.'s later move to system-generated predictions \cite{Tsafrir2007}
+is the constructive response, and it sidesteps the $f$-model question entirely
+by not using user estimates.
 
 \paragraph{Replacing user estimates with predictions.}
 The closest prior work replaces the user's estimate with a system-generated one.
@@ -226,6 +297,28 @@ effect on short jobs. Goponenko et al.\ \cite{Goponenko2022} argue that these
 metrics correlate poorly with packing and fairness objectives, which is
 consistent with the metric-dependent verdicts we obtain in
 \S\ref{sec:equivalence}.
+
+\paragraph{Negative results, weak baselines, and reproducibility.}
+The justification for publishing this at all comes from a literature about how
+empirical progress is measured. Armstrong et al.\ \cite{Armstrong2009} showed
+that a decade of reported retrieval improvements largely failed to accumulate
+because each was measured against a weak baseline; Lin \cite{Lin2018} and
+Dacrema et al.\ \cite{Dacrema2019} found the same pattern in neural retrieval
+and neural recommendation, the latter reproducing eighteen published methods and
+finding most beaten by well-tuned non-neural baselines; Musgrave et al.\
+\cite{Musgrave2020} report the analogous result for deep metric learning; and
+Sculley et al.\ \cite{Sculley2018} argue that empirical rigour, not pace, is the
+binding constraint. Our finding is the batch-scheduling instance of exactly this
+failure mode, with an unusually clean diagnosis: the appropriate strong baseline
+is not merely well-tuned, it is \emph{derivable from the model's own feature
+set}, and it is a one-line sort. We also follow this literature in method ---
+equivalence testing rather than a failed difference test
+(\S\ref{sec:equivalence}), and reporting the split the accuracy number actually
+came from (\S\ref{sec:threats}) --- and in artefact practice, since Collberg and
+Proebsting \cite{Collberg2016} document how rarely systems results can be
+re-run at all. Every number in this paper is produced by a single seeded
+pipeline whose per-step provenance is cited in each table and figure caption.
+A negative result is only worth reading if it can be checked.
 
 \section{Experimental Setup}
 
@@ -316,15 +409,27 @@ Size table monotone     & 63.1\% & 57.1\% & 56.9\% \\
 \end{tabular}
 \caption{The learned score never distinguishes two equally-sized co-queued jobs.
 Cluster-state features vary across the queue in $0.0\%$ of instants.
-{\small Source: \texttt{05\_results/degeneracy/ranking\_degeneracy.csv}}}
+{\small Source: \texttt{05\_results/degeneracy/ranking\_degeneracy.csv} and
+\texttt{05\_results/degeneracy/feature\_variation.csv}, produced by
+\texttt{python 04\_scheduler/ranking\_degeneracy.py} (step 9 of
+\texttt{run\_all\_experiments.sh}).}}
 \label{tab:degeneracy}
 \end{table}
 
 \begin{figure*}[t]
 \centering
 \includegraphics[width=\textwidth]{../../05_results/degeneracy/ranking_degeneracy.png}
-\caption{Feature variation in ranking decisions: only job-size features differ
-across the queue. Of 12 cluster-state features, 7 vary in 0.0\% of instants.}
+\caption{Feature variation in ranking decisions. What to look for: the bars for
+the seven cluster-state features sit flat on zero --- they do not vary across a
+queue in \emph{any} instant --- while the only bars with any height belong to
+the job's requested size and to the four quantities derived from it. The reader
+should also see that the same shape recurs in all three settings, so the
+degeneracy is not an artefact of one substrate.
+{\small Source: \texttt{05\_results/degeneracy/ranking\_degeneracy.png},
+plotted from \texttt{05\_results/degeneracy/feature\_variation.csv} and
+\texttt{05\_results/degeneracy/ranking\_degeneracy.csv}, produced by
+\texttt{python 04\_scheduler/ranking\_degeneracy.py} (step 9 of
+\texttt{run\_all\_experiments.sh}).}}
 \label{fig:degeneracy}
 \end{figure*}
 
@@ -348,6 +453,27 @@ size sort is certified equivalent, and LANL ($56.9\%$), where it is not, are
 statistically indistinguishable on it. Degeneracy is the claim this section
 supports; the shape of the learned table is a description of it, not an
 explanation of the downstream scheduling difference.
+Figure~\ref{fig:size-table} shows the recovered tables themselves.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{../../05_results/degeneracy/size_priority_table.png}
+\caption{The recovered size$\rightarrow$priority lookup table, per setting.
+What to look for: each curve is a \emph{function} --- one priority per requested
+size, which is the degeneracy --- but it is not always an \emph{increasing}
+function. The synthetic curve climbs monotonically from $0.008$ at size 1 to
+$0.902$ at size 8; the trace curves do not, dipping and rising instead (on SDSC,
+size 3 scores $0.017$ against $0.072$ at size 2). That is exactly the
+distinction Proposition~1 draws and its ``what it does not say'' note insists on:
+degeneracy forces a table, it does not force smallest-first. Across instants the
+table is monotone in only $63.1\%$ (synthetic), $57.1\%$ (SDSC) and $56.9\%$
+(LANL) of cases.
+{\small Source: \texttt{05\_results/degeneracy/size\_priority\_table.png},
+plotted from \texttt{05\_results/degeneracy/size\_priority\_table.csv},
+produced by \texttt{python 04\_scheduler/ranking\_degeneracy.py} (step 9 of
+\texttt{run\_all\_experiments.sh}).}}
+\label{fig:size-table}
+\end{figure}
 
 \subsection{The degeneracy, stated formally}
 \label{sec:proposition}
@@ -396,7 +522,8 @@ $14.4$--$20.7\%$ of instants, where the policy is exactly FCFS.
 It does \emph{not} say the ranking is the ascending-size order. $h_S$ may order the
 size classes arbitrarily; it may only not distinguish jobs within one. Our own
 measurements make the distinction concrete: the recovered size-to-priority table is
-monotone in just $57$--$63\%$ of instants. This is why we establish equivalence to a
+monotone in just $57$--$63\%$ of instants, and Figure~\ref{fig:size-table} shows
+tables that are plainly functions of size without being increasing in it. This is why we establish equivalence to a
 size sort \emph{statistically}, by TOST against \textsc{Smallest-First}, rather than
 deducing it. Degeneracy is a structural fact; that the resulting policy performs like
 ascending-size order is a separate empirical claim.
@@ -440,8 +567,12 @@ LANL CM-5 & bnd.\ slow. & $+7.3\%$ & $0.30$ & no \\
 \caption{\textsc{Smallest\_First} versus \textsc{Proactive}. $\Delta$ is the
 difference in the metric (positive $=$ the size sort is worse). Equivalence
 margin $10\%$ of the reference. ``Eq.?'' is the TOST verdict at that margin.
-{\small Sources: the two \texttt{*\_equivalence.csv}
-files under \texttt{05\_results/}.}}
+{\small Sources: \texttt{05\_results/schedulers/multi\_scheduler\_equivalence.csv},
+produced by \texttt{python 04\_scheduler/multi\_scheduler\_benchmark.py}
+(step 7 of \texttt{run\_all\_experiments.sh}), and
+\texttt{05\_results/trace\_schedulers/trace\_scheduler\_equivalence.csv},
+produced by \texttt{python 04\_scheduler/trace\_driven\_benchmark.py}
+(step 10).}}
 \label{tab:equiv}
 \end{table}
 
@@ -452,6 +583,27 @@ equivalence, not an underpowered null. The MLP baseline is a sharper version of
 the same point --- \textsc{NN} and \textsc{Smallest\_First} produce
 \emph{bit-identical} results on every metric of all 20 runs. Two different model
 classes over the same features collapse to the same one-line sort.
+Figure~\ref{fig:synth-schedulers} places both against the wider synthetic
+scheduler landscape.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{../../05_results/schedulers/scheduler_comparison.png}
+\caption{Fourteen schedulers on the synthetic substrate, 20 paired runs.
+What to look for: the \textsc{Nn} and \textsc{Smallest} bars are not merely
+close but the same height --- both sit at $16.074545$ ts mean wait, bit-identical
+on every metric of all 20 runs --- and \textsc{Proactive} at $15.9477$ ts is a
+hair's breadth from them, inside the $\pm1.59$ ts equivalence margin. The
+ML-free sort is not a weak baseline the model narrowly beats; it is where two
+different model classes land.
+{\small Source:
+\texttt{05\_results/schedulers/scheduler\_comparison.png}, plotted from
+\texttt{05\_results/schedulers/multi\_scheduler\_benchmark.csv} and
+\texttt{05\_results/schedulers/multi\_scheduler\_runs.csv}, produced by
+\texttt{python 04\_scheduler/multi\_scheduler\_benchmark.py} (step 7 of
+\texttt{run\_all\_experiments.sh}).}}
+\label{fig:synth-schedulers}
+\end{figure}
 
 On LANL the equivalence test does not fire, and the honest verdict there is
 \emph{inconclusive} rather than ``different''. The size sort is $14.4\%$ worse on
@@ -500,16 +652,30 @@ Policy & wait & bsld & wait & bsld \\
 \bottomrule
 \end{tabular}
 \caption{Mean wait (minutes) and mean bounded slowdown, averaged over 20 paired
-7-day windows per trace at offered load $\approx 0.70$. {\small Source: \texttt{trace\_schedulers/trace\_scheduler\_summary.csv}}}
+7-day windows per trace at offered load $\approx 0.70$.
+{\small Source: \texttt{05\_results/trace\_schedulers/trace\_scheduler\_summary.csv},
+produced by \texttt{python 04\_scheduler/trace\_driven\_benchmark.py} (step 10
+of \texttt{run\_all\_experiments.sh}).}}
 \label{tab:traces}
 \end{table}
 
 \begin{figure*}[t]
 \centering
 \includegraphics[width=\textwidth]{../../05_results/trace_schedulers/trace_scheduler_comparison.png}
-\caption{Twelve policies replayed through two real traces. The Proactive (ML)
-and Smallest-first (ML-free) bars are adjacent; every classical policy with a
-runtime estimate finishes ahead.}
+\caption{Twelve policies replayed through two real traces.
+What to look for: the \textsc{Proactive} (ML) and \textsc{Smallest\_First}
+(ML-free) bars sit next to each other at the same height on SDSC ($145.0$ versus
+$145.0$ min mean wait), which is the equivalence of \S\ref{sec:equivalence} seen
+directly; and every classical policy holding a runtime estimate --- the
+\textsc{Sjf}, \textsc{Hrrn} and oracle bars --- finishes to the left of the ML
+bar on both machines. Note also how much further apart the bounded-slowdown
+panel spreads the same policies than the mean-wait panel does.
+{\small Source:
+\texttt{05\_results/trace\_schedulers/trace\_scheduler\_comparison.png},
+plotted from
+\texttt{05\_results/trace\_schedulers/trace\_scheduler\_summary.csv},
+produced by \texttt{python 04\_scheduler/trace\_driven\_benchmark.py} (step 10
+of \texttt{run\_all\_experiments.sh}).}}
 \label{fig:trace-comparison}
 \end{figure*}
 
@@ -564,7 +730,11 @@ Within $2\times$      & 24.0\% & 41.7\% & --- \\
 \textbf{Under-estimates} & 0.1\% & \textbf{36.3\%} & \textbf{0\%} \\
 \bottomrule
 \end{tabular}
-\caption{Real user runtime estimates versus the standard $f$-model. {\small Source: \texttt{trace\_schedulers/trace\_estimate\_quality.csv}}}
+\caption{Real user runtime estimates versus the standard $f$-model.
+{\small Source:
+\texttt{05\_results/trace\_schedulers/trace\_estimate\_quality.csv},
+produced by \texttt{python 04\_scheduler/trace\_driven\_benchmark.py} (step 10
+of \texttt{run\_all\_experiments.sh}).}}
 \label{tab:est}
 \end{table}
 
@@ -614,24 +784,83 @@ as the finding it is.
 \section{Threats to Validity}
 \label{sec:threats}
 
-\paragraph{Simulator fidelity.}
-The capacity-only model omits node-level placement and site policy (partitions,
-per-user limits, administrative holds), which SWF does not record. Against the
-recorded waits our simulated FCFS is close on LANL ($38.8$ vs.\ $33.2$ min mean;
-the simulator is slightly \emph{pessimistic}) but far more permissive on SDSC
-($174.6$ vs.\ $630.9$ min mean, against a recorded \emph{median} of $19.3$ min).
-SDSC's recorded mean is dominated by an extreme tail our model cannot reproduce.
-SDSC results should therefore be read as ``a correctly-loaded 128-processor
-machine driven by the real arrival, size, runtime and estimate distributions'',
-not as a replay of SDSC's actual queue. The degeneracy result does not depend on
-this: it is a property of the feature vector, and holds in all three substrates.
+\paragraph{Simulator fidelity, and the measured gap.}
+Our trace simulator models \emph{capacity only}. It omits node-level placement
+and site policy (partitions, per-user limits, administrative holds), none of
+which SWF records, and above all it does not model the real scheduler's policy:
+it replays the real arrivals, sizes, runtimes and estimates through our own
+FCFS, not through the queue the site actually ran. Averaged over the 20 windows
+of each trace, simulated FCFS mean wait is $38.82$ min on LANL against $33.25$
+min recorded --- close, and slightly \emph{pessimistic} --- but $174.62$ min on
+SDSC against $630.92$ min recorded. We state the SDSC gap plainly: on that trace
+the simulator is optimistic by more than a factor of three. (The recorded SDSC
+\emph{median} is $19.32$ min, so the recorded mean is carried by an extreme tail
+that a capacity-only model has no mechanism to reproduce; that explains the gap
+but does not close it.) SDSC results should therefore be read as ``a
+correctly-loaded 128-processor machine driven by the real arrival, size, runtime
+and estimate distributions'', not as a replay of SDSC's actual queue, and any
+absolute SDSC wait figure in this paper should be discounted accordingly. What
+survives the gap is the \emph{relative} comparison, since all twelve policies
+run in the same simulator on the same windows, and the degeneracy result, which
+is a property of the feature vector rather than of the simulator and holds in
+all three substrates.
 
-\paragraph{Statistical power.}
-Twenty windows per trace gives limited power; after Holm correction across
-eleven comparisons many individually plausible differences are not significant,
-particularly on LANL. We therefore lean on effect sizes, on the consistency of
-the ordering across both machines, and --- for the sameness claims --- on
+\paragraph{Synthetic workload realism.}
+One of our three settings is a synthetic generator, and it is not a validated
+workload model: 8 nodes $\times$ 4 GPUs, uniform arrivals, sizes $U\{1,8\}$,
+runtimes $U\{5,20\}$, chosen for continuity with earlier versions of this work
+rather than for fidelity to any machine. Lublin and Feitelson
+\cite{Lublin2003}, Downey and Feitelson \cite{Downey1999}, and Feitelson and
+Shmueli \cite{Feitelson2009} describe what a principled generator would look
+like, and ours is none of those. Of the $45{,}432$ dispatch instants behind the
+zero-counterexample count, $3{,}646$ come from this generator and $41{,}786$
+from the two real traces; the synthetic arm is thus the smaller share, but it is
+not negligible. It is also the \emph{weaker} arm in a second respect: the Phase D
+adversarial attacks of \S\ref{sec:scope} were run against the two traces only,
+so the synthetic setting has been measured but not attacked. Readers should
+treat the trace evidence as primary and the synthetic evidence as corroborating.
+
+\paragraph{Statistical power, and one test that cannot be settled.}
+Twenty windows per trace gives limited power; after Holm correction across the
+family of eleven comparisons many individually plausible differences are not
+significant, particularly on LANL. The LANL mean-wait equivalence test between
+\textsc{Smallest\_First} and \textsc{Proactive} is the sharpest case, and it is
+worse than merely underpowered: its achieved power is $0.47\%$, and because the
+observed difference ($320.02$ s) \emph{exceeds} the equivalence margin
+($222.93$ s), TOST power falls toward zero as $n$ grows --- \emph{no} sample
+size can certify equivalence there at a $10\%$ margin. Establishing a
+\emph{difference} instead would need $29$ windows, or $50$ after Holm correction
+over the family of eleven, and LANL supplies only $28$ disjoint 7-day windows.
+The LANL row is therefore \textbf{inconclusive}, not ``different'', and it
+cannot be settled on that trace at all; settling it requires a different or
+longer trace. We say this rather than reporting the failed equivalence test as
+evidence of a difference, which is the error the paper's own methodology section
+warns against. Elsewhere we lean on effect sizes, on the consistency of the
+ordering across both machines, and --- for the sameness claims --- on
 equivalence tests rather than on failures to reject.
+{\small Source:
+\texttt{05\_results/trace\_schedulers/tost\_power.csv}, produced by
+\texttt{python 04\_scheduler/tost\_power.py} (step 11 of
+\texttt{run\_all\_experiments.sh}).}
+
+\paragraph{Which model split the accuracy number comes from.}
+The wait model's headline accuracy in this paper is the run-wise grouped split:
+$R^2 = 0.810910 \pm 0.020672$ and MAE $4.8970$ over five GroupKFold folds on the
+run identifier. Earlier versions of this work quoted a uniformly random
+row-level split, $R^2 = 0.836840$ and MAE $4.6935$, which is optimistic: the
+$2{,}200$ rows are 20 simulation runs of 110 jobs each, so a random split puts
+rows of the same run --- and adjacent instants of it --- on both sides. Under a
+within-run \emph{chronological} split, which is what deployment actually means
+(train on a run's earlier arrivals, predict its later ones), $R^2$ falls to
+$0.725147$ and MAE rises to $7.2403$. We report the run-wise figure as the
+headline and the chronological figure as the deployment bound. None of this
+touches the degeneracy result: that result is a statement about the
+\emph{functional form} of the score --- that it factors through requested size
+--- and it holds for a perfect model exactly as it holds for a poor one. This
+caveat bounds the deployment story, not the contribution.
+{\small Source: \texttt{05\_results/models/evaluation\_splits.csv}, produced by
+\texttt{python 03\_models/evaluate\_splits.py} (step 23 of
+\texttt{run\_all\_experiments.sh}).}
 
 \paragraph{Covariate shift in the retrained model.}
 The per-trace model is trained on features reconstructed from the \emph{recorded}
@@ -647,6 +876,51 @@ niche. Modern deep-learning clusters, where job durations are often genuinely
 unknown at submit time, are the setting in which a zero-runtime-information
 policy could still be worth something; validating there is the clearest next
 step, and we make no claim about it here.
+
+\paragraph{The scope of the negative result.}
+\label{sec:scope}
+This is a negative result about \emph{one feature family}, not about ML
+scheduling in general, and we want the boundary to be unmistakable. The claim is:
+\emph{a score computed at the dispatch instant, over features that consist of
+cluster state plus per-job attributes that factor through requested size given
+that state, cannot rank two co-queued jobs of equal size.} Everything outside
+that description is untouched.
+
+We tested the boundary in both directions. In the converse direction, adding
+per-job attributes that are genuinely not functions of size given the state ---
+the user's runtime estimate, causal per-user history, queue identity, user
+identity --- breaks the degeneracy immediately: counterexample counts rise from
+$0$ to between $6{,}194$ and $10{,}718$ on SDSC and from $0$ to between
+$13{,}801$ and $28{,}497$ on LANL, across five such attributes each of which
+breaks it on its own. Breaking the degeneracy is not the same as scheduling
+better, however: $0$ of the $12$ augmented variants beat \textsc{Sjf\_UserEst},
+and the best of them (LANL with all attributes added) is $1.48\%$ \emph{slower}
+than that plain sort and TOST-equivalent to it ($p = 0.0014$).
+
+In the adversarial direction, we attacked the claim itself. A pairwise
+learning-to-rank objective (\texttt{rank:pairwise}), a listwise one
+(\texttt{rank:ndcg}), monotone score transforms (\texttt{log1p} and a sigmoid),
+and a 5-tick lagged history window all yield \emph{zero} counterexamples: the
+degeneracy is a property of the feature map, and changing the loss or
+monotonically reshaping the score does not touch it. One attack does break the
+claim, and it breaks it by violating the premise rather than by evading the
+argument: scoring a job when it \emph{enters} the queue and caching that score
+gives $20{,}482$ (SDSC) and $37{,}741$ (LANL) counterexamples, because two
+equally-sized jobs then carry scores computed against \emph{different} cluster
+states. This is the shared-state assumption failing by construction, and it is
+why we scope the claim to a score computed at the dispatch instant. It also
+costs: enqueue-time caching is worse on LANL ($+11.74\%$ mean wait and $27\%$
+worse bounded slowdown) and, while nominally $1.64\%$ better on SDSC mean wait,
+raises SDSC median wait from $76.0$ to $105.4$ s and bounded slowdown from
+$18.49$ to $21.56$.
+{\small Source:
+\texttt{05\_results/degeneracy/non\_degeneracy\_sweep.csv} and
+\texttt{05\_results/degeneracy/non\_degeneracy\_utility.csv}, produced by
+\texttt{python 04\_scheduler/non\_degeneracy\_sweep.py} (step 12 of
+\texttt{run\_all\_experiments.sh}); and
+\texttt{05\_results/degeneracy/robustness\_attacks.csv} and
+\texttt{05\_results/degeneracy/robustness\_attack\_utility.csv}, produced by
+\texttt{python 04\_scheduler/robustness\_attacks.py} (step 13).}
 
 \section{Conclusion}
 
@@ -735,6 +1009,26 @@ repository. \texttt{04\_scheduler/ranking\_degeneracy.py} reproduces
 \bibitem{Feitelson2009} D. G. Feitelson and E. Shmueli, \emph{A Case for Conservative Workload Modeling: Parallel Job Scheduling with Daily Cycles of Activity}, MASCOTS 2009.
 
 \bibitem{Zhang2024} D. Zhang, M. S. Raj, B. Xie, S. Di, and D. Dai, \emph{Cross-System Analysis of Job Characterization and Scheduling in Large-Scale Computing Clusters}, IEEE, 2024.
+
+\bibitem{Burges2005} C. Burges, T. Shaked, E. Renshaw, A. Lazier, M. Deeds, N. Hamilton, and G. Hullender, \emph{Learning to Rank Using Gradient Descent}, ICML 2005.
+
+\bibitem{Liu2009} T.-Y. Liu, \emph{Learning to Rank for Information Retrieval}, Foundations and Trends in Information Retrieval 3(3):225--331, 2009.
+
+\bibitem{Kraska2018} T. Kraska, A. Beutel, E. H. Chi, J. Dean, and N. Polyzotis, \emph{The Case for Learned Index Structures}, SIGMOD 2018.
+
+\bibitem{Marcus2020} R. Marcus, A. Kipf, A. van Renen, M. Stoian, S. Misra, A. Kemper, T. Neumann, and T. Kraska, \emph{Benchmarking Learned Indexes}, Proc. VLDB Endowment 14(1):1--13, 2020.
+
+\bibitem{Armstrong2009} T. G. Armstrong, A. Moffat, W. Webber, and J. Zobel, \emph{Improvements That Don't Add Up: Ad-Hoc Retrieval Results Since 1998}, CIKM 2009.
+
+\bibitem{Lin2018} J. Lin, \emph{The Neural Hype and Comparisons Against Weak Baselines}, ACM SIGIR Forum 52(2):40--51, 2018.
+
+\bibitem{Dacrema2019} M. Ferrari Dacrema, P. Cremonesi, and D. Jannach, \emph{Are We Really Making Much Progress? A Worrying Analysis of Recent Neural Recommendation Approaches}, RecSys 2019.
+
+\bibitem{Musgrave2020} K. Musgrave, S. Belongie, and S.-N. Lim, \emph{A Metric Learning Reality Check}, ECCV 2020.
+
+\bibitem{Sculley2018} D. Sculley, J. Snoek, A. Wiltschko, and A. Rahimi, \emph{Winner's Curse? On Pace, Progress, and Empirical Rigor}, ICLR 2018 Workshop Track.
+
+\bibitem{Collberg2016} C. Collberg and T. A. Proebsting, \emph{Repeatability in Computer Systems Research}, Communications of the ACM 59(3):62--69, 2016.
 
 \bibitem{Goponenko2022} A. V. Goponenko, K. Lamar, C. Peterson, B. A. Allan, J. M. Brandt, and D. Dechev, \emph{Metrics for Packing Efficiency and Fairness of HPC Cluster Batch Job Scheduling}, IEEE, 2022.
 
