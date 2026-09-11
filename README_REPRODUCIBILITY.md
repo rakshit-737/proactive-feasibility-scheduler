@@ -38,6 +38,23 @@ uncertainty `7000+run`, traces `SEED=42`), and evaluation seeds are disjoint fro
 On one machine the pipeline is deterministic: a fresh-clone run reproduced 153 of 164 tracked
 artifacts identically, including every published number.
 
+**Across machines the digits move, and the claims do not.** A 2-vCPU Linux runner reproduced
+45,268 dispatch instants where this project's reference platform records 45,432 -- and **zero
+equal-size / different-score violations on both**. The cause is XGBoost's histogram build, which
+reduces floating point in parallel, so the fitted model depends on thread count and library
+build; the model drives dispatch decisions, so one perturbation at the root reaches every
+downstream count. Measured on the reference machine, same data and same seed: hold-out MAE
+4.692659 / 4.669915 / 4.637280 / 4.693508 on 1 / 2 / 4 / 16 threads.
+
+This is why there are **two** verifiers, and why neither replaces the other:
+
+| tool | question it answers | scope |
+|---|---|---|
+| `tools/verify_artifacts.py` | does this tree regenerate itself, digit for digit? | reference platform |
+| `tools/verify_claims.py` | do these artifacts support what the paper says? | any platform |
+
+Quote counts with their scope. `reports/cross_platform_reproduction.md` has the full evidence.
+
 Six columns cannot reproduce, on any machine, because they measure wall-clock time rather than
 the algorithm:
 
@@ -60,7 +77,12 @@ pipeline is longer because it now includes the studies that were previously neve
 python tools/verify_artifacts.py            # copy the tree, run the pipeline, diff everything
 python tools/verify_artifacts.py --quick    # diff the working tree against HEAD, no re-run
 python tools/verify_artifacts.py --smoke    # fast end-to-end; existence and CSV headers only
+python tools/verify_claims.py               # do the artifacts support the claims? (seconds)
 ```
+
+Off the reference platform, add `--expect claims`: digit differences are reported as `DRIFT`
+and the verdict comes from the claim checks. That is what CI runs, because it is the question a
+different machine can actually answer.
 
 The full mode copies every tracked file into a scratch directory, runs the pipeline there, and
 compares each regenerated artifact against its committed blob: CSVs cell by cell, text files line
@@ -68,7 +90,8 @@ by line, PNGs and pickles by existence and loadability. It exits non-zero on any
 `--quick` after regenerating in place and before committing, so that a number which moved is
 something you decided rather than something you shipped.
 
-If you have `make`: `make verify`, `make verify-quick`, `make smoke`, `make test`, `make lint`.
+If you have `make`: `make verify`, `make verify-quick`, `make smoke`, `make claims`, `make test`,
+`make lint`.
 `make` is optional and every target is a single command you can type directly.
 
 ### The tolerance policy
@@ -77,6 +100,13 @@ Comparison tolerances (`--rtol` 1e-9) exist to absorb CSV round-trip formatting,
 drift. Scheduling is discrete: a last-ulp difference in one prediction can flip a queue order and
 move a published mean by percent, not by 1e-9. A cross-platform mismatch is therefore a finding to
 investigate, never a reason to loosen the tolerance.
+
+That investigation has now happened, and the tolerance was not loosened. The cross-platform
+mismatch is real, its cause is understood, and the response was to add a verifier that checks the
+claims rather than to widen a number until the check passed. One guard did change: the SHAP
+split-reconstruction check now compares against the hold-out score recorded inside the model
+bundle instead of a literal copied into its source, because the literal conflated "same split"
+with "same machine". Its 5e-4 tolerance is unchanged.
 
 ## Environment
 
