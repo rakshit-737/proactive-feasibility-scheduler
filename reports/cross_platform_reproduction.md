@@ -96,6 +96,44 @@ Other numbers moved in their low decimals: mean waits in the third significant
 figure, the synthetic TOST `pct_diff` from +0.795% to +0.221%, and a permutation
 of the ablation's feature ordering.
 
+### The complete run
+
+With the guard corrected, the full 24-step pipeline ran to completion on Linux and
+every claim was checked against the artefacts it regenerated there:
+
+```
+135 artefacts: 42 DRIFT, 1 TIMING, 92 OK -- 1590.2 s elapsed
+14 of 14 claims hold.
+```
+
+**92 of 135 artefacts reproduced bit-identically on a different operating system.**
+The drift is confined to the 42 that depend on a fitted model, exactly as the
+mechanism predicts; everything that does not train a model — the simulation
+outputs, the trace inventories, the derived tables — is byte-for-byte identical
+across platforms. That is a much sharper result than "it does not reproduce".
+
+Every headline claim held, with its number alongside:
+
+| claim | reference platform | Linux |
+|---|---|---|
+| dispatch instants | 45,432 | 45,268 (-0.36%) |
+| violations | 0 | 0 |
+| wait improvement vs FIFO | 7.90% [4.88, 10.91] | 7.79% [4.90, 10.69] |
+| paired t p-value | 2.00e-06 | 1.94e-06 |
+| synthetic TOST vs size sort | equivalent, +0.795% | equivalent, +0.221% |
+| SDSC TOST vs size sort | equivalent, −0.051% | equivalent, −0.025% |
+| NN identical to the size sort | yes, 8 metrics x 20 runs | yes, 8 metrics x 20 runs |
+| augmented arms breaking the degeneracy | 12 of 12 | 12 of 12 |
+| augmented arms beating SJF | 0 of 12 | 0 of 12 |
+| utilisation FIFO vs PROACTIVE | identical | identical |
+| split ordering | 0.837 > 0.811 > 0.725 | 0.833 > 0.808 > 0.727 |
+
+One detail worth stating rather than smoothing over: *which* augmented variant comes
+closest to the heuristic is platform-dependent — LANL `+all` at +1.48% here, SDSC
+`+user_hist_runtime` at +1.76% on Linux. The claim is "0 of 12 beat SJF", and that
+held on both; the identity of the runner-up is not a claim and should never be
+written as one.
+
 ---
 
 ## What was changed in response
@@ -153,11 +191,11 @@ implies the count itself is machine-independent is wrong.
 - **Only two platforms.** Windows/16-thread and Linux/2-vCPU. The mechanism
   predicts every distinct (platform, thread count, library build) triple gives its
   own digits; that is untested beyond these two.
-- **Only the first 14 steps were compared under the old guard.** The run that
-  produced the 26-artefact diff aborted at step 15, so 74 artefacts were never
-  regenerated on Linux and remain uncompared at the time of writing. The re-run
-  with the fixed guard settles this; until it reports, the 7.9% figure has not
-  been checked on a second platform.
+- **The first Linux run compared only the first 14 steps.** It aborted at step 15 on
+  the old guard, leaving 74 artefacts unregenerated. The re-run with the corrected
+  guard completed all 24 steps and is the run reported above, so this gap is closed:
+  the 7.9% figure has now been checked on a second platform and holds at 7.79%
+  with a confidence interval that still excludes zero.
 - **The drift bands in `verify_claims.py` are judgement, not theory.** The 2%
   instant tolerance was chosen to sit well outside the observed 0.36% and well
   inside anything that would indicate a changed protocol. There is no principled

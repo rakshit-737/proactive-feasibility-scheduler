@@ -65,6 +65,9 @@ decimal places. This is why the ROI study was deleted rather than caveated.
 > Student-t interval, not a bootstrap; the repository's one genuine percentile bootstrap
 > over the same 40 runs gives [4.9%, 10.7%]. Utilisation and completions are identical in
 > all 40 runs, so this is a reordering effect, not a throughput gain.
+> Checked on a second platform: a Linux runner reproduces 7.79% [4.90, 10.69],
+> p = 1.9e-06. The effect is not an artefact of one machine; the third significant
+> figure is.
 
 **Model accuracy.**
 > R² 0.811 ± 0.021, MAE 4.90 (run-wise `GroupKFold` on `run_id`). The random-row-split
